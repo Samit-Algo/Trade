@@ -1,0 +1,8 @@
+# Tiger Brokers OpenAPI SDK
+tigeropen
+
+# .env loading
+python-dotenv
+
+# Tests (Phase 1 unit tests run with no network and no SDK)
+pytest
