@@ -6,6 +6,10 @@ Read this before touching the code so nothing gets re-derived.
 The build specification is `../tiger-options-backend-spec.md`. It is the
 authority; this file records what has actually been done against it.
 
+`SPEC-ADDENDUM-manual-market-data.md` extends it: option quotes are typed in
+by hand from the Tiger app instead of fetched, behind a provider interface.
+Approved for design 2026-09-03; not implemented.
+
 ---
 
 ## 1. Phase status
@@ -14,7 +18,7 @@ authority; this file records what has actually been done against it.
 |---|---|---|---|
 | 1 | Connect and confirm the account | **done** | Ran `scripts/01_check_connection.py` against the live paper account. Tiger reported `Account type: PAPER`, `Status: Funded`, `Capability: RegTMargin`, USD 1,000,000 available. |
 | 2 | Market data: expirations and chains | **written, partly verified** | Expirations verified live: 24 real AAPL dates with correct days-to-expiry and weekly/monthly tags. The chain table is verified against a realistic synthetic fixture, **not** against live data — see §2. |
-| 3 | Contract resolution | not started | — |
+| 3 | Contract resolution | not started — **design changed**, see `SPEC-ADDENDUM-manual-market-data.md` | — |
 | 4 | Cost estimation, simulated orders | not started | — |
 | 5 | Paper order submission | not started | — |
 | 6 | Positions and P&L | not started | — |
@@ -43,7 +47,11 @@ ee8a39e  Initial commit: project skeleton and .gitignore
 
 ---
 
-## 2. The blocker: market data entitlement
+## 2. The blocker: option QUOTE entitlement
+
+Scoped deliberately: **quote** data is blocked, contract lookup is not.
+See "Contract lookup is a SEPARATE entitlement" below before concluding
+that anything option-related is unavailable.
 
 `scripts/02_show_chain.py` lists expirations correctly and then fails:
 
@@ -78,12 +86,42 @@ across a purchase. Results as of 2026-09-03:
 `get_quote_permission()` reports the account holds exactly one permission:
 `aStockQuoteLv1` (China A-share L1, permanent). Nothing for US markets.
 
-**Correction to an earlier assumption in this file:** option market data is
-*not* entirely blocked. Historical option bars and the intraday option
-timeline both work today without any purchase. Only the real-time chain and
-quote endpoints need `usOptionQuote`. If a future phase needs option prices
-and the entitlement is still unbought, `get_option_bars` is a real fallback
-worth considering — it was not known to be available when Phase 2 was written.
+### Contract lookup is a SEPARATE entitlement, and we have it
+
+Probed 2026-09-03. The capability probe above covers **quote** endpoints only,
+which made this file read as though options were shut off altogether. They are
+not.
+
+| Endpoint | Result | Needs paid access |
+|---|---|---|
+| `TradeClient.get_contract` (STK and OPT) | **OK** | **No** |
+| `TradeClient.get_contracts` | **OK** | **No** |
+| `TradeClient.get_derivative_contracts` | **OK** | **No** |
+
+All three are 60 requests/minute. A real option returns full metadata — identifier,
+strike, multiplier, contract id, name — and `get_derivative_contracts` returns
+the entire strike ladder for one expiry (104 strikes × call/put for AAPL
+2026-09-18). An impossible strike is **refused** with `ERROR 1200 bad_request`,
+so the validation is the exchange's answer rather than a local guess.
+
+This is what makes the manual-market-data architecture possible: the machine
+verifies contract identity for free, and only bid/ask/volume/OI/limit price
+have to be read off the Tiger app by hand. See
+`SPEC-ADDENDUM-manual-market-data.md`.
+
+`option_contract_by_symbol()` and `option_contract()` are **pure local
+constructors** — no network call, no validation. They will happily build a
+contract that does not exist, so they are for assembling an order object, never
+for verification.
+
+### Correction to an earlier assumption in this file
+
+Option market data is *not* entirely blocked. Historical option bars and the
+intraday option timeline both work today without any purchase. Only the
+real-time chain and quote endpoints need `usOptionQuote`. If a future phase
+needs option prices and the entitlement is still unbought, `get_option_bars` is
+a real fallback worth considering — it was not known to be available when
+Phase 2 was written, and it is what the addendum's decimal-slip check uses.
 
 Consequences already handled in the code:
 
@@ -313,6 +351,11 @@ wrong one — you get `None`.
 - **`get_option_bars` works on expired contracts.** The SDK's own docstring
   example uses one. This is how `07_premium_history.py` can show a dead
   contract's full life.
+- **Four more quirks in the contract-lookup calls** — `strike` typed as str
+  on the ladder but float on the single lookup, `identifier` and `name`
+  swapping meaning between them, an unlisted expiry returning an empty list
+  rather than an error, and `min_tick` always `None`. Each is written up with
+  its failure mode in `SPEC-ADDENDUM-manual-market-data.md` §9.
 
 ---
 
