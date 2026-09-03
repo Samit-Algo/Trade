@@ -25,6 +25,10 @@ DEFAULT_PRIVATE_KEY_PATH = "./secrets/tiger_private_key.pem"
 #: Matches a properties-file entry such as `private_key_pk8=MIIC...`.
 _PROPERTIES_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9_.]{0,62}=")
 
+#: Where bid/ask/volume/open interest come from. "manual" means typed in
+#: from the Tiger app; "tiger" means fetched, once the entitlement exists.
+VALID_MARKET_DATA_SOURCES = ("manual", "tiger")
+
 _TRUE_VALUES = {"true", "1", "yes", "y", "on"}
 _FALSE_VALUES = {"false", "0", "no", "n", "off"}
 
@@ -44,6 +48,7 @@ class Settings:
     allow_live: bool
     dry_run: bool
     license: str | None
+    market_data_source: str  # "manual" or "tiger"
     mode: str  # "PAPER" or "LIVE", resolved by safety.resolve_account_mode
 
     @property
@@ -172,6 +177,15 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
 
     license_code = _get("TIGER_LICENSE") or None
 
+    # Parsed strictly, like the booleans. Silently falling back to manual
+    # entry when someone meant live data would be its own kind of wrong.
+    market_data_source = (_get("MARKET_DATA_SOURCE") or "manual").lower()
+    if market_data_source not in VALID_MARKET_DATA_SOURCES:
+        raise ConfigError(
+            f"MARKET_DATA_SOURCE must be one of "
+            f"{', '.join(VALID_MARKET_DATA_SOURCES)} (got {market_data_source!r})."
+        )
+
     # Lock 1 and Lock 2. Raises LiveTradingBlocked rather than returning.
     mode = resolve_account_mode(account, paper_account, allow_live)
 
@@ -183,5 +197,6 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         allow_live=allow_live,
         dry_run=dry_run,
         license=license_code,
+        market_data_source=market_data_source,
         mode=mode,
     )

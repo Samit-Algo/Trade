@@ -27,6 +27,7 @@ from .throttle import (
     CHAIN_LIMITER,
     DELAYED_STOCK_BRIEFS_LIMITER,
     EXPIRATIONS_LIMITER,
+    OPTION_BARS_LIMITER,
     OPTION_BRIEFS_LIMITER,
     STOCK_BRIEFS_LIMITER,
 )
@@ -118,6 +119,15 @@ class UnderlyingPrice:
         if self.is_delayed:
             return "delayed ~15 min"
         return "real-time"
+
+
+@dataclass(frozen=True)
+class LastTrade:
+    """The most recent day on which a contract actually traded."""
+
+    close: float
+    trade_date: date
+    days_old: int
 
 
 @dataclass(frozen=True)
@@ -782,3 +792,57 @@ def fetch_contract_quote(quote_client, identifier: str) -> ContractQuote:
         spread=spread,
         spread_percent=spread_percent,
     )
+
+
+def fetch_last_traded_close(quote_client, identifier: str) -> LastTrade | None:
+    """Fetch the most recent daily close for one contract.
+
+    Used as a sanity check against hand-typed prices. It is free: historical
+    option bars need no quote entitlement, unlike the chain and briefs.
+
+    This is a check, never a price source. On a thin contract the last trade
+    may be days old, which is why days_old is returned alongside it.
+
+    Args:
+        quote_client: A tigeropen QuoteClient.
+        identifier: A full option identifier.
+
+    Returns:
+        The last traded close, or None when the contract has no history or the
+        request fails. None is a legitimate answer, not an error: a contract
+        that has never traded has no last price.
+    """
+    from tigeropen.common.consts import BarPeriod, Market
+
+    OPTION_BARS_LIMITER.wait()
+
+    try:
+        bars_frame = quote_client.get_option_bars(
+            identifiers=[identifier],
+            period=BarPeriod.DAY,
+            market=Market.US,
+        )
+    except Exception:
+        return None
+
+    # A contract with no history comes back as an empty *list*, not an empty
+    # DataFrame, so testing .empty alone would raise AttributeError.
+    if bars_frame is None or isinstance(bars_frame, list) or bars_frame.empty:
+        return None
+
+    if "time" not in bars_frame.columns or "close" not in bars_frame.columns:
+        return None
+
+    sorted_bars = bars_frame.sort_values("time", ascending=True)
+    final_bar = sorted_bars.iloc[-1]
+
+    close_price = _read_optional_float(final_bar, "close")
+    bar_time_ms = _read_optional_int(final_bar, "time")
+
+    if close_price is None or bar_time_ms is None:
+        return None
+
+    trade_date = milliseconds_to_date(bar_time_ms)
+    days_old = (today_in_market_timezone() - trade_date).days
+
+    return LastTrade(close=close_price, trade_date=trade_date, days_old=days_old)
