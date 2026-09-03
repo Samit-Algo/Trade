@@ -31,6 +31,7 @@ def build_order_record(
     stage: str,
     order_id: str | None = None,
     outcome: str | None = None,
+    legs=None,
 ) -> dict:
     """Assemble one audit record.
 
@@ -42,6 +43,7 @@ def build_order_record(
         stage: What happened -- "SIMULATED" here. Phase 5 will add its own.
         order_id: The broker's order ID, once there is one.
         outcome: The final fill outcome, once it is known.
+        legs: A BracketLegs, when the order carried attached orders.
 
     Returns:
         A JSON-serialisable dict.
@@ -101,6 +103,27 @@ def build_order_record(
             ),
             "performed": quote.last_close is not None,
         },
+        # What was actually sent on the wire for the attached orders. A
+        # bracketed order cannot be previewed by the broker, so if one is
+        # rejected this block is the only record of what it was asked to do.
+        "legs": (
+            {
+                "attach_type": legs.attach_type,
+                "leg_time_in_force": legs.leg_time_in_force,
+                "take_profit": {
+                    "leg_type": "PROFIT",
+                    "price": legs.take_profit_price,
+                    "time_in_force": legs.leg_time_in_force,
+                },
+                "stop_loss": {
+                    "leg_type": "LOSS",
+                    "price": legs.stop_loss_price,
+                    "time_in_force": legs.leg_time_in_force,
+                },
+            }
+            if legs is not None
+            else None
+        ),
         "order_id": order_id,
         "outcome": outcome,
     }

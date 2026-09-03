@@ -44,8 +44,13 @@ from tiger_backend.market import (  # noqa: E402
 from tiger_backend.orders import (  # noqa: E402
     DEFAULT_POLL_ATTEMPTS,
     DEFAULT_POLL_DELAY_SECONDS,
+    DEFAULT_TIME_IN_FORCE,
+    BracketError,
     OrderSubmissionError,
     buy_option,
+    buy_option_with_bracket,
+    get_attached_legs,
+    print_attached_legs,
     cancel_order,
     get_order_status,
     normalise_status,
@@ -201,6 +206,27 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--status", type=int, help="show the state of one order and exit")
     parser.add_argument("--cancel", type=int, help="cancel one order and exit")
+    parser.add_argument("--legs", type=int, help="show the legs attached to one order and exit")
+
+    parser.add_argument(
+        "--take-profit",
+        type=float,
+        help="attach a take-profit leg at this price (requires --stop-loss)",
+    )
+    parser.add_argument(
+        "--stop-loss",
+        type=float,
+        help="attach a stop-loss leg at this price (requires --take-profit)",
+    )
+    parser.add_argument(
+        "--leg-tif",
+        default=DEFAULT_TIME_IN_FORCE,
+        help=(
+            "time in force for the attached legs (default DAY). Whether a "
+            "paper account accepts GTC on a leg is undocumented and could "
+            "not be established without submitting one."
+        ),
+    )
 
     parser.add_argument(
         "--max-quote-age",
@@ -277,10 +303,11 @@ def place_order_flow(settings, quote_client, trade_client, arguments) -> int:
         write_order_record(record)
 
     action = arguments.action.strip().upper()
-    order_function = buy_option if action == "BUY" else sell_option
+    wants_bracket = (
+        arguments.take_profit is not None or arguments.stop_loss is not None
+    )
 
-    print()
-    outcome, estimate = order_function(
+    shared = dict(
         trade_client=trade_client,
         settings=settings,
         contract=contract,
@@ -296,6 +323,19 @@ def place_order_flow(settings, quote_client, trade_client, arguments) -> int:
     )
 
     print()
+    legs = None
+    if wants_bracket:
+        outcome, estimate, legs = buy_option_with_bracket(
+            take_profit_price=arguments.take_profit,
+            stop_loss_price=arguments.stop_loss,
+            leg_time_in_force=arguments.leg_tif,
+            **shared,
+        )
+    else:
+        order_function = buy_option if action == "BUY" else sell_option
+        outcome, estimate = order_function(**shared)
+
+    print()
     print_fill_outcome(outcome, estimate)
 
     final_record = build_order_record(
@@ -306,6 +346,7 @@ def place_order_flow(settings, quote_client, trade_client, arguments) -> int:
         stage="FINAL",
         order_id=outcome.order_id,
         outcome=outcome.outcome,
+        legs=legs,
     )
     final_record["fill"] = {
         "status": outcome.status,
@@ -321,6 +362,15 @@ def place_order_flow(settings, quote_client, trade_client, arguments) -> int:
     log_path = write_order_record(final_record)
 
     print(f"Audit record written to {log_path.name}")
+
+    # Legs only exist once the parent is on the broker's books, so this is
+    # asked after submission rather than assumed from what was sent.
+    if legs is not None and outcome.order_id is not None:
+        print()
+        print_attached_legs(
+            get_attached_legs(trade_client, outcome.order_id), outcome.order_id
+        )
+
     return 0
 
 
@@ -353,6 +403,18 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.cancel is not None:
             return cancel_and_report(trade_client, arguments.cancel, arguments)
 
+        if arguments.legs is not None:
+            print_attached_legs(
+                get_attached_legs(trade_client, arguments.legs), arguments.legs
+            )
+            return 0
+
+        if (arguments.take_profit is None) != (arguments.stop_loss is None):
+            parser.error(
+                "--take-profit and --stop-loss must be given together: a "
+                "bracket needs both sides"
+            )
+
         required = (
             arguments.underlying,
             arguments.expiry,
@@ -364,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
         if any(value is None for value in required):
             parser.error(
                 "give UNDERLYING EXPIRY STRIKE TYPE ACTION QUANTITY, "
-                "or use --status / --cancel"
+                "or use --status / --cancel / --legs"
             )
 
         print(f"Market data source: {settings.market_data_source.upper()}")
@@ -378,6 +440,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {error}")
         print("=" * RULE_WIDTH)
         return 2
+    except BracketError as error:
+        print()
+        print("THE BRACKET PRICES DO NOT WORK - NOTHING WAS SENT")
+        print("-" * RULE_WIDTH)
+        for line in str(error).splitlines():
+            print(f"  {line}")
+        print("-" * RULE_WIDTH)
+        return 7
     except OrderSubmissionError as error:
         print()
         print("ORDER NOT SUBMITTED")

@@ -26,7 +26,11 @@ import time
 from dataclasses import dataclass
 
 from tigeropen.common.util.contract_utils import option_contract
-from tigeropen.common.util.order_utils import limit_order
+from tigeropen.common.util.order_utils import (
+    limit_order,
+    limit_order_with_legs,
+    order_leg,
+)
 
 from .pricing import CostEstimate, estimate_cost
 from .providers import QuoteSnapshot
@@ -925,5 +929,583 @@ def print_fill_outcome(outcome: FillOutcome, estimate: CostEstimate | None = Non
         print("  This is not success and not failure: the order is live at the")
         print("  broker and may yet fill. Check it again with:")
         print(f"    python scripts/05_paper_order.py --status {outcome.order_id}")
+
+    print("=" * RULE_WIDTH)
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 -- attached take-profit and stop-loss legs
+#
+# Legs attach to a PARENT order and activate when it fills. They cannot be
+# attached to a position you already hold: to bracket an existing holding you
+# must close it and buy again with legs attached.
+#
+# The important operational fact, established by probing on 2026-09-03:
+# preview_order REFUSES attached orders --
+#     code=1010 biz param error(OCA/ATTACHED order preview not supported)
+# for options and for stocks alike, while previewing a plain option order
+# fine. So a bracketed order cannot be validated by the broker before it is
+# sent. The local checks below are the only pre-submission check that exists,
+# which is why they are louder than they would otherwise need to be.
+# ---------------------------------------------------------------------------
+
+#: Commission observed on the Phase 5 fill: a $28.00 premium came back with an
+#: average_cost of 0.3102 per share, so $31.02 all in. ONE observation. Whether
+#: it is flat, per contract, or a minimum is not known, so everything derived
+#: from it is labelled an estimate wherever it is printed.
+OBSERVED_COMMISSION_PER_ORDER = 3.02
+
+LEG_PROFIT = "PROFIT"
+LEG_LOSS = "LOSS"
+
+
+class BracketError(Exception):
+    """The requested bracket prices do not make sense."""
+
+
+@dataclass(frozen=True)
+class BracketLegs:
+    """The take-profit and stop-loss attached to a parent order."""
+
+    take_profit_price: float
+    stop_loss_price: float
+    leg_time_in_force: str
+
+    @property
+    def attach_type(self) -> str:
+        """Return the attach_type the SDK will put on the wire.
+
+        Mirrors the SDK's own rule so the audit trail can record what was
+        actually sent: one leg sends its own type, two send BRACKETS. See
+        tigeropen/trade/request/model.py _parse_leg_param.
+        """
+        return "BRACKETS"
+
+
+def estimate_commission_per_share(quantity: int, multiplier: float) -> float:
+    """Spread the observed per-order commission across the shares involved.
+
+    Args:
+        quantity: Contracts.
+        multiplier: Shares per contract.
+
+    Returns:
+        Estimated commission per share.
+    """
+    shares = multiplier * quantity
+    if shares <= 0:
+        return 0.0
+    return OBSERVED_COMMISSION_PER_ORDER / shares
+
+
+def estimate_round_trip_commission(quantity: int, multiplier: float) -> float:
+    """Estimate commission for getting in and back out again.
+
+    Two orders: the entry, and whichever leg closes it. On a cheap contract
+    this is the largest single cost in the trade.
+
+    Args:
+        quantity: Contracts.
+        multiplier: Shares per contract.
+
+    Returns:
+        Estimated round-trip commission in cash.
+    """
+    return round(OBSERVED_COMMISSION_PER_ORDER * 2, 2)
+
+
+def is_take_profit_a_losing_exit(
+    take_profit_price: float,
+    entry_limit_price: float,
+    quantity: int,
+    multiplier: float,
+) -> bool:
+    """Decide whether the take-profit would actually lose money.
+
+    A "take profit" set at or below the entry price plus the commission you
+    will pay to get out is not taking a profit. It is closing at a loss with
+    an encouraging name on it.
+
+    Args:
+        take_profit_price: Where the profit leg would sell.
+        entry_limit_price: What the parent would pay.
+        quantity: Contracts.
+        multiplier: Shares per contract.
+
+    Returns:
+        True when the exit loses money.
+    """
+    commission_per_share = estimate_commission_per_share(quantity, multiplier)
+    break_even_exit = entry_limit_price + commission_per_share
+    return take_profit_price <= break_even_exit
+
+
+def validate_bracket_prices(
+    entry_limit_price: float,
+    take_profit_price: float,
+    stop_loss_price: float,
+) -> None:
+    """Check the three prices are in a sane order.
+
+    Args:
+        entry_limit_price: What the parent pays.
+        take_profit_price: Where the profit leg sells.
+        stop_loss_price: Where the stop leg sells.
+
+    Raises:
+        BracketError: If the prices cannot form a working bracket.
+    """
+    if take_profit_price <= 0 or stop_loss_price <= 0:
+        raise BracketError("Bracket prices must be greater than zero.")
+
+    if stop_loss_price >= entry_limit_price:
+        raise BracketError(
+            f"Stop loss {stop_loss_price:,.2f} is at or above the entry price "
+            f"{entry_limit_price:,.2f}. A stop above your entry would trigger "
+            "immediately on any fill."
+        )
+
+    if take_profit_price <= entry_limit_price:
+        raise BracketError(
+            f"Take profit {take_profit_price:,.2f} is at or below the entry "
+            f"price {entry_limit_price:,.2f}. That is not a profit target."
+        )
+
+    # No separate "inverted bracket" check is needed. The two tests above
+    # already force stop_loss < entry < take_profit, so take_profit is
+    # necessarily above stop_loss by the time execution reaches here. A third
+    # check would be unreachable, and unreachable code implies a case that
+    # can happen when it cannot.
+
+
+def calculate_intended_risk(
+    entry_limit_price: float,
+    stop_loss_price: float,
+    quantity: int,
+    multiplier: float,
+) -> float:
+    """Work out the cash the stop is intended to cap the loss at.
+
+    Intended, not guaranteed. A stop is a trigger, not a promise: the fill can
+    be worse, and on a gap there may be no fill at that price at all.
+
+    Args:
+        entry_limit_price: What the parent pays.
+        stop_loss_price: Where the stop leg sells.
+        quantity: Contracts.
+        multiplier: Shares per contract.
+
+    Returns:
+        The intended loss in cash, including estimated round-trip commission.
+    """
+    price_risk = (entry_limit_price - stop_loss_price) * multiplier * quantity
+    commission = estimate_round_trip_commission(quantity, multiplier)
+    return round(price_risk + commission, 2)
+
+
+def build_option_order_with_bracket(
+    settings,
+    contract,
+    action: str,
+    quantity: int,
+    limit_price: float,
+    take_profit_price: float,
+    stop_loss_price: float,
+    leg_time_in_force: str = DEFAULT_TIME_IN_FORCE,
+    time_in_force: str = DEFAULT_TIME_IN_FORCE,
+):
+    """Construct a limit order with take-profit and stop-loss legs attached.
+
+    Builds and returns. Does not submit.
+
+    Both legs go in one list. The SDK encodes that as attach_type='BRACKETS',
+    which the documented appendix lists as a valid attach type -- so the "only
+    one sub-order" limit described in Tiger's app help does not apply to the
+    API.
+
+    Args:
+        settings: Validated configuration, for the account number.
+        contract: An OptionContractInfo, already verified.
+        action: "BUY" or "SELL".
+        quantity: Number of contracts.
+        limit_price: The parent's limit price.
+        take_profit_price: Where the profit leg sells.
+        stop_loss_price: Where the stop leg sells.
+        leg_time_in_force: Time in force for the LEGS. Parameterised because
+            whether a paper account accepts GTC on a leg is undocumented and
+            could not be established without submitting; DAY is the SDK's own
+            default and the conservative choice.
+        time_in_force: Time in force for the parent. Paper rejects GTC.
+
+    Returns:
+        The SDK Order object, unsent, with both legs attached.
+    """
+    order_contract = option_contract(
+        identifier=contract.identifier,
+        multiplier=contract.multiplier,
+    )
+
+    take_profit_leg = order_leg(
+        LEG_PROFIT,
+        take_profit_price,
+        time_in_force=leg_time_in_force,
+        outside_rth=False,
+    )
+    stop_loss_leg = order_leg(
+        LEG_LOSS,
+        stop_loss_price,
+        time_in_force=leg_time_in_force,
+        outside_rth=False,
+    )
+
+    order = limit_order_with_legs(
+        account=settings.account,
+        contract=order_contract,
+        action=action,
+        quantity=quantity,
+        limit_price=limit_price,
+        order_legs=[take_profit_leg, stop_loss_leg],
+        time_in_force=time_in_force,
+    )
+
+    # Extended hours off, as everywhere else in this project.
+    order.outside_rth = False
+
+    return order
+
+
+def print_bracket_preview(
+    contract,
+    quote: QuoteSnapshot,
+    estimate: CostEstimate,
+    legs: BracketLegs,
+) -> None:
+    """Print the bracket-specific block beneath the ordinary order preview.
+
+    Args:
+        contract: The OptionContractInfo.
+        quote: The QuoteSnapshot.
+        estimate: The CostEstimate for the parent.
+        legs: The bracket prices.
+    """
+    entry_price = estimate.price_used
+    quantity = estimate.quantity
+    multiplier = estimate.multiplier
+
+    round_trip_commission = estimate_round_trip_commission(quantity, multiplier)
+    commission_per_share = estimate_commission_per_share(quantity, multiplier)
+    intended_risk = calculate_intended_risk(
+        entry_price, legs.stop_loss_price, quantity, multiplier
+    )
+
+    profit_at_target = round(
+        (legs.take_profit_price - entry_price) * multiplier * quantity
+        - round_trip_commission,
+        2,
+    )
+
+    print("-" * RULE_WIDTH)
+    print("ATTACHED ORDERS (BRACKET)")
+    print("-" * RULE_WIDTH)
+    print(
+        f"  Entry  LIMIT  : {entry_price:,.2f}   "
+        "buys the contract; the legs are dormant until it fills"
+    )
+    print(
+        f"  Take profit   : {legs.take_profit_price:,.2f}   "
+        "sells if the price rises to here"
+    )
+    print(
+        f"  Stop loss     : {legs.stop_loss_price:,.2f}   "
+        "sells if the price falls to here"
+    )
+    print(f"  Leg time in force : {legs.leg_time_in_force}")
+    print(f"  attach_type sent  : {legs.attach_type}")
+    print("-" * RULE_WIDTH)
+    print(
+        f"  Est. round-trip commission : ${round_trip_commission:,.2f}"
+        f"  (${commission_per_share:.4f}/share)"
+    )
+    print("    ESTIMATE, from the single $3.02 seen on the Phase 5 fill.")
+    print("    Whether that is flat, per contract, or a minimum is not known.")
+    print("-" * RULE_WIDTH)
+    print(f"  If the stop triggers : lose about ${intended_risk:,.2f}")
+    print(f"  If the target hits   : make about ${profit_at_target:,.2f}")
+    print(
+        f"  CASH AT RISK         : {format_money(estimate.total_cash)}"
+        "   (the whole premium)"
+    )
+    print("    The stop is a trigger, not a promise. On a gap the fill can be")
+    print("    worse than the stop price, or there may be no fill at all, so")
+    print("    the full premium is still what you are risking.")
+    print("-" * RULE_WIDTH)
+
+    if is_take_profit_a_losing_exit(
+        legs.take_profit_price, entry_price, quantity, multiplier
+    ):
+        break_even_exit = entry_price + commission_per_share
+        print("!" * RULE_WIDTH)
+        print("!!  THE TAKE PROFIT IS A LOSING EXIT")
+        print("!" * RULE_WIDTH)
+        print(
+            f"!!  Selling at {legs.take_profit_price:,.2f} after paying "
+            f"{entry_price:,.2f} does not"
+        )
+        print("!!  cover the commission to get back out.")
+        print(
+            f"!!  You need at least {break_even_exit:,.4f} to break even "
+            "(estimated)."
+        )
+        print("!!  A 'take profit' below break-even takes a loss.")
+        print("!" * RULE_WIDTH)
+
+    print("  NOT VALIDATED BY THE BROKER.")
+    print("    Tiger refuses to preview attached orders:")
+    print("    code=1010 'OCA/ATTACHED order preview not supported'.")
+    print("    A plain order can be checked before sending; this cannot.")
+    print("    The checks above are the only pre-submission check there is.")
+    print("-" * RULE_WIDTH)
+
+
+def buy_option_with_bracket(
+    trade_client,
+    settings,
+    contract,
+    quote: QuoteSnapshot,
+    quantity: int,
+    take_profit_price: float,
+    stop_loss_price: float,
+    leg_time_in_force: str = DEFAULT_TIME_IN_FORCE,
+    underlying_price=None,
+    cash_available: float | None = None,
+    liquidity_threshold: int = 10,
+    max_age_seconds: int = 60,
+    poll_attempts: int = DEFAULT_POLL_ATTEMPTS,
+    poll_delay_seconds: float = DEFAULT_POLL_DELAY_SECONDS,
+    input_function=input,
+    on_submitted=None,
+):
+    """Buy an option with take-profit and stop-loss legs attached.
+
+    Runs the same mandatory sequence as Phase 5, with the bracket preview and
+    checks inserted into step 3. There is no path around the locks: this
+    function calls assert_order_allowed twice, exactly as _submit_option_order
+    does, and for the same reasons.
+
+        1. contract already resolved by the caller (Phase 3)
+        2. quote already obtained and checked (Phase 4)
+        3. print the full preview, including the bracket block
+        4. assert_order_allowed(mode, dry_run)
+        5. typed confirmation of the cash amount
+        6. build the order, with legs
+        7. submit
+        8. poll for the true outcome
+
+    Args:
+        trade_client: A tigeropen TradeClient.
+        settings: Validated configuration.
+        contract: The verified OptionContractInfo.
+        quote: The QuoteSnapshot from a MarketDataProvider.
+        quantity: Number of contracts.
+        take_profit_price: Where the profit leg sells.
+        stop_loss_price: Where the stop leg sells.
+        leg_time_in_force: Time in force for the legs. Default DAY.
+        underlying_price: An UnderlyingPrice, or None.
+        cash_available: Cash available to trade.
+        liquidity_threshold: Below this, volume or OI is flagged thin.
+        max_age_seconds: The staleness limit, shown for context.
+        poll_attempts: Maximum status checks after submission.
+        poll_delay_seconds: Seconds between checks.
+        input_function: How to read the confirmation. Injectable for testing.
+        on_submitted: Called with (order_id, estimate) before polling.
+
+    Returns:
+        A triple of (outcome, estimate, legs).
+
+    Raises:
+        BracketError: If the three prices cannot form a working bracket.
+        LiveTradingBlocked: If the safety guard refuses the order.
+        OrderSubmissionError: If the human declines, or submission fails.
+    """
+    from .pricing import compare_to_available_cash
+
+    estimate = estimate_cost(
+        contract=contract,
+        action="BUY",
+        quantity=quantity,
+        bid=quote.bid,
+        ask=quote.ask,
+        limit_price=quote.limit_price,
+    )
+
+    # Checked before anything is printed, so an impossible bracket fails fast
+    # rather than after a page of preview.
+    validate_bracket_prices(
+        estimate.price_used, take_profit_price, stop_loss_price
+    )
+
+    legs = BracketLegs(
+        take_profit_price=take_profit_price,
+        stop_loss_price=stop_loss_price,
+        leg_time_in_force=leg_time_in_force,
+    )
+
+    cash_warning = compare_to_available_cash(estimate.total_cash, cash_available)
+
+    # Step 3 -- preview.
+    print_order_preview(
+        contract=contract,
+        quote=quote,
+        estimate=estimate,
+        underlying_price=underlying_price,
+        liquidity_threshold=liquidity_threshold,
+        max_age_seconds=max_age_seconds,
+        cash_warning=cash_warning,
+    )
+    print_bracket_preview(contract, quote, estimate, legs)
+
+    # Step 4 -- the guard, before the human is asked anything.
+    assert_order_allowed(settings.mode, settings.dry_run)
+
+    # Step 5 -- typed confirmation of the cash amount, not "yes".
+    if not confirm_cash_amount(estimate, input_function=input_function):
+        raise OrderSubmissionError("Cash amount not confirmed. Nothing was submitted.")
+
+    # Step 6 -- build, with legs.
+    order = build_option_order_with_bracket(
+        settings=settings,
+        contract=contract,
+        action="BUY",
+        quantity=estimate.quantity,
+        limit_price=quote.limit_price,
+        take_profit_price=take_profit_price,
+        stop_loss_price=stop_loss_price,
+        leg_time_in_force=leg_time_in_force,
+    )
+
+    # Step 4, again, immediately before the wire.
+    assert_order_allowed(settings.mode, settings.dry_run)
+
+    # Step 7 -- submit.
+    print("-" * RULE_WIDTH)
+    print("  SUBMITTING BRACKETED ORDER...")
+    print("  This cannot have been validated in advance. If Tiger rejects")
+    print("  attached orders on options, this is where it will say so.")
+    PLACE_ORDER_LIMITER.wait()
+    try:
+        order_id = trade_client.place_order(order)
+    except Exception as error:
+        raise OrderSubmissionError(
+            f"The broker refused the bracketed order: "
+            f"{type(error).__name__}: {error}"
+        ) from error
+
+    if order_id is None:
+        order_id = getattr(order, "id", None)
+
+    print(f"  Order ID: {order_id}")
+    print("  An order ID confirms SUBMISSION, NOT EXECUTION.")
+    print("  Asking the broker what actually happened...")
+    print("-" * RULE_WIDTH)
+
+    if on_submitted is not None:
+        on_submitted(order_id, estimate)
+
+    # Step 8 -- find out what really happened.
+    outcome = poll_until_settled(
+        trade_client=trade_client,
+        order_id=order_id,
+        requested_quantity=estimate.quantity,
+        contract_multiplier=estimate.multiplier,
+        poll_attempts=poll_attempts,
+        poll_delay_seconds=poll_delay_seconds,
+    )
+
+    return outcome, estimate, legs
+
+
+def get_attached_legs(trade_client, parent_order_id: int) -> list:
+    """Find the legs attached to a parent order.
+
+    Tried two ways, because which one carries the legs is not documented:
+    the parent's own `order_legs` attribute, and any order reporting this one
+    as its `parent_id`.
+
+    Args:
+        trade_client: A tigeropen TradeClient.
+        parent_order_id: The parent order's global ID.
+
+    Returns:
+        A list of dicts describing what was found, empty if nothing was.
+    """
+    from tigeropen.common.consts import Market
+
+    found = []
+
+    parent = get_order_status(trade_client, parent_order_id)
+    if parent is not None:
+        for leg in getattr(parent, "order_legs", None) or []:
+            found.append(
+                {
+                    "source": "parent.order_legs",
+                    "leg_type": getattr(leg, "leg_type", None),
+                    "price": getattr(leg, "price", None),
+                    "time_in_force": getattr(leg, "time_in_force", None),
+                    "outside_rth": getattr(leg, "outside_rth", None),
+                }
+            )
+
+    ORDERS_LIMITER.wait()
+    try:
+        recent_orders = trade_client.get_orders(limit=50, market=Market.US)
+    except Exception:
+        recent_orders = None
+
+    for candidate in recent_orders or []:
+        if getattr(candidate, "parent_id", None) == parent_order_id:
+            found.append(
+                {
+                    "source": "child order",
+                    "id": getattr(candidate, "id", None),
+                    "order_type": getattr(candidate, "order_type", None),
+                    "action": getattr(candidate, "action", None),
+                    "quantity": getattr(candidate, "quantity", None),
+                    "limit_price": getattr(candidate, "limit_price", None),
+                    "aux_price": getattr(candidate, "aux_price", None),
+                    "time_in_force": getattr(candidate, "time_in_force", None),
+                    "status": normalise_status(getattr(candidate, "status", None)),
+                }
+            )
+
+    return found
+
+
+def print_attached_legs(legs_found: list, parent_order_id: int) -> None:
+    """Print what was found attached to a parent order.
+
+    Args:
+        legs_found: The result of get_attached_legs.
+        parent_order_id: The parent's ID, for the heading.
+    """
+    print("=" * RULE_WIDTH)
+    print(f"  ATTACHED LEGS ON ORDER {parent_order_id}")
+    print("=" * RULE_WIDTH)
+
+    if not legs_found:
+        print("  None found.")
+        print("")
+        print("  That does not by itself prove the legs were rejected. It may")
+        print("  mean the legs are not exposed through either route tried")
+        print("  (the parent's order_legs, or a child order naming this parent).")
+        print("  Check the Tiger app before concluding anything.")
+        print("=" * RULE_WIDTH)
+        return
+
+    for item in legs_found:
+        print(f"  via {item.pop('source')}")
+        for key, value in item.items():
+            if value is not None:
+                print(f"    {key:<16}= {value}")
+        print("")
 
     print("=" * RULE_WIDTH)
