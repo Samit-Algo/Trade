@@ -124,6 +124,50 @@ class QuoteSnapshot:
         return self.age_seconds(now) > max_age_seconds
 
 
+@dataclass(frozen=True)
+class BidSnapshot:
+    """Just the bid for one contract, with its provenance attached.
+
+    Separate from QuoteSnapshot because valuing a position needs one number,
+    not five. Asking for an ask, a volume and a limit price to value something
+    you are not trading would be five chances to mistype instead of one.
+
+    `source` and `captured_at` are required here for the same reason they are
+    on QuoteSnapshot: an unlabelled price cannot be constructed.
+    """
+
+    bid: float
+    source: QuoteSource
+    captured_at: datetime
+
+    last_close: float | None = None
+    last_close_date: date | None = None
+    last_close_ratio: float | None = None
+
+    @property
+    def is_manual(self) -> bool:
+        """True when this number was typed by a human."""
+        return self.source is QuoteSource.MANUAL
+
+    @property
+    def source_tag(self) -> str:
+        """Return the label printed beside the price."""
+        return self.source.tag
+
+    def age_seconds(self, now: datetime | None = None) -> float:
+        """Return how old this reading is, in seconds."""
+        current_time = now if now is not None else datetime.now(timezone.utc)
+        return (current_time - self.captured_at).total_seconds()
+
+    def is_stale(
+        self,
+        max_age_seconds: int = DEFAULT_MAX_QUOTE_AGE_SECONDS,
+        now: datetime | None = None,
+    ) -> bool:
+        """Decide whether this reading is too old to value a position with."""
+        return self.age_seconds(now) > max_age_seconds
+
+
 class MarketDataProvider(ABC):
     """Supplies market data for one contract.
 
@@ -146,6 +190,29 @@ class MarketDataProvider(ABC):
             QuoteEntryError: If a quote could not be obtained.
         """
         raise NotImplementedError
+
+    def get_bid(self, contract) -> BidSnapshot:
+        """Return just the bid, for valuing a position rather than trading.
+
+        The default delegates to get_quote, so a provider that fetches
+        everything at once needs no extra work. ManualEntryProvider overrides
+        it to ask for one number instead of five.
+
+        Args:
+            contract: An OptionContractInfo.
+
+        Returns:
+            The bid, with its provenance.
+        """
+        quote = self.get_quote(contract)
+        return BidSnapshot(
+            bid=quote.bid,
+            source=quote.source,
+            captured_at=quote.captured_at,
+            last_close=quote.last_close,
+            last_close_date=quote.last_close_date,
+            last_close_ratio=quote.last_close_ratio,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +406,51 @@ class ManualEntryProvider(MarketDataProvider):
             volume=volume,
             open_interest=open_interest,
             limit_price=limit_price,
+            source=QuoteSource.MANUAL,
+            captured_at=datetime.now(timezone.utc),
+            last_close=last_trade.close if last_trade else None,
+            last_close_date=last_trade.trade_date if last_trade else None,
+            last_close_ratio=ratio,
+        )
+
+    def get_bid(self, contract) -> BidSnapshot:
+        """Ask the human for just the bid, for valuing a held position.
+
+        One number, not five. A position is worth what someone will pay for
+        it, so the bid is the only price that answers the question.
+
+        The decimal-slip check still applies: a mistyped bid produces a
+        profit-and-loss figure that is wrong by a factor of ten.
+
+        Args:
+            contract: An OptionContractInfo.
+
+        Returns:
+            The typed bid, stamped MANUAL and timestamped.
+
+        Raises:
+            QuoteEntryError: If entry is abandoned or an override fails.
+        """
+        self.output_function("")
+        self.output_function("-" * 60)
+        self.output_function(f"  ENTER THE BID BY HAND  {QuoteSource.MANUAL.tag}")
+        self.output_function("-" * 60)
+        self.output_function(f"  Contract : {contract.identifier}")
+        self.output_function(f"  Read     : {contract.describe()}")
+        self.output_function("")
+        self.output_function("  A position is worth what someone will PAY for it,")
+        self.output_function("  so read the BID, not the ask and not the last price.")
+        self.output_function("-" * 60)
+
+        last_trade = self._fetch_last_traded_close(contract)
+
+        bid = self._prompt_price("Bid")
+        self._check_for_decimal_slip(bid, last_trade)
+
+        ratio = decimal_slip_ratio(bid, last_trade.close if last_trade else None)
+
+        return BidSnapshot(
+            bid=bid,
             source=QuoteSource.MANUAL,
             captured_at=datetime.now(timezone.utc),
             last_close=last_trade.close if last_trade else None,
