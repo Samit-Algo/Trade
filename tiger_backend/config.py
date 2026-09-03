@@ -9,6 +9,7 @@ logged or printed here.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,9 @@ from .safety import mask_account, resolve_account_mode
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_PRIVATE_KEY_PATH = "./secrets/tiger_private_key.pem"
+
+#: Matches a properties-file entry such as `private_key_pk8=MIIC...`.
+_PROPERTIES_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9_.]{0,62}=")
 
 _TRUE_VALUES = {"true", "1", "yes", "y", "on"}
 _FALSE_VALUES = {"false", "0", "no", "n", "off"}
@@ -82,6 +86,39 @@ def _resolve_key_path(raw: str) -> Path:
     return path
 
 
+def _assert_looks_like_private_key(path: Path) -> None:
+    """Reject a key path that points at something other than key material.
+
+    Pointing this at tiger_openapi_config.properties is an easy mistake: the
+    file does contain the key, but the SDK reads the whole file verbatim and
+    the failure surfaces much later as an opaque signing error deep in the
+    SDK ("Invalid symbol 95"). Catch it here, where we can explain it.
+
+    Only the first line is inspected, and it is never printed.
+    """
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            first_line = handle.readline().strip()
+    except OSError as exc:
+        raise ConfigError(f"Could not read TIGER_PRIVATE_KEY_PATH at {path}: {exc}") from exc
+
+    if not first_line:
+        raise ConfigError(f"The private key file at {path} is empty.")
+
+    # A properties line looks like `private_key_pk8=MIIC...`. Base64 key
+    # material also contains '=', but only as padding in the final two
+    # characters, so what separates them is how much follows the '='.
+    match = _PROPERTIES_LINE.match(first_line)
+    if match and len(first_line) - match.end() > 4:
+        raise ConfigError(
+            f"TIGER_PRIVATE_KEY_PATH points at {path.name}, which looks like a "
+            "properties file rather than a key file.\n"
+            "It contains the key, but the SDK needs the key on its own. Copy the "
+            "value after 'private_key_pk8=' into a .pem file (no header lines) "
+            "and point TIGER_PRIVATE_KEY_PATH at that instead."
+        )
+
+
 def load_settings(env_file: Path | str | None = None) -> Settings:
     """Load .env, validate it, and resolve the account mode.
 
@@ -131,6 +168,7 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         )
     if not private_key_path.is_file():
         raise ConfigError(f"TIGER_PRIVATE_KEY_PATH is not a file: {private_key_path}")
+    _assert_looks_like_private_key(private_key_path)
 
     license_code = _get("TIGER_LICENSE") or None
 

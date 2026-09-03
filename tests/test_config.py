@@ -42,6 +42,12 @@ def env(monkeypatch, tmp_path):
     key = tmp_path / "key.pem"
     key.write_text("not-a-real-key")
 
+    # An empty stand-in .env. Passing env_file=None would make load_settings
+    # read the developer's real .env at the project root, so a filled-in
+    # credential would leak into the tests and change their outcome.
+    empty_env = tmp_path / "empty.env"
+    empty_env.write_text("")
+
     def configure(**overrides):
         values = {**BASE_ENV, "TIGER_PRIVATE_KEY_PATH": str(key), **overrides}
         for name, value in values.items():
@@ -49,8 +55,7 @@ def env(monkeypatch, tmp_path):
                 monkeypatch.delenv(name, raising=False)
             else:
                 monkeypatch.setenv(name, value)
-        # Point at a non-existent .env so load_dotenv cannot pull in real values.
-        return load_settings(env_file=None)
+        return load_settings(env_file=empty_env)
 
     configure.key_path = key
     return configure
@@ -111,3 +116,25 @@ def test_masked_account_property(env):
 def test_license_is_optional(env):
     assert env().license is None
     assert env(TIGER_LICENSE="TBSG").license == "TBSG"
+
+
+def test_properties_file_as_key_path_is_rejected(env, tmp_path):
+    """The exact mistake that produced 'Invalid symbol 95' from deep in the SDK."""
+    props = tmp_path / "tiger_openapi_config.properties"
+    props.write_text("private_key_pk1=MIICXQIBAAKBgQ\nprivate_key_pk8=MIICdwIBADANBg\n")
+    with pytest.raises(ConfigError, match="properties file"):
+        env(TIGER_PRIVATE_KEY_PATH=str(props))
+
+
+def test_empty_key_file_is_rejected(env, tmp_path):
+    blank = tmp_path / "blank.pem"
+    blank.write_text("")
+    with pytest.raises(ConfigError, match="empty"):
+        env(TIGER_PRIVATE_KEY_PATH=str(blank))
+
+
+def test_real_base64_key_with_padding_is_accepted(env, tmp_path):
+    """Base64 padding ends with '=' -- that must not read as a properties line."""
+    real = tmp_path / "real.pem"
+    real.write_text("MIICdwIBADANBgkqhkiG9w0BAQEFAASCAmEwggJdAgEAAoGBAI==\n")
+    assert env(TIGER_PRIVATE_KEY_PATH=str(real)).private_key_path == real
