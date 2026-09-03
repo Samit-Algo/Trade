@@ -1,7 +1,7 @@
 # Handover
 
-**All six phases complete, 2026-09-03.** Everything below is verified, not
-assumed. Read this before touching the code so nothing gets re-derived.
+**All six spec phases complete, plus Phase 7 (attached orders), 2026-09-03.**
+Everything below is verified, not assumed. Read this before touching the code so nothing gets re-derived.
 
 The build specification is `../tiger-options-backend-spec.md`. It is the
 authority; this file records what has actually been done against it.
@@ -22,6 +22,7 @@ Approved and implemented.
 | 4 | Cost estimation and simulated orders | **done** | BUY 1x AAPL 320 CALL → CASH REQUIRED $1,160.00, break-even $331.60. SELL 2x 300 PUT → CASH RECEIVED $110.00, max loss correctly refused as unbounded-if-opening. A deliberate decimal slip (ask 115.00 against an 11.21 last close) was blocked; `y` rejected, `USE 115.00` accepted. |
 | 5 | Paper order submission | **done — a real order was placed** | See below. |
 | 6 | Positions and P&L | **done** | The Phase 5 position read back and valued at a typed bid. See §3. |
+| 7 | Attached take-profit and stop-loss (new, outside the spec) | **done** | Two bracketed orders placed live, one with DAY legs and one with GTC. Both filled; all four legs confirmed live. See §3a. |
 
 ### The real paper order
 
@@ -43,7 +44,7 @@ blocked at step 4, before the confirmation prompt was even offered. `DRY_RUN`
 was set false for that one order and restored immediately afterwards, verified
 blocking again. It is `true` now.
 
-213 unit tests pass, all offline — no network, no credentials:
+234 unit tests pass, all offline — no network, no credentials:
 
 ```bash
 python -m pytest tests/ -q
@@ -52,6 +53,8 @@ python -m pytest tests/ -q
 Commits, newest first:
 
 ```
+8027e29  Phase 7: attached take-profit and stop-loss legs
+f2a93f9  Bring HANDOVER.md and README current for all six phases
 efe6e72  Phase 6: positions and P&L
 98fa7ec  Phase 5: paper order submission
 4c082ff  Phase 4: cost estimation, manual market data, simulated orders
@@ -140,14 +143,137 @@ What this means in practice:
   **excludes commission**. On a $1,160 order that is noise. On a $28 order it
   is most of the position.
 
-**Caveat: this is one data point.** Whether $3.02 is a flat per-order fee, a
-per-contract fee, or has a minimum is not known, and one sample cannot tell
-them apart. Place a second order at a different size before drawing a rule from
-it. If it is a flat minimum, cheap contracts are disproportionately punished
-and the practical floor for a sensible trade is much higher than $28.
+### The round trip, now measured rather than estimated
+
+The Phase 5 position was closed on 2026-09-03 to make way for a bracketed
+order. It bought at 0.28 and sold at 0.28 — **the price did not move at all**:
+
+```
+BUY  44506652990393344   filled 0.2800   commission $3.02
+SELL 44506900356154368   filled 0.2800   commission $3.02
+                                         realized_pnl -$6.04
+```
+
+**The entire loss was commission.** $6.04 on a $28 premium is **21.6%**, paid
+for a trade that was flat. `estimate_round_trip_commission()` predicted exactly
+$6.04.
+
+**Still one contract, though.** $3.02 appeared on both a buy and a sell, so it
+is confirmed for a 1-contract order in each direction — but flat-per-order and
+per-contract are still indistinguishable, because both orders were 1 contract.
+A multi-contract order is what separates them. If it is flat, cheap contracts
+are disproportionately punished and the practical floor for a sensible trade is
+far above $28.
 
 Phase 6 uses `average_cost`, so its P&L is already net of entry commission.
 Phase 4's estimate is not.
+
+---
+
+## 3a. Attached orders (Phase 7) — everything that had to be discovered live
+
+Legs attach to a **parent order** and activate when it fills. They **cannot be
+attached to a position you already hold**. To bracket an existing holding you
+must close it and buy again with legs attached.
+
+### The broker will not check a bracket before you send it
+
+```
+preview_order(bracketed order)
+  -> code=1010 biz param error(OCA/ATTACHED order preview not supported)
+```
+
+The same refusal for **options and for stocks**, while a plain option order
+previews fine (`is_pass=True`). `preview_order` uses the `PREVIEW_ORDER` wire
+method, entirely separate from `PLACE_ORDER`, so it is a safe read-only probe —
+it simply does not accept attached orders.
+
+**Consequence:** a plain order can be validated before sending; a bracketed one
+cannot. The local checks in `orders.validate_bracket_prices` and the preview
+block are the only pre-submission check that exists. That is why they are
+louder than they would otherwise need to be.
+
+### Confirmed by placing real orders
+
+| Question | Answer |
+|---|---|
+| Do attached legs work on **options**? | **Yes.** Every doc example uses a stock; options work too. |
+| Can **both** PROFIT and LOSS attach to one parent? | **Yes.** Tiger's app help says one sub-order; that does not describe the API. |
+| Does **GTC** work on a leg, on a paper account? | **Yes** — see below. |
+
+Two live orders, both filled, all four legs confirmed:
+
+```
+44506905057837056   AAPL 260918C00360000  BUY 1 @ 0.30, filled 0.2800
+  child 44506905057840128  STP  SELL 1  aux_price   0.15  DAY  HELD
+  child 44506905057838080  LMT  SELL 1  limit_price 0.60  DAY  HELD
+
+44506965315701760   AAPL 260918C00370000  BUY 1 @ 0.16, filled 0.1400
+  child 44506965315961856  STP  SELL 1  aux_price   0.07  GTC  HELD
+  child 44506965315831808  LMT  SELL 1  limit_price 0.40  GTC  HELD
+```
+
+### GTC on legs is accepted and genuinely stored
+
+The parent cannot use GTC — Tiger's docs are explicit that paper accounts do
+not support it there. **A leg can.** Verified two ways, because a silent
+downgrade to DAY would be worse than a rejection: believing you have overnight
+protection when you do not is the dangerous failure.
+
+1. The child orders returned by `get_orders` reported `time_in_force='GTC'`.
+2. `get_order(id=...)` queried directly on each child **also** returned
+   `'GTC'` — the value as stored, not an echo of what was sent.
+
+The control that makes this conclusive: the DAY-leg children from the earlier
+bracket still read `'DAY'` on the same query. If the field were echoing input
+or defaulting, both sets would read alike. They do not.
+
+`build_option_order_with_bracket(..., leg_time_in_force=...)` is parameterised
+and defaults to `DAY`, which is the SDK's own default for `order_leg`. GTC is
+now known to work, so the default is a conservatism rather than a limitation.
+
+### Where the legs actually live
+
+**Legs are exposed as CHILD ORDERS carrying `parent_id`, not as entries on the
+parent's `order_legs` attribute.** `get_attached_legs` tries both routes; only
+the child-order route ever returned anything. Checking `parent.order_legs`
+alone would lead you to conclude the legs were never created.
+
+**The two legs use different price fields:**
+
+| Leg | Becomes | Price field |
+|---|---|---|
+| `LOSS` (stop) | order_type `STP` | **`aux_price`** |
+| `PROFIT` (target) | order_type `LMT` | **`limit_price`** |
+
+Reading `limit_price` off a stop leg returns `None`, and vice versa.
+
+### What the SDK puts on the wire
+
+From `tigeropen/trade/request/model.py` `_parse_leg_param`:
+
+- one `PROFIT` leg → `attach_type='PROFIT'`, `profit_taker_price`,
+  `profit_taker_tif`, `profit_taker_rth`
+- one `LOSS` leg → `attach_type='LOSS'`, `stop_loss_price`, `stop_loss_tif`,
+  `stop_loss_rth`, optionally `stop_loss_limit_price` and trailing fields
+- **both → `attach_type='BRACKETS'`**, which the documented appendix lists as a
+  valid attach type alongside PROFIT and LOSS
+
+`leg_type` values: `PROFIT`, `LOSS`. `LMT`/`STP`/`STP_LMT` also exist but are
+**OCA orders only**, a different mechanism.
+
+Signatures, from the SDK because the docs give usage but not definitions:
+
+```python
+order_leg(leg_type, price=None, time_in_force='DAY', outside_rth=None,
+          limit_price=None, trailing_percent=None, trailing_amount=None,
+          quantity=None)
+
+limit_order_with_legs(account, contract, action, quantity, limit_price,
+                      order_legs=None, time_in_force='DAY')
+```
+
+Only **limit** orders support attached orders.
 
 ---
 
@@ -165,7 +291,7 @@ Not derivable from the repo, because `.env` and `secrets/` are gitignored.
 | Virtualenv | `vnv/`, not `.venv`. `vnv\Scripts\activate`. |
 | Python | 3.11.9, `tigeropen` 3.7.1 |
 | Git | Repo root is this directory. `C:\Users\manoj` is *itself* a git repo (a Cursor worktree accident); never `git add -A` from there. |
-| Open position | 1x `AAPL  260918C00360000`, cost basis $31.02 |
+| Open positions | 1x `AAPL  260918C00360000` (DAY legs live) and 1x `AAPL  260918C00370000` (GTC legs live) |
 
 ### The private key, and the trap in it
 
@@ -356,7 +482,20 @@ another zone lands on the wrong calendar day. All conversion goes through
 **15. Option-chain Greeks are deprecated.** Daily updates, unsuitable for
 intraday. Never requested, never displayed, no logic built on them.
 
-**16. Tiger returns already-expired dates in the expirations list.**
+**16. `preview_order` refuses attached orders.** `code=1010 OCA/ATTACHED
+order preview not supported`, for options and stocks alike. A bracket cannot be
+validated before it is sent. See §3a.
+
+**17. Attached legs are child orders, not `parent.order_legs`.** Query by
+`parent_id`; the parent's own attribute stayed empty in every observation.
+
+**18. A stop leg carries its price in `aux_price`, a target leg in
+`limit_price`.** Reading the wrong one returns `None`.
+
+**19. GTC works on a leg even though the parent rejects it** on a paper
+account. Confirmed as stored, not just as accepted, with a DAY control. §3a.
+
+**20. Tiger returns already-expired dates in the expirations list.**
 2026-09-02 was still the first entry on 2026-09-03. `contracts.resolve_expiry`
 therefore has three outcomes, not two — see §7.
 
@@ -416,7 +555,10 @@ scripts/
   02_show_chain.py          Phase 2. Blocked on usOptionQuote.
   03_find_contract.py       Phase 3.
   04_simulate_order.py      Phase 4. Sends nothing.
-  05_paper_order.py         Phase 5. THE ONLY SCRIPT THAT SUBMITS.
+  05_paper_order.py         Phase 5 and 7. THE ONLY SCRIPT THAT SUBMITS.
+                            --take-profit/--stop-loss attach a bracket,
+                            --leg-tif sets leg time in force (default DAY),
+                            --legs shows what is attached to an order.
                             Also --status and --cancel.
   06_positions.py           Phase 6. Read-only.
   07_premium_history.py     Learning tool, outside the phases. Daily traded
@@ -471,10 +613,10 @@ confirmation.
 
 Nothing is outstanding. Reasonable next steps, in rough order of value:
 
-1. **Place a second paper order at a different size** to establish whether that
-   $3.02 commission is flat or per-contract (§3). It changes what a sensible
-   minimum trade is.
+1. **Place a MULTI-CONTRACT order** to establish whether the $3.02 commission
+   is flat per order or per contract (§3). Both samples so far were 1 contract,
+   which cannot separate the two. It decides what a sensible minimum trade is.
 2. Buy `usOptionQuote` and write `TigerQuoteProvider` (§2).
-3. Close the open position with `05_paper_order.py AAPL 2026-09-18 360 CALL
-   SELL 1` to exercise the sell path against a real holding, and to measure the
-   round-trip commission.
+3. Watch the two live brackets. The DAY legs on the 360 call expire at the
+   close of the US trading day; the GTC legs on the 370 call should survive it.
+   That is a free, direct confirmation of §3a if you check them tomorrow.
