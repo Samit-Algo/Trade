@@ -94,3 +94,40 @@ STOCK_BRIEFS_LIMITER = RateLimiter(120, "get_stock_briefs")
 #: https://docs-en.itigerup.com/docs/quote-stock -- 10 requests/minute.
 #: Much tighter than the real-time endpoint, so only used as a fallback.
 DELAYED_STOCK_BRIEFS_LIMITER = RateLimiter(10, "get_stock_delay_briefs")
+
+#: https://docs-en.itigerup.com/docs/quote-option -- no limit documented for
+#: depth or timeline, so the tighter chain limit is used as a safe default.
+OPTION_DEPTH_LIMITER = RateLimiter(60, "get_option_depth")
+OPTION_TIMELINE_LIMITER = RateLimiter(60, "get_option_timeline")
+
+#: https://docs-en.itigerup.com/docs/quote-option -- 120 requests/minute
+OPTION_TRADE_TICKS_LIMITER = RateLimiter(120, "get_option_trade_ticks")
+
+#: https://docs-en.itigerup.com/docs/quote-option -- 60 requests/minute
+OPTION_BARS_LIMITER = RateLimiter(60, "get_option_bars")
+OPTION_ANALYSIS_LIMITER = RateLimiter(60, "get_option_analysis")
+
+#: https://docs-en.itigerup.com/docs/quote-stock -- 60 requests/minute
+BARS_LIMITER = RateLimiter(60, "get_bars")
+
+#: https://docs-en.itigerup.com/docs/quote-stock -- 120 requests/minute
+TRADE_TICKS_LIMITER = RateLimiter(120, "get_trade_ticks")
+
+#: https://docs-en.itigerup.com/docs/quote-stock -- 10 requests/minute
+MARKET_STATUS_LIMITER = RateLimiter(10, "get_market_status")
+
+#: https://docs-en.itigerup.com/docs/quote-common -- 10 requests/minute.
+#: get_quote_permission only reports entitlements. Its sibling
+#: grab_quote_permission CHANGES which device holds market data access, so it
+#: is deliberately not given a limiter here: nothing in this project calls it.
+QUOTE_PERMISSION_LIMITER = RateLimiter(10, "get_quote_permission")
+KLINE_QUOTA_LIMITER = RateLimiter(10, "get_kline_quota")
+
+#: https://docs-en.itigerup.com/docs/accounts -- 60 requests/minute
+MANAGED_ACCOUNTS_LIMITER = RateLimiter(60, "get_managed_accounts")
+PRIME_ASSETS_LIMITER = RateLimiter(60, "get_prime_assets")
+POSITIONS_LIMITER = RateLimiter(60, "get_positions")
+
+#: https://docs-en.itigerup.com/docs/orderinfo -- 120 requests/minute
+ORDERS_LIMITER = RateLimiter(120, "get_orders")
+OPEN_ORDERS_LIMITER = RateLimiter(120, "get_open_orders")

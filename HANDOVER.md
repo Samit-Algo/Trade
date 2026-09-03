@@ -53,24 +53,47 @@ ApiException: code=4 msg=4000:permission denied
 ```
 
 **This is an entitlement on the Tiger account, not a defect in this code.**
-Each endpoint was probed directly on 2026-09-03:
+
+Endpoints were probed by hand on 2026-09-03, then superseded by a fuller probe.
+Run `python scripts/00_check_capabilities.py` to regenerate this at any time; it
+also writes `capabilities-<date>.txt` so two runs can be diffed across a
+purchase. Results as of 2026-09-03:
 
 | Endpoint | Result | Needs paid access |
 |---|---|---|
-| `get_option_expirations` | OK, returns data | No — free |
-| `get_stock_delay_briefs` | OK, returns data | No — free, ~15 min delayed |
-| `get_stock_briefs` | permission denied | Yes — US market data |
-| `get_option_chain` | permission denied | Yes — US **option** market data |
-| `get_option_briefs` | permission denied | Yes — US **option** market data |
+| All account/trading queries | OK | No |
+| `get_quote_permission`, `get_kline_quota` | OK | No |
+| `get_option_expirations` | OK | No — free |
+| `get_option_bars` | **OK** | No — free |
+| `get_option_timeline` | **OK** | No — free |
+| `get_stock_delay_briefs`, `get_bars`, `get_market_status` | OK | No — free |
+| `get_option_chain` | permission denied | Yes — `usOptionQuote` |
+| `get_option_briefs` | permission denied | Yes — `usOptionQuote` |
+| `get_option_depth` | permission denied | Yes — `usOptionQuote` |
+| `get_option_trade_ticks` | permission denied | Yes — `usOptionQuote` |
+| `get_option_analysis` | permission denied | Yes — `usOptionQuote` |
+| `get_stock_briefs` | permission denied | Yes — `usStockQuote` |
+| `get_trade_ticks` | permission denied | Yes — `usStockQuote` |
+
+`get_quote_permission()` reports the account holds exactly one permission:
+`aStockQuoteLv1` (China A-share L1, permanent). Nothing for US markets.
+
+**Correction to an earlier assumption in this file:** option market data is
+*not* entirely blocked. Historical option bars and the intraday option
+timeline both work today without any purchase. Only the real-time chain and
+quote endpoints need `usOptionQuote`. If a future phase needs option prices
+and the entitlement is still unbought, `get_option_bars` is a real fallback
+worth considering — it was not known to be available when Phase 2 was written.
 
 Consequences already handled in the code:
 
 - `fetch_underlying_price()` tries `get_stock_briefs`, falls back to
   `get_stock_delay_briefs`, and labels which one it used. This works today.
-- The option chain has **no free fallback**. Tiger publishes no delayed option
+- The option *chain* has no free equivalent. Tiger publishes no delayed option
   endpoint — the SDK's only `*delay*` method is `get_stock_delay_briefs`,
-  confirmed by reading `quote_client.py`. So the chain cannot be displayed at
-  all until the entitlement is bought.
+  confirmed by reading `quote_client.py`. A full chain across all strikes
+  cannot be displayed until `usOptionQuote` is bought. Per-contract history
+  via `get_option_bars` is a different matter and does work.
 - `02_show_chain.py` detects `permission denied` in the error text and says so
   explicitly rather than listing generic causes.
 
@@ -142,6 +165,20 @@ Unable to load PEM file ... InvalidData(Invalid symbol 95, offset 7.)
 Symbol 95 is `_`, at index 7 — the underscore in `private_key_pk8`. `config.py`
 now rejects a properties file at that path with a readable message, so this
 cannot recur silently.
+
+### QuoteClient claims market data device access on construction
+
+`QuoteClient(client_config, logger=None, is_grab_permission=True)` calls
+`grab_quote_permission()` during `__init__` by default. That is not a purchase
+and grants nothing new, but it **moves** primary-device status to this machine
+and takes it from whatever held it before — the Tiger app on a phone, for
+instance. Only one device holds it at a time.
+
+`build_quote_client(settings, grab_permission=True)` exposes this. The default
+is unchanged, so Phase 2 behaves as before; pass `grab_permission=False` for a
+strictly side-effect-free session, accepting that real-time data may then be
+refused with "current device does not have permission" — a different message
+from the entitlement refusal above, and worth telling apart.
 
 ### Both accepted, do not switch
 
@@ -300,6 +337,9 @@ tiger_backend/
   positions.py  Phase 6 placeholder.
 
 scripts/
+  00_check_capabilities.py Diagnostic, outside the phase sequence. Read-only
+                           probe of every endpoint; run it after buying market
+                           data to see exactly what changed.
   01_check_connection.py   Phase 1, working.
   02_show_chain.py         Phase 2, display only. Blocked on entitlement.
   03..06_*.py              Placeholders.

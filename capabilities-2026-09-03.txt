@@ -1,0 +1,88 @@
+============================================================================================
+  TIGER API CAPABILITY REPORT  --  2026-09-03
+  Account : ****6574   Mode: PAPER
+  Read-only. No orders placed, constructed, or modified.
+  Market data device access was claimed on connect (SDK default).
+============================================================================================
+
+ACCOUNT AND TRADING
+--------------------------------------------------------------------------------------------
+  OK       get_managed_accounts       2 items
+  OK       get_prime_assets           returned data
+  OK       get_positions              returned nothing (endpoint reachable)
+  OK       get_orders                 returned nothing (endpoint reachable)
+  OK       get_open_orders            returned nothing (endpoint reachable)
+--------------------------------------------------------------------------------------------
+
+ENTITLEMENTS
+--------------------------------------------------------------------------------------------
+  OK       get_quote_permission       1 item
+  OK       get_kline_quota            3 items
+--------------------------------------------------------------------------------------------
+
+OPTIONS MARKET DATA
+--------------------------------------------------------------------------------------------
+  OK       get_option_expirations     24 rows
+  DENIED   get_option_chain           needs: US OPT
+  DENIED   get_option_briefs          needs: US OPT
+  DENIED   get_option_depth           needs: US OPT
+  DENIED   get_option_trade_ticks     needs: US OPT
+  OK       get_option_bars            27 rows
+  OK       get_option_timeline        390 rows
+  DENIED   get_option_analysis        needs: US OPT
+--------------------------------------------------------------------------------------------
+
+STOCK MARKET DATA
+--------------------------------------------------------------------------------------------
+  DENIED   get_stock_briefs           needs: US
+  OK       get_stock_delay_briefs     1 row
+  OK       get_bars                   1 row
+  DENIED   get_trade_ticks            needs: US
+  OK       get_market_status          1 item
+--------------------------------------------------------------------------------------------
+
+MARKET DATA PERMISSIONS HELD
+--------------------------------------------------------------------------------------------
+  aStockQuoteLv1               China A-share L1                   permanent
+--------------------------------------------------------------------------------------------
+
+SUMMARY
+============================================================================================
+
+WHAT YOU CAN DO TODAY (13 endpoints)
+  - get_managed_accounts  (2 items)
+  - get_prime_assets  (returned data)
+  - get_positions  (returned nothing (endpoint reachable))
+  - get_orders  (returned nothing (endpoint reachable))
+  - get_open_orders  (returned nothing (endpoint reachable))
+  - get_quote_permission  (1 item)
+  - get_kline_quota  (3 items)
+  - get_option_expirations  (24 rows)
+  - get_option_bars  (27 rows)
+  - get_option_timeline  (390 rows)
+  - get_stock_delay_briefs  (1 row)
+  - get_bars  (1 row)
+  - get_market_status  (1 item)
+
+WHAT IS BLOCKED (7 endpoints)
+  Missing: US OPT market data -> buy 'usOptionQuote' (US option L1 market data)
+    - get_option_chain
+    - get_option_briefs
+    - get_option_depth
+    - get_option_trade_ticks
+    - get_option_analysis
+
+  Missing: US market data -> buy 'usStockQuote' (US real-time stock market data)
+    - get_stock_briefs
+    - get_trade_ticks
+
+  These are purchases, not bugs. Real-time OpenAPI market data is
+  bought separately from a developer account, via the Tiger Trade app
+  (My > market data access > OpenAPI Permissions) or Personal Center.
+  US option data is a separate purchase from US stock data.
+
+WHAT ERRORED FOR A NON-PERMISSION REASON (0 endpoints)
+  Nothing. No unexpected failures.
+
+NOTE: The chain was unreachable, so the identifier-based option probes used a contract built with the SDK helper get_option_identifier (AAPL  260904C00250000). That contract may not exist, so an ERROR on those rows is inconclusive -- a DENIED result is still meaningful.
+

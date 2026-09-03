@@ -62,14 +62,31 @@ def build_client_config(settings: Settings) -> "TigerOpenClientConfig":
     return client_config
 
 
-def build_quote_client(settings: Settings) -> "QuoteClient":
-    """Market data client. Read-only."""
+def build_quote_client(settings: Settings, grab_permission: bool = True) -> "QuoteClient":
+    """Market data client. Read-only for data, but see grab_permission.
+
+    Args:
+        settings: Validated configuration.
+        grab_permission: Whether to claim market data device access on
+            construction. The SDK does this by default. It is not a purchase
+            and grants no new entitlement -- it moves which *device* counts as
+            primary, and takes that status away from whatever held it before,
+            such as the Tiger app on a phone. Pass False for a strictly
+            side-effect-free session, accepting that real-time data may then be
+            refused with "current device does not have permission".
+
+    Returns:
+        A configured QuoteClient.
+    """
     try:
         from tigeropen.quote.quote_client import QuoteClient
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ClientSetupError(_SDK_MISSING) from exc
 
-    return QuoteClient(build_client_config(settings))
+    return QuoteClient(
+        build_client_config(settings),
+        is_grab_permission=grab_permission,
+    )
 
 
 def build_trade_client(settings: Settings) -> "TradeClient":
