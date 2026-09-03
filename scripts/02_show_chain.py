@@ -40,9 +40,24 @@ from tiger_backend.safety import LiveTradingBlocked, print_startup_banner  # noq
 #: How many strikes to show either side of the money unless asked otherwise.
 DEFAULT_STRIKES_EACH_SIDE = 10
 
-#: Width of one formatted side of the table (calls or puts). This must match
-#: exactly what format_option_side produces, or the headings will not line up.
-SIDE_WIDTH = 50
+# Column widths. Both the data rows and the headings are built from these
+# constants, so the two cannot drift apart. Widths are sized for the worst
+# realistic case, not the typical one: near-the-money volume on a liquid name
+# runs to seven figures, and "1,204,553" needs ten columns once the thousands
+# separators are counted. An 8-wide volume column looks fine on quiet strikes
+# and then silently collides with the column to its left on busy ones.
+PRICE_WIDTH = 8
+SPREAD_WIDTH = 8
+COUNT_WIDTH = 10
+IV_WIDTH = 7
+
+#: Trailing " X" carrying the thin-liquidity marker.
+MARKER_WIDTH = 2
+
+#: Width of one formatted side of the table (calls or puts).
+SIDE_WIDTH = (
+    PRICE_WIDTH * 2 + SPREAD_WIDTH + COUNT_WIDTH * 2 + IV_WIDTH + MARKER_WIDTH
+)
 
 #: Width of the centre strike column.
 STRIKE_WIDTH = 14
@@ -134,8 +149,13 @@ def format_option_side(option_row: OptionRow | None) -> str:
     thin_marker = "!" if option_row.is_thin else " "
 
     side = (
-        f"{bid_text:>8}{ask_text:>8}{spread_text:>8}"
-        f"{volume_text:>8}{open_interest_text:>9} {implied_volatility_text:>6} {thin_marker}"
+        f"{bid_text:>{PRICE_WIDTH}}"
+        f"{ask_text:>{PRICE_WIDTH}}"
+        f"{spread_text:>{SPREAD_WIDTH}}"
+        f"{volume_text:>{COUNT_WIDTH}}"
+        f"{open_interest_text:>{COUNT_WIDTH}}"
+        f"{implied_volatility_text:>{IV_WIDTH}}"
+        f" {thin_marker}"
     )
     return f"{side:<{SIDE_WIDTH}}"
 
@@ -278,8 +298,15 @@ def print_table_header(
     puts_heading = f"{'PUTS':^{SIDE_WIDTH}}"
     print(f"{calls_heading}{'STRIKE':^{STRIKE_WIDTH}}{puts_heading}")
 
+    # Built from the same constants as the data rows, in the same order.
     column_headings = (
-        f"{'bid':>8}{'ask':>8}{'spread':>8}{'vol':>8}{'OI':>9} {'IV':>6}  "
+        f"{'bid':>{PRICE_WIDTH}}"
+        f"{'ask':>{PRICE_WIDTH}}"
+        f"{'spread':>{SPREAD_WIDTH}}"
+        f"{'vol':>{COUNT_WIDTH}}"
+        f"{'OI':>{COUNT_WIDTH}}"
+        f"{'IV':>{IV_WIDTH}}"
+        f"{'':>{MARKER_WIDTH}}"
     )
     print(f"{column_headings:<{SIDE_WIDTH}}{'':^{STRIKE_WIDTH}}{column_headings:<{SIDE_WIDTH}}")
     print("-" * RULE_WIDTH)
