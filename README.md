@@ -4,7 +4,12 @@ A Python backend that talks to the Tiger Brokers OpenAPI, built in deliberate
 stages so that no code capable of spending real money exists until the final
 phase, and even then it is locked behind two independent switches.
 
-**Current state: Phase 1 only.** Connect and confirm the account. Read-only.
+**Current state: Phases 1 and 2.** Read-only throughout.
+
+> Resuming work after a break? Read **[HANDOVER.md](HANDOVER.md)** first.
+> It records what is verified, the market data entitlement currently
+> blocking the chain display, the confirmed SDK signatures, and the
+> environment facts that are not in the repo.
 
 ---
 
