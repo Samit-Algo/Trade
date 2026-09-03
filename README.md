@@ -118,6 +118,56 @@ These run without Tiger credentials and without the `tigeropen` SDK installed.
 
 ---
 
+## Phase 2 — market data: expirations and chains
+
+```bash
+python scripts/02_show_chain.py AAPL
+python scripts/02_show_chain.py AAPL --all           # every strike
+python scripts/02_show_chain.py AAPL --strikes 5     # 5 either side of the money
+python scripts/02_show_chain.py AAPL --expiry 2026-09-18
+```
+
+Lists the expiration dates Tiger reports, with days-to-expiry and a
+weekly/monthly tag, lets you pick one, then prints a CALLS | STRIKE | PUTS
+table with bid, ask, spread, volume, open interest and implied volatility.
+
+By default it shows ten strikes either side of the money, with the
+at-the-money strike marked `> ... <`. Rows whose volume or open interest is
+below the threshold are flagged `!` — those have wide spreads and can be hard
+to sell later.
+
+**Expiry dates are never constructed.** Listed expiries are irregular, and a
+date built from a calendar rule can look entirely plausible while not existing
+as a contract — you find out when an order is rejected. Every date offered here
+came from `get_option_expirations`.
+
+### Greeks are deliberately not displayed
+
+Tiger marks the option-chain Greek fields (`delta`, `gamma`, `theta`, `vega`,
+`rho`) as **deprecated**. They update once a day and are not suitable for
+intraday decisions. This project does not request them, does not display them,
+and builds no logic on them. Tiger's guidance is to calculate Greeks locally
+from current market inputs instead.
+
+### Market data access
+
+| Endpoint | Needs paid access? |
+|---|---|
+| `get_option_expirations` | No — free |
+| `get_stock_delay_briefs` (delayed ~15 min) | No — free |
+| `get_stock_briefs` (real-time) | **Yes** — US market data |
+| `get_option_chain` | **Yes** — US **option** market data |
+| `get_option_briefs` | **Yes** — US **option** market data |
+
+Real-time OpenAPI market data is purchased separately from the Tiger Trade app
+or Personal Center; it is not included with a developer account. The underlying
+price falls back to the free delayed feed automatically and says which one you
+got. The option chain has no free fallback — Tiger publishes no delayed option
+endpoint — so `02_show_chain.py` cannot print a chain until US option market
+data is active on the account.
+
+---
+
 ## Roadmap
 
 Each phase must run cleanly against the paper account before the next begins.
@@ -125,7 +175,7 @@ Each phase must run cleanly against the paper account before the next begins.
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Connect and confirm the account | **implemented** |
-| 2 | Market data: expirations and chains | not started |
+| 2 | Market data: expirations and chains | **implemented** (chain display needs US option market data) |
 | 3 | Contract resolution | not started |
 | 4 | Cost estimation and simulated orders | not started |
 | 5 | Paper order submission | not started |
@@ -137,7 +187,14 @@ Each phase must run cleanly against the paper account before the next begins.
 
 Official documentation: <https://docs-en.itigerup.com/docs/>
 
-API calls used in Phase 1, both read-only:
+All API calls used so far are read-only:
 
 - `TradeClient.get_managed_accounts(account=None, lang=None)`
 - `TradeClient.get_prime_assets(account=None, base_currency=None, consolidated=True, lang=None)`
+- `QuoteClient.get_option_expirations(symbols, market=None)` — 60/min
+- `QuoteClient.get_option_chain(symbol, expiry, option_filter=None, return_greek_value=None, market=None, timezone=None)` — 60/min
+- `QuoteClient.get_option_briefs(identifiers, market=None, timezone=None)` — 120/min
+- `QuoteClient.get_stock_briefs(symbols, include_hour_trading=False, lang=None)` — 120/min
+- `QuoteClient.get_stock_delay_briefs(symbols, lang=None)` — 10/min
+
+Every documented per-endpoint rate limit is enforced by `tiger_backend/throttle.py`.

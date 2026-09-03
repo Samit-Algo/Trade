@@ -1,0 +1,96 @@
+"""Shared rate limiting for Tiger API calls.
+
+Tiger publishes a separate request limit for each endpoint. Going over it gets
+requests rejected, so every call in this project goes through a limiter first.
+
+The limits below are copied from the documentation pages for each endpoint.
+They live here, in one place, so that changing one is a single edit rather than
+a hunt through the codebase.
+"""
+
+from __future__ import annotations
+
+import time
+from collections import deque
+
+#: Tiger expresses every limit as "N requests per minute", so the window is 60s.
+WINDOW_SECONDS = 60.0
+
+
+class RateLimiter:
+    """Keeps a set of API calls under a "N per minute" limit.
+
+    Call wait() immediately before each API call. It returns straight away
+    unless you are about to exceed the limit, in which case it sleeps just long
+    enough for the oldest call to fall out of the 60-second window.
+
+    One limiter tracks one endpoint. Sharing a limiter between two endpoints
+    would make both slower than they need to be.
+    """
+
+    def __init__(self, max_calls_per_minute: int, endpoint_name: str) -> None:
+        """Create a limiter.
+
+        Args:
+            max_calls_per_minute: The documented limit for this endpoint.
+            endpoint_name: The SDK method this guards, used in messages.
+        """
+        self.max_calls_per_minute = max_calls_per_minute
+        self.endpoint_name = endpoint_name
+
+        # Timestamps of recent calls, oldest first. A deque is used because we
+        # add to the right and remove from the left, and it is fast at both.
+        self._recent_call_times: deque[float] = deque()
+
+    def _forget_calls_older_than_the_window(self, now: float) -> None:
+        """Drop recorded calls that are more than 60 seconds old.
+
+        Args:
+            now: The current monotonic clock reading.
+        """
+        oldest_time_still_counted = now - WINDOW_SECONDS
+        while self._recent_call_times:
+            if self._recent_call_times[0] > oldest_time_still_counted:
+                break
+            self._recent_call_times.popleft()
+
+    def wait(self) -> None:
+        """Block until making one more call would not exceed the limit."""
+        # time.monotonic() is used rather than time.time() because it never
+        # jumps. A clock adjustment mid-run must not confuse the throttle.
+        now = time.monotonic()
+        self._forget_calls_older_than_the_window(now)
+
+        if len(self._recent_call_times) >= self.max_calls_per_minute:
+            oldest_call_time = self._recent_call_times[0]
+            time_when_a_slot_frees_up = oldest_call_time + WINDOW_SECONDS
+            seconds_to_sleep = time_when_a_slot_frees_up - now
+
+            if seconds_to_sleep > 0:
+                time.sleep(seconds_to_sleep)
+
+            now = time.monotonic()
+            self._forget_calls_older_than_the_window(now)
+
+        self._recent_call_times.append(now)
+
+
+# --------------------------------------------------------------------------
+# One limiter per endpoint. Each number is the documented base rate limit.
+# --------------------------------------------------------------------------
+
+#: https://docs-en.itigerup.com/docs/quote-option -- 60 requests/minute
+EXPIRATIONS_LIMITER = RateLimiter(60, "get_option_expirations")
+
+#: https://docs-en.itigerup.com/docs/quote-option -- 60 requests/minute
+CHAIN_LIMITER = RateLimiter(60, "get_option_chain")
+
+#: https://docs-en.itigerup.com/docs/quote-option -- 120 requests/minute
+OPTION_BRIEFS_LIMITER = RateLimiter(120, "get_option_briefs")
+
+#: https://docs-en.itigerup.com/docs/quote-stock -- 120 requests/minute
+STOCK_BRIEFS_LIMITER = RateLimiter(120, "get_stock_briefs")
+
+#: https://docs-en.itigerup.com/docs/quote-stock -- 10 requests/minute.
+#: Much tighter than the real-time endpoint, so only used as a fallback.
+DELAYED_STOCK_BRIEFS_LIMITER = RateLimiter(10, "get_stock_delay_briefs")
