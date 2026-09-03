@@ -131,3 +131,9 @@ POSITIONS_LIMITER = RateLimiter(60, "get_positions")
 #: https://docs-en.itigerup.com/docs/orderinfo -- 120 requests/minute
 ORDERS_LIMITER = RateLimiter(120, "get_orders")
 OPEN_ORDERS_LIMITER = RateLimiter(120, "get_open_orders")
+
+#: https://docs-en.itigerup.com/docs/get-contract -- 60 requests/minute.
+#: Contract lookup is a different entitlement from quote data, and this
+#: account has it, so these are the calls Phase 3 leans on.
+CONTRACT_LIMITER = RateLimiter(60, "get_contract")
+DERIVATIVE_CONTRACTS_LIMITER = RateLimiter(60, "get_derivative_contracts")
