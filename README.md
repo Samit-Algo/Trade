@@ -4,11 +4,12 @@ A Python backend that talks to the Tiger Brokers OpenAPI, built in deliberate
 stages so that no code capable of spending real money exists until the final
 phase, and even then it is locked behind two independent switches.
 
-**Current state: Phases 1 and 2.** Read-only throughout.
+**Current state: all six phases complete.** One real order has been placed on
+the paper account. Every script except `05_paper_order.py` is read-only.
 
 > Resuming work after a break? Read **[HANDOVER.md](HANDOVER.md)** first.
-> It records what is verified, the market data entitlement currently
-> blocking the chain display, the confirmed SDK signatures, and the
+> It records what is verified and how, the one entitlement still worth buying,
+> the confirmed SDK signatures, the sixteen documented gotchas, and the
 > environment facts that are not in the repo.
 
 ---
@@ -163,6 +164,8 @@ from current market inputs instead.
 | `get_stock_briefs` (real-time) | **Yes** — US market data |
 | `get_option_chain` | **Yes** — US **option** market data |
 | `get_option_briefs` | **Yes** — US **option** market data |
+| `get_option_bars`, `get_option_timeline` | No — free |
+| contract lookup (`get_contract`, `get_derivative_contracts`) | No — free |
 
 Real-time OpenAPI market data is purchased separately from the Tiger Trade app
 or Personal Center; it is not included with a developer account. The underlying
@@ -173,18 +176,71 @@ data is active on the account.
 
 ---
 
+## Phases 3 to 6
+
+```bash
+python scripts/03_find_contract.py AAPL 2026-09-18 320 CALL
+python scripts/04_simulate_order.py AAPL 2026-09-18 320 CALL BUY 1
+python scripts/05_paper_order.py   AAPL 2026-09-18 360 CALL BUY 1
+python scripts/05_paper_order.py --status 44506652990393344
+python scripts/06_positions.py
+```
+
+**Phase 3** resolves a human request into exactly one verified contract. Tiger
+itself refuses an impossible strike, so validation is the exchange's answer
+rather than a local guess. An expiry that is listed but already past is
+refused as **expired**, not as "not found".
+
+**Phase 4** costs the order and sends nothing. Quotes are typed by hand from
+the Tiger app behind a `MarketDataProvider` seam, labelled `[MANUAL]`
+everywhere, stale after 60 seconds, and checked against the contract's last
+traded price — a price more than 3x or less than 0.33x that must be retyped
+inside an override phrase a reflexive `y` cannot clear.
+
+**Phase 5** submits, to the paper account only, behind the three locks and a
+typed confirmation of the cash amount. An order ID confirms **submission, not
+execution**, so it polls afterwards and reports what actually filled. Outcomes
+come from `filled` and `avg_fill_price`, never from what was requested — an
+order marked CANCELLED or EXPIRED may still have filled in part.
+
+**Phase 6** values positions at the **bid**, because a position is worth what
+someone will pay for it. Tiger's own `unrealized_pnl` uses `latestPrice` and
+is shown alongside for comparison, not used. Positions near expiry warn about
+the cash an automatic exercise would need — $36,000 for one AAPL 360 call.
+
+---
+
 ## Roadmap
 
 Each phase must run cleanly against the paper account before the next begins.
 
 | Phase | Scope | State |
 |---|---|---|
-| 1 | Connect and confirm the account | **implemented** |
-| 2 | Market data: expirations and chains | **implemented** (chain display needs US option market data) |
-| 3 | Contract resolution | not started |
-| 4 | Cost estimation and simulated orders | not started |
-| 5 | Paper order submission | not started |
-| 6 | Positions and P&L | not started |
+| 1 | Connect and confirm the account | **done** — Tiger confirmed PAPER, Funded, RegTMargin |
+| 2 | Market data: expirations and chains | **done** — 24 real expirations; the chain *table* needs `usOptionQuote` |
+| 3 | Contract resolution | **done** — valid CALL and PUT, bad strike, expired expiry |
+| 4 | Cost estimation and simulated orders | **done** — BUY and SELL previews, decimal-slip override |
+| 5 | Paper order submission | **done** — one real order filled, see below |
+| 6 | Positions and P&L | **done** — position valued at the bid |
+
+### The real paper order
+
+```
+AAPL  260918C00360000   BUY 1 @ LIMIT 0.30
+Order ID 44506652990393344  ->  FILLED 1/1 at 0.2800
+ACTUAL CASH $28.00 against a $30.00 estimate
+```
+
+Lock 3 was proved first: with `DRY_RUN=true` the flow blocked before the
+confirmation prompt. It was set false for that one order and restored
+immediately.
+
+### One thing worth knowing before you trade
+
+That $28.00 fill cost **$31.02**. `average_cost` comes back per share
+*including commission*, so the $3.02 of commission is **10.8% of the premium**
+— and you pay it again to sell. On a cheap contract, commission is most of the
+distance to break-even. HANDOVER.md §3 has the arithmetic.
 
 ---
 
@@ -201,5 +257,12 @@ All API calls used so far are read-only:
 - `QuoteClient.get_option_briefs(identifiers, market=None, timezone=None)` — 120/min
 - `QuoteClient.get_stock_briefs(symbols, include_hour_trading=False, lang=None)` — 120/min
 - `QuoteClient.get_stock_delay_briefs(symbols, lang=None)` — 10/min
+- `QuoteClient.get_option_bars(identifiers, ...)` — 60/min
+- `TradeClient.get_contract(...)`, `get_derivative_contracts(...)` — 60/min
+- `TradeClient.get_positions(...)` — 60/min
+- `TradeClient.get_order(...)`, `place_order(order)`, `cancel_order(...)` — 120/min
 
 Every documented per-endpoint rate limit is enforced by `tiger_backend/throttle.py`.
+
+The full signature list, with every gotcha found while using them, is in
+[HANDOVER.md](HANDOVER.md).
