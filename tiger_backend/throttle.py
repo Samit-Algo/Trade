@@ -137,3 +137,9 @@ OPEN_ORDERS_LIMITER = RateLimiter(120, "get_open_orders")
 #: account has it, so these are the calls Phase 3 leans on.
 CONTRACT_LIMITER = RateLimiter(60, "get_contract")
 DERIVATIVE_CONTRACTS_LIMITER = RateLimiter(60, "get_derivative_contracts")
+
+#: https://docs-en.itigerup.com/docs/place-order -- 120 requests/minute.
+PLACE_ORDER_LIMITER = RateLimiter(120, "place_order")
+
+#: https://docs-en.itigerup.com/docs/modify-order -- 120 requests/minute.
+CANCEL_ORDER_LIMITER = RateLimiter(120, "cancel_order")
