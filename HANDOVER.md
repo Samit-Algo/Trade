@@ -56,8 +56,8 @@ ApiException: code=4 msg=4000:permission denied
 
 Endpoints were probed by hand on 2026-09-03, then superseded by a fuller probe.
 Run `python scripts/00_check_capabilities.py` to regenerate this at any time; it
-also writes `capabilities-<date>.txt` so two runs can be diffed across a
-purchase. Results as of 2026-09-03:
+also writes `capabilities-<date>-<grab|nograb>.txt` so two runs can be diffed
+across a purchase. Results as of 2026-09-03:
 
 | Endpoint | Result | Needs paid access |
 |---|---|---|
@@ -166,7 +166,7 @@ Symbol 95 is `_`, at index 7 — the underscore in `private_key_pk8`. `config.py
 now rejects a properties file at that path with a readable message, so this
 cannot recur silently.
 
-### QuoteClient claims market data device access on construction
+### Market data device access — this project overrides the SDK default
 
 `QuoteClient(client_config, logger=None, is_grab_permission=True)` calls
 `grab_quote_permission()` during `__init__` by default. That is not a purchase
@@ -174,11 +174,30 @@ and grants nothing new, but it **moves** primary-device status to this machine
 and takes it from whatever held it before — the Tiger app on a phone, for
 instance. Only one device holds it at a time.
 
-`build_quote_client(settings, grab_permission=True)` exposes this. The default
-is unchanged, so Phase 2 behaves as before; pass `grab_permission=False` for a
-strictly side-effect-free session, accepting that real-time data may then be
-refused with "current device does not have permission" — a different message
-from the entitlement refusal above, and worth telling apart.
+Between Phase 1 and 2026-09-03 every script did this silently on every run.
+**`build_quote_client` now defaults to `grab_permission=False`**, so no script
+claims device access unless asked. Nothing in this project needs it.
+
+The consequence, and the reason this section exists: a real-time call may now
+fail with
+
+```
+code=4 msg=4000:permission denied(current device does not have permission)
+```
+
+**That is a different failure from an unbought entitlement**, which instead
+reads `...do not have permissions in the US OPT quote market`. Telling them
+apart matters, because they have different fixes:
+
+| Message | Meaning | Fix |
+|---|---|---|
+| `current device does not have permission` | Another device holds primary status | Re-run with `--grab` |
+| `...permissions in the US OPT quote market` | The entitlement was never bought | Buy `usOptionQuote` |
+
+`--grab` is the deliberate fix for the first, available on
+`00_check_capabilities.py`, `02_show_chain.py` and `07_premium_history.py`.
+Running it takes device status back from your phone, which is why it is opt-in
+rather than automatic.
 
 ### Both accepted, do not switch
 
@@ -284,6 +303,16 @@ wrong one — you get `None`.
   `vega`, `rho`). They update once daily and Tiger says not to use them
   intraday. This project neither requests nor displays them, and builds no
   logic on them. Do not add them back.
+- **`get_option_bars` ignores `limit`.** Measured on 2026-09-03: asking for 5
+  bars returned all 61. The defaults (`begin_time=-1`, `end_time` far future)
+  already return a contract's whole life, so pass no limit and trim the
+  display client-side if needed.
+- **`get_option_bars` returns an empty `list`, not an empty DataFrame**, when a
+  contract has no history. Testing `.empty` alone raises `AttributeError` and
+  buries the real answer. Check `isinstance(value, list)` first.
+- **`get_option_bars` works on expired contracts.** The SDK's own docstring
+  example uses one. This is how `07_premium_history.py` can show a dead
+  contract's full life.
 
 ---
 
@@ -339,10 +368,20 @@ tiger_backend/
 scripts/
   00_check_capabilities.py Diagnostic, outside the phase sequence. Read-only
                            probe of every endpoint; run it after buying market
-                           data to see exactly what changed.
+                           data to see exactly what changed. Writes
+                           capabilities-<date>-<grab|nograb>.txt -- the suffix
+                           matters, so two reports are never compared across a
+                           device-access difference they do not describe.
+                           Both 2026-09-03 baselines are committed and differ
+                           only in that header line: device access changes
+                           nothing on an account with no US entitlements.
   01_check_connection.py   Phase 1, working.
   02_show_chain.py         Phase 2, display only. Blocked on entitlement.
   03..06_*.py              Placeholders.
+  07_premium_history.py    Learning tool, outside the phase sequence. Daily
+                           traded prices for one contract, via the free
+                           get_option_bars. Standalone: Phases 3-6 do not
+                           import it, and it does not price orders.
 
 tests/
   chain_fixture.py     A deliberately awkward synthetic chain. Run it directly

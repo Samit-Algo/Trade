@@ -5,7 +5,7 @@ with a harmless argument and reports what came back. It places no orders,
 constructs no orders, and modifies nothing.
 
     python scripts/00_check_capabilities.py
-    python scripts/00_check_capabilities.py --no-grab      # claim no device access
+    python scripts/00_check_capabilities.py --grab        # claim device access
     python scripts/00_check_capabilities.py --timeout 20
 
 Every result is one of three outcomes:
@@ -15,8 +15,10 @@ Every result is one of three outcomes:
              This is expected and informative, not a failure.
     ERROR    anything else, and the message is shown. This is a real problem.
 
-Output is printed and written to capabilities-<date>.txt so two runs can be
-diffed before and after buying a market data package.
+Output is printed and written to capabilities-<date>-<grab|nograb>.txt so two
+runs can be diffed before and after buying a market data package. The filename
+records whether market data device access was claimed, because that changes
+results independently of any purchase.
 
 Every signature below was verified against https://docs-en.itigerup.com/docs/
 before being called. A TypeError from a wrong signature would look exactly
@@ -834,12 +836,13 @@ def main(argv: list[str] | None = None) -> int:
         help=f"seconds to wait per call (default {DEFAULT_TIMEOUT_SECONDS})",
     )
     parser.add_argument(
-        "--no-grab",
+        "--grab",
         action="store_true",
         help=(
-            "do not claim market data device access. The SDK claims it by "
-            "default, which takes primary-device status away from whatever held "
-            "it, such as the Tiger app on your phone."
+            "claim market data device access. Off by default: claiming it takes "
+            "primary-device status away from whatever held it, such as the Tiger "
+            "app on your phone. Pass this only if a real-time call was refused "
+            "with 'current device does not have permission'."
         ),
     )
     parser.add_argument("--debug", action="store_true", help="print full tracebacks")
@@ -861,7 +864,7 @@ def main(argv: list[str] | None = None) -> int:
         print()
 
         trade_client = build_trade_client(settings)
-        quote_client = build_quote_client(settings, grab_permission=not arguments.no_grab)
+        quote_client = build_quote_client(settings, grab_permission=arguments.grab)
     except LiveTradingBlocked as error:
         print("BLOCKED BY THE SAFETY GUARD")
         print(error)
@@ -880,10 +883,10 @@ def main(argv: list[str] | None = None) -> int:
     report.add(f"  TIGER API CAPABILITY REPORT  --  {date.today().isoformat()}")
     report.add(f"  Account : {settings.masked_account}   Mode: {settings.mode}")
     report.add("  Read-only. No orders placed, constructed, or modified.")
-    if arguments.no_grab:
-        report.add("  Market data device access was NOT claimed (--no-grab).")
+    if arguments.grab:
+        report.add("  Market data device access WAS claimed on connect (--grab).")
     else:
-        report.add("  Market data device access was claimed on connect (SDK default).")
+        report.add("  Market data device access was not claimed (project default).")
     report.add("=" * RULE_WIDTH)
     report.add()
 
@@ -911,8 +914,11 @@ def main(argv: list[str] | None = None) -> int:
 
     add_summary(report, results, context)
 
+    # The filename records which device-access default the run used, so two
+    # reports are never compared across a difference they do not describe.
+    grab_suffix = "grab" if arguments.grab else "nograb"
     output_path = Path(__file__).resolve().parent.parent / (
-        f"capabilities-{date.today().isoformat()}.txt"
+        f"capabilities-{date.today().isoformat()}-{grab_suffix}.txt"
     )
     report.write_to(output_path)
 

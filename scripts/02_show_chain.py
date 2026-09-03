@@ -442,6 +442,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=f"flag rows below this volume or open interest (default {DEFAULT_LIQUIDITY_THRESHOLD})",
     )
     parser.add_argument(
+        "--grab",
+        action="store_true",
+        help=(
+            "claim market data device access, taking it from whatever held it "
+            "(such as the Tiger app on your phone). Only needed if a quote is "
+            "refused with 'current device does not have permission'."
+        ),
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="print full tracebacks instead of a plain message",
@@ -480,7 +489,7 @@ def main(argv: list[str] | None = None) -> int:
         print_startup_banner(settings.masked_account, settings.mode, settings.dry_run)
         print()
 
-        quote_client = build_quote_client(settings)
+        quote_client = build_quote_client(settings, grab_permission=arguments.grab)
         return show_chain(quote_client, underlying, arguments)
 
     except LiveTradingBlocked as error:

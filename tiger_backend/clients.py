@@ -62,18 +62,22 @@ def build_client_config(settings: Settings) -> "TigerOpenClientConfig":
     return client_config
 
 
-def build_quote_client(settings: Settings, grab_permission: bool = True) -> "QuoteClient":
-    """Market data client. Read-only for data, but see grab_permission.
+def build_quote_client(settings: Settings, grab_permission: bool = False) -> "QuoteClient":
+    """Market data client. Read-only, and by default free of side effects.
+
+    Note the default differs from the SDK's. QuoteClient claims market data
+    device access on construction unless told otherwise, which is not a
+    purchase and grants no entitlement, but *moves* primary-device status to
+    this machine and takes it from whatever held it before -- typically the
+    Tiger app on a phone. Only one device holds it at a time. Nothing in this
+    project needs it, so it is off here.
 
     Args:
         settings: Validated configuration.
-        grab_permission: Whether to claim market data device access on
-            construction. The SDK does this by default. It is not a purchase
-            and grants no new entitlement -- it moves which *device* counts as
-            primary, and takes that status away from whatever held it before,
-            such as the Tiger app on a phone. Pass False for a strictly
-            side-effect-free session, accepting that real-time data may then be
-            refused with "current device does not have permission".
+        grab_permission: Whether to claim market data device access. Pass True
+            deliberately when a real-time call has been refused with "current
+            device does not have permission", which is a different failure from
+            an unbought entitlement.
 
     Returns:
         A configured QuoteClient.
