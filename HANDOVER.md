@@ -1,7 +1,7 @@
 # Handover
 
-**All six spec phases complete, plus Phase 7 (attached orders), 2026-09-03.**
-Everything below is verified, not assumed. Read this before touching the code so nothing gets re-derived.
+**All six spec phases complete, plus Phase 7 (attached orders) and Phase 8
+(HTTP API), 2026-09-04.** Everything below is verified, not assumed. Read this before touching the code so nothing gets re-derived.
 
 The build specification is `../tiger-options-backend-spec.md`. It is the
 authority; this file records what has actually been done against it.
@@ -23,6 +23,7 @@ Approved and implemented.
 | 5 | Paper order submission | **done — a real order was placed** | See below. |
 | 6 | Positions and P&L | **done** | The Phase 5 position read back and valued at a typed bid. See §3. |
 | 7 | Attached take-profit and stop-loss (new, outside the spec) | **done** | Three bracketed orders placed live: DAY legs, GTC legs, and a 3-contract bracket whose legs were cancelled to settle the commission question. All filled; legs confirmed live and cancellable. See §3a. |
+| 8 | HTTP API (new, outside the spec) | **done** | FastAPI over the same library. Health, 401 without a key, a full preview → submit cycle, a retried submit refused, a decimal-slip 400, a 403 under DRY_RUN, and GET/DELETE on a real order — all exercised live. See §3b. |
 
 ### The real paper order
 
@@ -44,7 +45,7 @@ blocked at step 4, before the confirmation prompt was even offered. `DRY_RUN`
 was set false for that one order and restored immediately afterwards, verified
 blocking again. It is `true` now.
 
-234 unit tests pass, all offline — no network, no credentials:
+266 unit tests pass, all offline — no network, no credentials:
 
 ```bash
 python -m pytest tests/ -q
@@ -53,6 +54,10 @@ python -m pytest tests/ -q
 Commits, newest first:
 
 ```
+c761d32  Phase 8: FastAPI service over the existing library
+a2c5ba5  Make the commission estimate exact; README current for seven phases
+2ffd6fa  Settle the commission question: a fixed toll, not a per-contract fee
+e9ad17f  Answer the GTC question; document Phase 7 in HANDOVER.md
 8027e29  Phase 7: attached take-profit and stop-loss legs
 f2a93f9  Bring HANDOVER.md and README current for all six phases
 efe6e72  Phase 6: positions and P&L
@@ -323,6 +328,195 @@ Only **limit** orders support attached orders.
 
 ---
 
+## 3b. The HTTP API (Phase 8)
+
+**A second entry point over the same library, not a rewrite.** Every route
+calls the functions the CLI scripts call, and no business logic lives in a
+handler. `scripts/` is unchanged in behaviour and still works — those scripts
+are the verified evidence behind everything in this file, and they stay.
+
+```bash
+python -m api.main                                     # 127.0.0.1:8000
+curl -H "X-API-Key: $KEY" http://127.0.0.1:8000/health
+```
+
+Interactive docs at `/docs`.
+
+### Lock 0: the API key
+
+An HTTP port that can place orders is a different risk from a CLI. Assume
+anything that can reach the port will try it.
+
+- Every route except `/health` and the docs requires a matching `X-API-Key`
+  header. Missing or wrong is **401 before routing**, compared with
+  `secrets.compare_digest` so a wrong key takes the same time to reject as a
+  right one.
+- **The service refuses to start without `TIGER_API_KEY` set.** `create_app()`
+  raises `ConfigError` rather than serving an unauthenticated order endpoint.
+  A service that silently came up open would be worse than one that would not
+  come up at all.
+- It binds **127.0.0.1** by default. The startup banner prints the bind
+  address, and prints a warning line if it is not localhost.
+- Order endpoints return **403** with the reason when `DRY_RUN` is true or the
+  account is not PAPER, and every order-path request is logged with its client
+  IP to `logs/api_requests.log` alongside the existing audit record.
+- The key is declared as an OpenAPI security scheme, so `/docs` shows an
+  **Authorize** button and "Try it out" sends the header. That is presentation
+  only: **enforcement lives in the middleware**, which runs whether or not a
+  caller ever looks at the schema. `/health` is left unmarked so the schema
+  matches `UNPROTECTED_PATHS` exactly, and a test asserts that.
+
+The 403 is a fast, clear refusal **in front of** the real guard, not a
+replacement for it. `assert_order_allowed` still runs twice inside `orders.py`
+on every order path. Deleting the 403 pre-check would change the error a caller
+sees; it would not change whether an order could be placed.
+
+### Orders are two-step
+
+```
+POST /orders/preview   ->  full preview + preview_token + expected_cash
+POST /orders           ->  that token + that exact expected_cash
+```
+
+**The prices are not resent when submitting.** `POST /orders` accepts only a
+token and a cash figure. The validated intent — contract, quote snapshot, cost
+estimate, bracket prices — is held server-side against the token.
+
+That is the whole point. If a client could restate prices at submit time, it
+could preview at one price and submit at another, and `expected_cash` would be
+confirming a figure that no longer described the order. Holding the intent
+server-side makes the confirmation mean something.
+
+`expected_cash` is the HTTP equivalent of typing the cash amount at the CLI. A
+mismatch is refused with `CASH_MISMATCH` rather than reconciled, and the token
+is consumed either way.
+
+### Tokens
+
+| Property | Why |
+|---|---|
+| TTL matches `--max-quote-age` (60s, `PREVIEW_TOKEN_TTL_SECONDS`) | A preview built from a typed quote goes stale for exactly the reason the quote does. One setting, one concept. |
+| **Single use** — redeeming deletes it | This is what makes `POST /orders` safe to retry. A client that times out and resends presents a spent token and gets `TOKEN_INVALID`, never a second order. |
+| Consumed even when expired | Otherwise a slow retry could succeed after the price had moved. |
+| In memory only; a restart invalidates all | A pending confirmation should not outlive the process that made the promise. |
+| Guarded by a lock, so redeem is atomic | Two concurrent submits of one token must not both win. A threaded test fires eight at once and asserts exactly one succeeds. |
+
+### The interactive controls, translated
+
+| CLI | HTTP |
+|---|---|
+| five typed values, re-prompt on a bad one | request body fields; **400** naming which check failed, because there is nobody to re-prompt |
+| `USE 115.00` override phrase | `confirm_price_override: true` — a body field, absent by default, **never a query parameter** |
+| typed cash confirmation | `preview_token` + exact `expected_cash` |
+
+Checks that are yes/no prompts at the CLI — a wide spread, a limit outside the
+quoted market — become **warnings on the preview** rather than blocks, since an
+API has nobody to ask. The decimal-slip check keeps its blocking status and
+returns the full evidence:
+
+```json
+{"error_code": "PRICE_LOOKS_LIKE_DECIMAL_SLIP",
+ "detail": {"typed_value": 2.5, "last_close": 0.07,
+            "last_close_date": "2026-09-03", "last_close_age_days": 1,
+            "ratio": 35.7143,
+            "resubmit_with": {"confirm_price_override": true}}}
+```
+
+### Errors: coarse status, precise code
+
+Every error body is `{error_code, message, detail}`. **Branch on `error_code`,
+never on `message`** — the message is written for a human at 2am and will be
+reworded; the code is stable.
+
+| Exception / condition | Status | `error_code` |
+|---|---|---|
+| `ExpiredContractError` | **410 Gone** | `EXPIRY_EXPIRED` |
+| `ExpiryNotListedError` | 404 | `EXPIRY_NOT_LISTED` |
+| `StrikeNotFoundError` | 422 | `STRIKE_NOT_FOUND` |
+| `BracketError` | 422 | `BRACKET_INVALID` |
+| `PricingError` | 422 | `PRICING_FAILED` |
+| `ContractError` (base) | 400 | `CONTRACT_INVALID` |
+| quote sanity check failed | 400 | `QUOTE_REJECTED` |
+| decimal slip, no override | 400 | `PRICE_LOOKS_LIKE_DECIMAL_SLIP` |
+| bad or spent token | 400 | `TOKEN_INVALID` |
+| expired token | 400 | `TOKEN_EXPIRED` |
+| cash figure disagrees | 400 | `CASH_MISMATCH` |
+| `LiveTradingBlocked` / locks closed | **403** | `BLOCKED_BY_SAFETY_LOCK` |
+| missing or wrong API key | **401** | `UNAUTHORIZED` |
+| Tiger entitlement refusal | 502 | `UPSTREAM_PERMISSION_DENIED` |
+| broker refused the order | 502 | `UPSTREAM_REJECTED` |
+| body failed validation | 422 | `REQUEST_INVALID` |
+
+**410 Gone for an expired expiry** is the mapping worth understanding. It means
+precisely "this existed and no longer does", which is the Phase 3 finding
+expressed in the protocol: a client can tell "you mistyped a date" (404) from
+"that contract has expired" (410) without reading a word of prose.
+
+`UPSTREAM_PERMISSION_DENIED` names an unbought entitlement as a **purchase**
+rather than flattening it into a generic upstream failure.
+
+### The deadlock this phase introduced, and how it hid
+
+`api/deps.py` originally used a plain `threading.Lock`. `get_quote_client()`
+acquires it and then calls `get_settings()`, which acquires the same lock on
+the same thread. A plain `Lock` is not reentrant, so that deadlocks.
+
+**It hid behind the two things I tested first.** `GET /health` only calls
+`get_settings()` — a single acquisition, no nesting, so it passed. The 401
+tests were refused by the middleware *before* reaching a route, so they never
+built a client either. The first authenticated request that actually needed a
+Tiger client hung. Not crashed — **hung**, with no traceback and no log line,
+because uvicorn logs a request on completion and this one never completed.
+
+Now `threading.RLock`, with a comment at the declaration saying why. Two tests
+stop it coming back:
+
+- one asserts the lock is an `RLock` by type
+- one acquires it nested on a worker thread and asserts completion within a
+  five-second timeout, so a regression fails the suite instead of hanging it
+
+The lesson generalises: a health check that touches nothing proves nothing
+about the paths that touch something.
+
+### The three dormant functions
+
+Kept, not deleted, and each now carries a `DORMANT, not dead` line in its
+docstring. Without it, "unused" and "waiting on an entitlement" look identical
+to a future reader.
+
+| Function | Why it is unused | What would activate it |
+|---|---|---|
+| `market.fetch_contract_quote` | `get_option_briefs` needs `usOptionQuote` | Buying that entitlement. It is the natural body of the `TigerQuoteProvider` the seam is waiting for. |
+| `pricing.normalise_limit_price` | Tiger returns `min_tick` as `None`, so there is nothing to snap to | A feed that reports tick sizes |
+| `contracts.parse_identifier` | Every current caller starts from the four elements, not the string | Anything that reads identifiers back from Tiger |
+
+All three are spec deliverables. Deleting them would remove things the
+specification asked for because an entitlement has not been bought yet.
+
+### New `.env` keys
+
+| Key | Default | Purpose |
+|---|---|---|
+| `TIGER_API_KEY` | *(none — service will not start)* | Lock 0. A long random value. |
+| `API_HOST` | `127.0.0.1` | Bind address. Change only with intent. |
+| `API_PORT` | `8000` | |
+| `PREVIEW_TOKEN_TTL_SECONDS` | `60` | Matches the quote staleness limit. |
+
+### Verified live, 2026-09-04
+
+Health; 401 without a key and with a wrong key; a full preview → submit cycle
+on `AAPL 260918C00380000` (`expected_cash` $9.00, order `44513085863250944`);
+the same token retried and refused with `TOKEN_INVALID`; a decimal-slip 400
+carrying its evidence, then accepted with `confirm_price_override`; a 403 under
+`DRY_RUN=true`; and `GET`/`DELETE` on the real order.
+
+That order **did not fill** — it was 03:31 ET and the market was closed — and
+was correctly reported as `NOTHING FILLED` with `settled: false` after 12
+polls, not as a success. It was then cancelled through
+`DELETE /orders/{order_id}`, which returned `CANCELLED`, `0/1 filled`.
+
+---
+
 ## 4. Environment facts
 
 Not derivable from the repo, because `.env` and `secrets/` are gitignored.
@@ -333,6 +527,9 @@ Not derivable from the repo, because `.env` and `secrets/` are gitignored.
 | Paper account | 17 digits, ends `6574`. In both `TIGER_ACCOUNT` and `TIGER_PAPER_ACCOUNT`, identical — that is Lock 1. |
 | Private key | `secrets/tiger_private_key.pem`, PKCS#8, **headerless**. |
 | Market data source | `MARKET_DATA_SOURCE=manual` |
+| API key | `TIGER_API_KEY` is set in `.env`. Without it the HTTP service refuses to start. Not in git. |
+| API bind | `API_HOST=127.0.0.1`, `API_PORT=8000` |
+| Preview token TTL | `PREVIEW_TOKEN_TTL_SECONDS=60`, matching the quote staleness limit |
 | Locks | `TIGER_ALLOW_LIVE=false`, `DRY_RUN=true` |
 | Virtualenv | `vnv/`, not `.venv`. `vnv\Scripts\activate`. |
 | Python | 3.11.9, `tigeropen` 3.7.1 |
@@ -547,10 +744,11 @@ therefore has three outcomes, not two — see §7.
 
 ---
 
-## 7. The three locks, and how they were exercised
+## 7. The locks, and how they were exercised
 
 | Lock | Mechanism | State |
 |---|---|---|
+| 0 — API key *(HTTP only)* | `X-API-Key` must match `TIGER_API_KEY`; the service will not start without one | 401 before routing |
 | 1 — Account allowlist | configured account must equal `TIGER_PAPER_ACCOUNT` | fails closed |
 | 2 — Live opt-in | `TIGER_ALLOW_LIVE` must be `true` for any other account | `false` |
 | 3 — Dry run | `DRY_RUN` must be `false` for an order to be sent | `true` |
@@ -559,26 +757,42 @@ therefore has three outcomes, not two — see §7.
 before the human is asked anything, and again immediately before `place_order`,
 so nothing between the gate and the wire can have changed the mode.
 
-All three verified live. Lock 1 refuses a non-paper account ID; Lock 3 blocked
-the real order flow before the confirmation prompt when `DRY_RUN=true`.
+All four verified live. Lock 0 refuses a request with no key and one with a
+wrong key; Lock 1 refuses a non-paper account ID; Lock 3 blocked the real
+order flow before the confirmation prompt when `DRY_RUN=true`, at the CLI and
+with a 403 over HTTP.
 
-Confirmation is **the cash amount typed exactly**, not a yes. Tests assert that
-`y` does not confirm.
+### What a reviewer should grep for
 
-Two related guards, both implemented and tested:
+Three greps check that the structural guarantees still hold. Each currently
+passes, and each failure means something specific has gone wrong.
 
-- **Expired expiries** are refused as `EXPIRED`, never as "not found", and the
-  error names the next tradable date. Reporting an expired contract as missing
-  sends the reader hunting for a typo in a date that is real and was tradable
-  yesterday.
-- **The decimal-slip check** blocks a typed price more than 3x or less than
-  0.33x the last traded close, and demands the value retyped inside an override
-  phrase (`USE 115.00`) that a reflexive `y` cannot clear.
+Count the **call sites**, not the mentions. A bare `grep -c assert_order_allowed`
+returns 8, because the import and the numbered sequence in two docstrings match
+as well -- which is exactly how the first draft of this section came to quote
+the wrong number. The anchored patterns below count only what executes.
 
----
+```bash
+# 1. The submission call lives in one file and is reached from exactly two
+#    places: the plain order path and the bracketed one. A call site
+#    anywhere else is a second submission route outside the guards.
+grep -c 'trade_client\.place_order(' tiger_backend/orders.py
+#    expect 2
+grep -rl 'trade_client\.place_order(' --include='*.py' tiger_backend api scripts
+#    expect tiger_backend/orders.py, and nothing else
 
-## 8. Where things are
+# 2. The provider seam. A concrete provider named outside providers.py means
+#    the abstraction has leaked, and swapping to fetched data will no longer
+#    be one line in .env.
+grep -rn 'ManualEntryProvider' --include='*.py' tiger_backend api scripts | grep -v providers.py
+#    expect nothing but docstring prose
 
+# 3. assert_order_allowed is CALLED four times: twice on the plain path and
+#    twice on the bracketed one. Once as the gate before the human is asked
+#    anything, once immediately before the wire. Three means a guard was
+#    dropped from one of the two paths.
+grep -c '^[[:space:]]*assert_order_allowed(' tiger_backend/orders.py
+#    expect 4
 ```
 tiger_backend/
   safety.py      Three locks, account masking, startup banner. Pure logic.
@@ -592,6 +806,18 @@ tiger_backend/
   orders.py      Phase 4 build + preview, Phase 5 submit + poll.
   positions.py   Phase 6. Read-only, values at the bid.
   audit.py       JSONL order trail in logs/ (gitignored).
+
+api/             Phase 8. A second entry point, NOT a rewrite. No business
+                 logic in a route handler.
+  main.py        App, the API-key middleware, error handlers, uvicorn entry.
+  deps.py        Settings and clients, built once. RLock, not Lock -- see 3b.
+  models.py      Every Pydantic request and response shape.
+  errors.py      Exception -> (status, error_code), in one table.
+  tokens.py      Preview tokens: issue, redeem once, expire.
+  quote_check.py The Phase 4 checks against a body instead of a prompt.
+  shaping.py     Library dataclasses -> response models. Decides nothing.
+  probe.py       The capability probe, returning rows instead of a table.
+  routes/        health, market, contracts, positions, orders.
 
 scripts/
   00_check_capabilities.py  Diagnostic, outside the phases. Read-only probe of
@@ -610,7 +836,7 @@ scripts/
   07_premium_history.py     Learning tool, outside the phases. Daily traded
                             prices for one contract via the free get_option_bars.
 
-tests/                      213 tests, all offline.
+tests/                      266 tests, all offline.
   chain_fixture.py          A deliberately awkward synthetic chain. Run directly:
                             python tests/chain_fixture.py --all
 ```

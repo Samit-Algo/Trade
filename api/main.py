@@ -22,6 +22,7 @@ import secrets
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from tiger_backend.config import ConfigError
@@ -65,10 +66,12 @@ def create_app() -> FastAPI:
             "DRY_RUN, and this API key. Orders are two-step: preview for a "
             "token, then submit with that token and the exact cash figure."
         ),
+        swagger_ui_parameters={"persistAuthorization": True},
     )
 
     register_middleware(app)
     register_error_handlers(app)
+    register_openapi(app)
 
     app.include_router(health.router)
     app.include_router(market.router)
@@ -113,6 +116,42 @@ def register_middleware(app: FastAPI) -> None:
             )
 
         return await call_next(request)
+
+
+def register_openapi(app: FastAPI) -> None:
+    """Declare the API key in OpenAPI so /docs shows Authorize.
+
+    Enforcement stays in middleware. This only tells Swagger to send
+    ``X-API-Key`` on Try it out. /health and the docs themselves stay
+    unmarked so they match UNPROTECTED_PATHS.
+    """
+
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        schema.setdefault("components", {})["securitySchemes"] = {
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": API_KEY_HEADER,
+            }
+        }
+        for path, operations in schema.get("paths", {}).items():
+            if path in UNPROTECTED_PATHS:
+                continue
+            for operation in operations.values():
+                if isinstance(operation, dict):
+                    operation["security"] = [{"ApiKeyAuth": []}]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = custom_openapi
 
 
 def register_error_handlers(app: FastAPI) -> None:

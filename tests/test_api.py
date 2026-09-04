@@ -1,6 +1,6 @@
 """Tests for the HTTP layer. Offline: the Tiger clients are never built.
 
-The library is already covered by 240 tests. What matters here is the part the
+The library is covered by its own suite. What matters here is the part the
 HTTP layer adds and the CLI does not have: the API key, the two-step token
 flow, and the translation of the interactive controls into request fields.
 """
@@ -263,3 +263,36 @@ class TestDepsAreNotDeadlocked:
         thread.join(timeout=5)
 
         assert acquired == [True], "nested acquisition deadlocked"
+
+
+class TestOpenApiSecurityMatchesMiddleware:
+    """The schema and the middleware must agree on what is public.
+
+    The Authorize button in /docs is presentation; the middleware is
+    enforcement. If they disagree, the docs invite a caller to omit a header
+    that is actually required, or imply one is needed where it is not.
+    """
+
+    def test_every_route_except_the_unprotected_ones_declares_the_key(self):
+        from api.main import UNPROTECTED_PATHS, create_app
+
+        spec = create_app().openapi()
+
+        for path, operations in spec["paths"].items():
+            declares_key = any(
+                isinstance(operation, dict) and "security" in operation
+                for operation in operations.values()
+            )
+            if path in UNPROTECTED_PATHS:
+                assert not declares_key, f"{path} should be public"
+            else:
+                assert declares_key, f"{path} is enforced but not marked in the schema"
+
+    def test_the_scheme_names_the_header_the_middleware_reads(self):
+        from api.main import API_KEY_HEADER, create_app
+
+        spec = create_app().openapi()
+        scheme = spec["components"]["securitySchemes"]["ApiKeyAuth"]
+
+        assert scheme["in"] == "header"
+        assert scheme["name"] == API_KEY_HEADER
