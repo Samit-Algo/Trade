@@ -4,9 +4,9 @@ A Python backend that talks to the Tiger Brokers OpenAPI, built in deliberate
 stages so that no code capable of spending real money exists until the final
 phase, and even then it is locked behind two independent switches.
 
-**Current state: all six spec phases complete, plus Phase 7 (attached
-take-profit and stop-loss orders).** Seven real orders have been placed on the
-paper account. Every script except `05_paper_order.py` is read-only.
+**Current state: all six spec phases complete, plus Phase 7 (attached orders)
+and Phase 8 (HTTP API).** Eight real orders have been placed on the paper
+account. Every script except `05_paper_order.py` is read-only.
 
 > Resuming work after a break? Read **[HANDOVER.md](HANDOVER.md)** first.
 > It records what is verified and how, the one entitlement still worth buying,
@@ -249,6 +249,73 @@ documentation does not say:
 
 ---
 
+## Phase 8 — HTTP API
+
+```bash
+python -m api.main            # binds 127.0.0.1:8000 by default
+curl -H "X-API-Key: $KEY" http://127.0.0.1:8000/health
+```
+
+A **second entry point over the same library**, not a rewrite. Every route
+calls the functions the CLI scripts call; no business logic lives in a
+handler, and `scripts/` keeps working unchanged.
+
+### The fourth lock
+
+An HTTP port that can place orders is a different risk from a CLI, so:
+
+- every request needs a matching `X-API-Key` header, or **401** before routing
+- the service **refuses to start** without `TIGER_API_KEY` set
+- it binds to **127.0.0.1**, not `0.0.0.0`
+- order endpoints return **403** when `DRY_RUN` is true or the account is not
+  PAPER, and every order request is logged with its client IP
+
+The three original locks are untouched, and `assert_order_allowed` still runs
+**twice** on every order path inside the library.
+
+### Orders are two-step
+
+```
+POST /orders/preview  ->  full preview + preview_token + expected_cash
+POST /orders          ->  that token + that exact expected_cash
+```
+
+The prices are **not resent** when submitting — the validated intent is held
+server-side against the token, so a client cannot preview one price and submit
+another. `expected_cash` is the HTTP equivalent of typing the cash amount at
+the CLI.
+
+**`POST /orders` is safe to retry.** Redeeming a token deletes it, so a client
+that times out and resends gets `TOKEN_INVALID`, never a second order.
+
+### The interactive controls, translated
+
+| CLI | HTTP |
+|---|---|
+| five typed values, re-prompt on error | request body fields; **400** naming the failed check |
+| `USE 115.00` override phrase | `confirm_price_override: true`, absent by default, never a query parameter |
+| typed cash confirmation | `preview_token` + exact `expected_cash` |
+
+A rejected price returns the full evidence, so a client can show a human what
+the CLI would have printed:
+
+```json
+{"error_code": "PRICE_LOOKS_LIKE_DECIMAL_SLIP",
+ "detail": {"typed_value": 2.5, "last_close": 0.07,
+            "last_close_age_days": 1, "ratio": 35.7143,
+            "resubmit_with": {"confirm_price_override": true}}}
+```
+
+### Errors: coarse status, precise code
+
+Branch on `error_code`, never on the message. Notably **410 Gone** for an
+expiry that is listed but has passed, distinct from **404** for one Tiger never
+listed — the Phase 3 finding expressed in the protocol.
+
+Interactive docs at `/docs`.
+
+---
+
 ## Roadmap
 
 Each phase must run cleanly against the paper account before the next begins.
@@ -263,6 +330,7 @@ Phase 7 was added after the spec was finished.
 | 5 | Paper order submission | **done** — one real order filled, see below |
 | 6 | Positions and P&L | **done** — position valued at the bid |
 | 7 | Attached take-profit and stop-loss *(new, outside the spec)* | **done** — brackets filled with DAY and GTC legs |
+| 8 | HTTP API *(new, outside the spec)* | **done** — FastAPI over the same library, four locks, two-step orders |
 
 ### The real paper order
 

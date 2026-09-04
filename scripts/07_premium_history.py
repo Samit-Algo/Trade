@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tiger_backend.clients import ClientSetupError, build_quote_client  # noqa: E402
 from tiger_backend.config import ConfigError, load_settings  # noqa: E402
+from tiger_backend.contracts import to_tiger_expiry_format  # noqa: E402
 from tiger_backend.market import (  # noqa: E402
     MarketDataError,
     list_expirations,
@@ -44,34 +45,6 @@ from tiger_backend.throttle import OPTION_BARS_LIMITER  # noqa: E402
 RULE_WIDTH = 96
 
 VALID_OPTION_TYPES = ("CALL", "PUT")
-
-
-def to_tiger_expiry_format(date_text: str) -> str:
-    """Convert "YYYY-MM-DD" to the "yyyyMMdd" form Tiger's helpers want.
-
-    Tiger's contract functions take the compact form while its expiration list
-    returns the dashed one. Mixing them up is the most common bug in this
-    integration.
-
-    This is a local copy on purpose. Phase 3 owns the canonical version in
-    contracts.py, and this standalone tool must not pre-empt it.
-
-    Args:
-        date_text: An expiry as "YYYY-MM-DD".
-
-    Returns:
-        The same date as "yyyyMMdd".
-
-    Raises:
-        MarketDataError: If the text is not in the expected format.
-    """
-    try:
-        parsed = datetime.strptime(date_text, "%Y-%m-%d")
-    except ValueError as error:
-        raise MarketDataError(
-            f"Could not read {date_text!r} as a date (expected YYYY-MM-DD)."
-        ) from error
-    return parsed.strftime("%Y%m%d")
 
 
 def verify_expiry(quote_client, underlying: str, expiry_date_text: str) -> bool:

@@ -745,6 +745,11 @@ def _try_fetch_delayed_price(quote_client, underlying: str) -> float | None:
 def fetch_contract_quote(quote_client, identifier: str) -> ContractQuote:
     """Fetch a live quote for one specific option contract.
 
+    DORMANT, not dead. A Phase 2 deliverable that nothing calls yet because
+    get_option_briefs needs the `usOptionQuote` entitlement, which has not been
+    bought. Buying it activates this, and this is the natural body of the
+    TigerQuoteProvider that providers.py is waiting for.
+
     Args:
         quote_client: A tigeropen QuoteClient.
         identifier: A full option identifier, e.g. "AAPL  260918C00320000".
@@ -846,3 +851,24 @@ def fetch_last_traded_close(quote_client, identifier: str) -> LastTrade | None:
     days_old = (today_in_market_timezone() - trade_date).days
 
     return LastTrade(close=close_price, trade_date=trade_date, days_old=days_old)
+
+
+def fetch_underlying_price_safely(quote_client, underlying: str) -> UnderlyingPrice | None:
+    """Fetch the underlying price, tolerating its absence.
+
+    A preview reads better with a spot price but does not depend on one, and
+    this account may have no entitlement for the real-time feed. Returning None
+    lets a caller carry on and say "price unavailable" rather than fail an
+    order preview over a decoration.
+
+    Args:
+        quote_client: A tigeropen QuoteClient.
+        underlying: Underlying symbol.
+
+    Returns:
+        The price, or None if it could not be read for any reason.
+    """
+    try:
+        return fetch_underlying_price(quote_client, underlying)
+    except Exception:
+        return None

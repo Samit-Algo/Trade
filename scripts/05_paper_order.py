@@ -39,7 +39,7 @@ from tiger_backend.config import ConfigError, load_settings  # noqa: E402
 from tiger_backend.contracts import ContractError, find_option_contract  # noqa: E402
 from tiger_backend.market import (  # noqa: E402
     DEFAULT_LIQUIDITY_THRESHOLD,
-    fetch_underlying_price,
+    fetch_underlying_price_safely,
 )
 from tiger_backend.orders import (  # noqa: E402
     DEFAULT_POLL_ATTEMPTS,
@@ -57,6 +57,7 @@ from tiger_backend.orders import (  # noqa: E402
     print_fill_outcome,
     sell_option,
 )
+from tiger_backend.positions import fetch_cash_available  # noqa: E402
 from tiger_backend.pricing import PricingError  # noqa: E402
 from tiger_backend.providers import (  # noqa: E402
     DEFAULT_MAX_QUOTE_AGE_SECONDS,
@@ -64,47 +65,9 @@ from tiger_backend.providers import (  # noqa: E402
     build_market_data_provider,
 )
 from tiger_backend.safety import LiveTradingBlocked, print_startup_banner  # noqa: E402
-from tiger_backend.throttle import PRIME_ASSETS_LIMITER  # noqa: E402
 
 RULE_WIDTH = 60
 
-SECURITIES_SEGMENT = "S"
-
-
-def fetch_cash_available(trade_client) -> float | None:
-    """Fetch cash available to trade, not buying power.
-
-    Buying power on this Reg T margin account is about four times the cash,
-    and the difference is borrowed. An option can go to zero on its own; a
-    loan taken to buy it does not.
-
-    Args:
-        trade_client: A tigeropen TradeClient.
-
-    Returns:
-        Cash available, or None if it could not be read.
-    """
-    PRIME_ASSETS_LIMITER.wait()
-    try:
-        portfolio = trade_client.get_prime_assets(base_currency="USD")
-    except Exception:
-        return None
-
-    segments = getattr(portfolio, "segments", None) or {}
-    segment = segments.get(SECURITIES_SEGMENT)
-    if segment is None:
-        return None
-
-    cash = getattr(segment, "cash_available_for_trade", None)
-    return float(cash) if cash is not None else None
-
-
-def fetch_underlying_price_safely(quote_client, underlying: str):
-    """Fetch the underlying price, tolerating its absence."""
-    try:
-        return fetch_underlying_price(quote_client, underlying)
-    except Exception:
-        return None
 
 
 def get_fresh_quote(provider, contract, max_age_seconds: int):

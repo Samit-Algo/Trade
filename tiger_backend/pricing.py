@@ -287,6 +287,10 @@ def normalise_limit_price(
 ) -> tuple[float, bool]:
     """Snap a limit price to a valid increment, when the increment is known.
 
+    DORMANT, not dead. A Phase 4 deliverable that nothing calls because Tiger
+    returns min_tick as None on every contract, so the limit price is typed by
+    hand instead. A market data feed that reports tick sizes would activate it.
+
     Tiger rejects prices that do not sit on a valid tick. It also returns
     min_tick as None on every contract call this project makes, so most of the
     time there is nothing to snap to.

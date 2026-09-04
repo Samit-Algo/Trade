@@ -37,7 +37,10 @@ from tigeropen.common.consts import Currency, Market, SecurityType
 
 from .contracts import from_tiger_expiry_format
 from .market import days_until_expiry, parse_expiry_date
-from .throttle import POSITIONS_LIMITER
+from .throttle import POSITIONS_LIMITER, PRIME_ASSETS_LIMITER
+
+#: Options live in the securities segment, not futures ('C') or fund ('F').
+SECURITIES_SEGMENT = "S"
 
 #: Warn below this many days to expiry. Configurable per run.
 DEFAULT_EXPIRY_WARNING_DAYS = 3
@@ -449,3 +452,37 @@ def value_position(
         unrealised_pnl=unrealised_pnl,
         unrealised_pnl_percent=calculate_pnl_percent(unrealised_pnl, cost_basis),
     )
+
+
+def fetch_cash_available(trade_client, account: str | None = None) -> float | None:
+    """Fetch the cash available to trade, deliberately NOT buying power.
+
+    This Reg T margin account reports roughly four times its cash as buying
+    power, and the difference is borrowed. An option can go to zero on its own;
+    a loan taken to buy it does not. Every affordability check in this project
+    compares against cash.
+
+    Args:
+        trade_client: A tigeropen TradeClient.
+        account: Account ID, or None for the configured default.
+
+    Returns:
+        Cash available to trade, or None if it could not be read.
+    """
+    PRIME_ASSETS_LIMITER.wait()
+
+    try:
+        portfolio = trade_client.get_prime_assets(account=account, base_currency="USD")
+    except Exception:
+        return None
+
+    segments = getattr(portfolio, "segments", None) or {}
+    segment = segments.get(SECURITIES_SEGMENT)
+    if segment is None:
+        return None
+
+    cash = getattr(segment, "cash_available_for_trade", None)
+    if cash is None:
+        return None
+
+    return float(cash)

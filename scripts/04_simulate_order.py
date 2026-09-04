@@ -30,9 +30,10 @@ from tiger_backend.contracts import ContractError, find_option_contract  # noqa:
 from tiger_backend.market import (  # noqa: E402
     DEFAULT_LIQUIDITY_THRESHOLD,
     MarketDataError,
-    fetch_underlying_price,
+    fetch_underlying_price_safely,
 )
 from tiger_backend.orders import simulate_order  # noqa: E402
+from tiger_backend.positions import fetch_cash_available  # noqa: E402
 from tiger_backend.pricing import PricingError  # noqa: E402
 from tiger_backend.providers import (  # noqa: E402
     DEFAULT_MAX_QUOTE_AGE_SECONDS,
@@ -40,66 +41,9 @@ from tiger_backend.providers import (  # noqa: E402
     build_market_data_provider,
 )
 from tiger_backend.safety import LiveTradingBlocked, print_startup_banner  # noqa: E402
-from tiger_backend.throttle import PRIME_ASSETS_LIMITER  # noqa: E402
 
 RULE_WIDTH = 60
 
-#: Options live in the securities segment, not futures or fund.
-SECURITIES_SEGMENT = "S"
-
-
-def fetch_cash_available(trade_client) -> float | None:
-    """Fetch the cash available to trade.
-
-    Deliberately reads cash, not buying power. This paper account reports
-    roughly four times its cash as buying power under Reg T margin, and that
-    difference is borrowed money. An option can go to zero on its own; a loan
-    against it does not.
-
-    Args:
-        trade_client: A tigeropen TradeClient.
-
-    Returns:
-        Cash available to trade, or None if it could not be read.
-    """
-    PRIME_ASSETS_LIMITER.wait()
-
-    try:
-        portfolio = trade_client.get_prime_assets(base_currency="USD")
-    except Exception:
-        return None
-
-    segments = getattr(portfolio, "segments", None) or {}
-    segment = segments.get(SECURITIES_SEGMENT)
-    if segment is None:
-        return None
-
-    cash = getattr(segment, "cash_available_for_trade", None)
-    if cash is None:
-        return None
-
-    return float(cash)
-
-
-def fetch_underlying_price_safely(quote_client, underlying: str):
-    """Fetch the underlying price, tolerating its absence.
-
-    The preview is more useful with a spot price but does not depend on one,
-    and this account may have no entitlement for the real-time feed.
-
-    Args:
-        quote_client: A tigeropen QuoteClient.
-        underlying: Underlying symbol.
-
-    Returns:
-        An UnderlyingPrice, or None.
-    """
-    try:
-        return fetch_underlying_price(quote_client, underlying)
-    except MarketDataError:
-        return None
-    except Exception:
-        return None
 
 
 def build_argument_parser() -> argparse.ArgumentParser:

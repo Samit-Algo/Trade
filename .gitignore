@@ -41,3 +41,6 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
+
+# API server stdout capture
+api_server.out

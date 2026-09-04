@@ -191,6 +191,11 @@ def build_identifier(
 def parse_identifier(identifier: str) -> tuple[str, str, str, float]:
     """Split a 21-character option identifier back into its four elements.
 
+    DORMANT, not dead. A Phase 3 deliverable -- the spec asks for both
+    directions of the identifier conversion -- that nothing calls yet because
+    every current caller starts from the four elements rather than the string.
+    Anything that reads identifiers back from Tiger will need it.
+
     The reverse of build_identifier, again using the SDK's helper rather than
     slicing the string by hand.
 

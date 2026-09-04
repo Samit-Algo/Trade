@@ -49,6 +49,10 @@ class Settings:
     dry_run: bool
     license: str | None
     market_data_source: str  # "manual" or "tiger"
+    api_key: str | None  # the HTTP layer's fourth lock; None disables the API
+    api_host: str
+    api_port: int
+    preview_token_ttl_seconds: int
     mode: str  # "PAPER" or "LIVE", resolved by safety.resolve_account_mode
 
     @property
@@ -82,6 +86,30 @@ def _get_bool(name: str, default: bool) -> bool:
         f"{name} must be true or false (got {raw!r}). "
         f"Refusing to guess -- a wrong guess here is a safety lock."
     )
+
+
+def _get_int(name: str, default: int) -> int:
+    """Read an environment variable as a whole number.
+
+    Args:
+        name: The variable name.
+        default: Used when the variable is unset or empty.
+
+    Returns:
+        The parsed integer.
+
+    Raises:
+        ConfigError: If the value is present but not a whole number.
+    """
+    raw = _get(name)
+    if raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as error:
+        raise ConfigError(
+            f"{name} must be a whole number (got {raw!r})."
+        ) from error
 
 
 def _resolve_key_path(raw: str) -> Path:
@@ -186,6 +214,13 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
             f"{', '.join(VALID_MARKET_DATA_SOURCES)} (got {market_data_source!r})."
         )
 
+    # The API's own settings. api_key is None when unset, and api/main.py
+    # refuses to start rather than serving an unauthenticated order endpoint.
+    api_key = _get("TIGER_API_KEY") or None
+    api_host = _get("API_HOST") or "127.0.0.1"
+    api_port = _get_int("API_PORT", 8000)
+    preview_token_ttl_seconds = _get_int("PREVIEW_TOKEN_TTL_SECONDS", 60)
+
     # Lock 1 and Lock 2. Raises LiveTradingBlocked rather than returning.
     mode = resolve_account_mode(account, paper_account, allow_live)
 
@@ -198,5 +233,9 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         dry_run=dry_run,
         license=license_code,
         market_data_source=market_data_source,
+        api_key=api_key,
+        api_host=api_host,
+        api_port=api_port,
+        preview_token_ttl_seconds=preview_token_ttl_seconds,
         mode=mode,
     )

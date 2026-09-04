@@ -6,3 +6,7 @@ python-dotenv
 
 # Tests (Phase 1 unit tests run with no network and no SDK)
 pytest
+
+# HTTP API (Phase 8)
+fastapi
+uvicorn[standard]
