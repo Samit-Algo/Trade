@@ -10,11 +10,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tiger_backend.orders import (  # noqa: E402
-    OBSERVED_COMMISSION_PER_ORDER,
+    COMMISSION_BASE,
+    COMMISSION_PER_CONTRACT,
     BracketError,
     BracketLegs,
     build_option_order_with_bracket,
     calculate_intended_risk,
+    estimate_commission_per_order,
     estimate_commission_per_share,
     estimate_round_trip_commission,
     is_take_profit_a_losing_exit,
@@ -34,17 +36,47 @@ class TestAttachType:
 
 
 class TestCommissionEstimates:
-    def test_the_basis_is_the_observed_fill(self):
-        assert OBSERVED_COMMISSION_PER_ORDER == 3.02
+    """The model is fitted to four real orders; these lock in all four."""
+
+    def test_reproduces_the_one_contract_observation(self):
+        assert estimate_commission_per_order(1) == 3.02
+
+    def test_reproduces_the_three_contract_observation(self):
+        assert estimate_commission_per_order(3) == 3.09
+
+    def test_is_not_flat(self):
+        """Flat would have predicted 3.02 for three contracts."""
+        assert estimate_commission_per_order(3) != estimate_commission_per_order(1)
+
+    def test_is_not_per_contract(self):
+        """Per contract would have predicted 9.06 for three."""
+        assert estimate_commission_per_order(3) < estimate_commission_per_order(1) * 3
+
+    def test_the_base_dominates(self):
+        """Tripling the size adds seven cents, not triple the fee."""
+        difference = estimate_commission_per_order(3) - estimate_commission_per_order(1)
+        assert difference == pytest.approx(0.07, abs=0.005)
 
     def test_round_trip_is_two_orders(self):
-        assert estimate_round_trip_commission(1, 100) == 6.04
+        assert estimate_round_trip_commission(1) == 6.04
+        assert estimate_round_trip_commission(3) == 6.18
+
+    def test_round_trip_takes_no_multiplier(self):
+        """Commission is per contract, not per share. The distinction matters."""
+        import inspect
+
+        parameters = inspect.signature(estimate_round_trip_commission).parameters
+        assert "multiplier" not in parameters
 
     def test_per_share_spreads_across_the_contract(self):
         assert estimate_commission_per_share(1, 100) == pytest.approx(0.0302)
 
     def test_more_contracts_dilute_the_per_share_cost(self):
         assert estimate_commission_per_share(10, 100) < estimate_commission_per_share(1, 100)
+
+    def test_model_constants_are_the_fitted_values(self):
+        assert COMMISSION_BASE == 2.985
+        assert COMMISSION_PER_CONTRACT == 0.035
 
 
 class TestLosingExitWarning:

@@ -4,8 +4,9 @@ A Python backend that talks to the Tiger Brokers OpenAPI, built in deliberate
 stages so that no code capable of spending real money exists until the final
 phase, and even then it is locked behind two independent switches.
 
-**Current state: all six phases complete.** One real order has been placed on
-the paper account. Every script except `05_paper_order.py` is read-only.
+**Current state: all six spec phases complete, plus Phase 7 (attached
+take-profit and stop-loss orders).** Seven real orders have been placed on the
+paper account. Every script except `05_paper_order.py` is read-only.
 
 > Resuming work after a break? Read **[HANDOVER.md](HANDOVER.md)** first.
 > It records what is verified and how, the one entitlement still worth buying,
@@ -210,9 +211,48 @@ the cash an automatic exercise would need — $36,000 for one AAPL 360 call.
 
 ---
 
+## Phase 7 — attached take-profit and stop-loss
+
+```bash
+python scripts/05_paper_order.py AAPL 2026-09-18 360 CALL BUY 1     --take-profit 0.60 --stop-loss 0.15
+python scripts/05_paper_order.py AAPL 2026-09-18 370 CALL BUY 1     --take-profit 0.40 --stop-loss 0.07 --leg-tif GTC
+python scripts/05_paper_order.py --legs 44506905057837056
+```
+
+Legs attach to a **parent order** and activate when it fills. They **cannot be
+attached to a position you already hold** — to bracket an existing holding you
+must close it and buy again with legs attached.
+
+Five things that had to be discovered by placing real orders, because the
+documentation does not say:
+
+- **Attached legs work on options.** Every doc example uses a stock.
+- **Both a take-profit and a stop-loss attach to one parent.** Tiger's app help
+  says one sub-order; that does not describe the API. The SDK sends both as
+  `attach_type='BRACKETS'`.
+- **`GTC` works on a leg** even though a paper account rejects it on the parent.
+  Confirmed as *stored*, not merely accepted, with a `DAY` control on a second
+  order — a silent downgrade would be worse than a rejection.
+- **The legs appear as child orders carrying `parent_id`**, not on the parent's
+  `order_legs` attribute, which stayed empty. Checking only that attribute
+  would suggest the legs were never created.
+- **A stop leg carries its price in `aux_price`** and becomes order type `STP`;
+  a take-profit uses `limit_price` and becomes `LMT`. Reading the wrong field
+  returns `None`.
+
+> **A bracketed order cannot be checked before it is sent.** `preview_order`
+> refuses attached orders outright — `code=1010 OCA/ATTACHED order preview not
+> supported` — for options and stocks alike, while previewing a plain option
+> order fine. The local checks are the only pre-submission check that exists,
+> which is why the preview warns loudly when a take-profit sits below
+> break-even.
+
+---
+
 ## Roadmap
 
 Each phase must run cleanly against the paper account before the next begins.
+Phase 7 was added after the spec was finished.
 
 | Phase | Scope | State |
 |---|---|---|
@@ -222,6 +262,7 @@ Each phase must run cleanly against the paper account before the next begins.
 | 4 | Cost estimation and simulated orders | **done** — BUY and SELL previews, decimal-slip override |
 | 5 | Paper order submission | **done** — one real order filled, see below |
 | 6 | Positions and P&L | **done** — position valued at the bid |
+| 7 | Attached take-profit and stop-loss *(new, outside the spec)* | **done** — brackets filled with DAY and GTC legs |
 
 ### The real paper order
 
@@ -237,28 +278,41 @@ immediately.
 
 ### One thing worth knowing before you trade
 
-**Commission is a fixed toll of about $3.00 per order**, measured across four
-real orders at two sizes: $3.02 for one contract, $3.09 for three. Neither flat
-nor per-contract — it fits `$2.985 + $0.035 x contracts`, and the base
-dominates.
+**Commission is a fixed toll of about $3.00 per order.** Measured across four
+real orders at two sizes, both directions:
 
-Because it is essentially fixed, what matters is **total premium**, not
-contract count:
+```
+BUY  1 contract  $3.02      BUY  3 contracts  $3.09
+SELL 1 contract  $3.02      SELL 3 contracts  $3.10
+```
 
-| Premium | Round-trip commission | % of premium |
-|---:|---:|---:|
-| $28 | $6.04 | **21.6%** |
-| $84 | $6.18 | 7.4% |
-| $140 | $6.32 | 4.5% |
-| $280 | $6.67 | 2.4% |
+Neither flat (which predicts $3.02 for three, out by $0.07) nor per-contract
+(which predicts $9.06, out by $5.97). It fits **`$2.985 + $0.035 × contracts`**,
+and the base dominates — tripling the size added seven cents.
+
+So what matters is **total premium**, not contract count. Holding the contract
+price constant at $0.28/share so size is isolated from price:
+
+| Contracts | Premium | Round-trip commission | % of premium |
+|---:|---:|---:|---:|
+| 1 | $28 | $6.04 | **21.6%** |
+| 2 | $56 | $6.11 | 10.9% |
+| 3 | $84 | $6.18 | 7.4% |
+| 5 | $140 | $6.32 | 4.5% |
+| 10 | $280 | $6.67 | 2.4% |
+| 20 | $560 | $7.37 | 1.3% |
 
 A $28 position is not a small trade, it is a bad one: it pays a 21.6% toll
 before the market does anything, and needs a 21.6% move just to break even.
 Demonstrated rather than argued — a round trip that bought at 0.28 and sold at
 0.28 returned `realized_pnl -$6.04`, entirely commission.
 
-**Keep total premium above roughly $150 per position.** HANDOVER.md §3 has the
-full arithmetic.
+Below **10%** of premium at about **$84**, below **5%** at **$140**, below
+**2%** at **$364**.
+
+**Rule of thumb: keep total premium above roughly $150 per position**, and
+treat anything under about $85 as a trade the fee structure has already decided
+against. HANDOVER.md §3 has the full arithmetic.
 
 ---
 

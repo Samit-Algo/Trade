@@ -207,11 +207,13 @@ structure has already decided against.
 - `pricing.py` computes break-even from the limit price and therefore
   **excludes commission**. On a $1,160 order that is noise; on a $28 order it
   is most of the position.
-- `orders.estimate_round_trip_commission()` returns a flat $6.04 from the
-  original single observation. Given the fee is `2 x (2.985 + 0.035q)`, that is
-  correct at one contract and understates slightly as size grows — by seven
-  cents at three contracts, thirty-five at ten. Accurate enough for a warning,
-  and it is labelled an estimate wherever it prints.
+- `orders.estimate_round_trip_commission(quantity)` implements the fitted
+  model exactly: `2 x (2.985 + 0.035q)`. It takes **no multiplier**, because
+  commission is charged per contract and not per share — an unused shares
+  parameter would imply otherwise, which is the misconception this whole
+  section exists to correct. The one cent seen on the 3-contract sell is
+  unmodelled, so the estimate runs a cent light on the sell side of a
+  multi-contract round trip.
 ---
 
 ## 3a. Attached orders (Phase 7) — everything that had to be discovered live
@@ -663,7 +665,7 @@ Nothing is outstanding. Reasonable next steps, in rough order of value:
 2. Watch the two live brackets. The DAY legs on the 360 call expire at the
    close of the US trading day; the GTC legs on the 370 call should survive it.
    A free, direct confirmation of §3a if you check them tomorrow.
-3. Consider raising `orders.estimate_round_trip_commission()` from its flat
-   $6.04 to the measured `2 x (2.985 + 0.035q)` (§3). It only matters above a
-   few contracts, and the current value is labelled an estimate, so this is
-   tidying rather than a fix.
+3. If a second multi-contract SELL ever happens, compare its commission
+   against `2.985 + 0.035q` (§3). The one extra cent on the 3-contract sell is
+   the only thing in the fee model still unexplained, and a proceeds-based
+   regulatory fee is the obvious candidate.

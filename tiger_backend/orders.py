@@ -949,11 +949,31 @@ def print_fill_outcome(outcome: FillOutcome, estimate: CostEstimate | None = Non
 # which is why they are louder than they would otherwise need to be.
 # ---------------------------------------------------------------------------
 
-#: Commission observed on the Phase 5 fill: a $28.00 premium came back with an
-#: average_cost of 0.3102 per share, so $31.02 all in. ONE observation. Whether
-#: it is flat, per contract, or a minimum is not known, so everything derived
-#: from it is labelled an estimate wherever it is printed.
-OBSERVED_COMMISSION_PER_ORDER = 3.02
+# Commission model, fitted to four real paper orders placed 2026-09-03:
+#
+#   BUY  1 contract  @ 0.2800   commission $3.02
+#   SELL 1 contract  @ 0.2800   commission $3.02
+#   BUY  3 contracts @ 0.0700   commission $3.09
+#   SELL 3 contracts @ 0.0600   commission $3.10
+#
+# Neither simple model fits. Flat would predict $3.02 for three contracts,
+# out by $0.07; per-contract would predict $9.06, out by $5.97. A base fee
+# plus a small per-contract component reproduces all four:
+#
+#   1 contract  -> 2.985 + 0.035     = $3.02
+#   3 contracts -> 2.985 + 0.105     = $3.09
+#
+# UNMODELLED: the 3-contract SELL came back at $3.10, one cent above the
+# matching buy. One observation is not enough to model it. It may be a
+# proceeds-based regulatory fee, which in the US applies to sales and not to
+# purchases, in which case it would scale with the money received rather than
+# with contracts. Until a second sale at a different size says otherwise, the
+# estimate here runs a cent light on the sell side of a multi-contract trade.
+#
+# The base dominates: tripling the size added seven cents. Commission is, for
+# practical purposes, a fixed toll per order.
+COMMISSION_BASE = 2.985
+COMMISSION_PER_CONTRACT = 0.035
 
 LEG_PROFIT = "PROFIT"
 LEG_LOSS = "LOSS"
@@ -982,8 +1002,20 @@ class BracketLegs:
         return "BRACKETS"
 
 
+def estimate_commission_per_order(quantity: int) -> float:
+    """Estimate the commission on one order of a given size.
+
+    Args:
+        quantity: Contracts.
+
+    Returns:
+        Estimated commission in cash.
+    """
+    return round(COMMISSION_BASE + COMMISSION_PER_CONTRACT * quantity, 2)
+
+
 def estimate_commission_per_share(quantity: int, multiplier: float) -> float:
-    """Spread the observed per-order commission across the shares involved.
+    """Spread one order's commission across the shares involved.
 
     Args:
         quantity: Contracts.
@@ -995,23 +1027,27 @@ def estimate_commission_per_share(quantity: int, multiplier: float) -> float:
     shares = multiplier * quantity
     if shares <= 0:
         return 0.0
-    return OBSERVED_COMMISSION_PER_ORDER / shares
+    return estimate_commission_per_order(quantity) / shares
 
 
-def estimate_round_trip_commission(quantity: int, multiplier: float) -> float:
+def estimate_round_trip_commission(quantity: int) -> float:
     """Estimate commission for getting in and back out again.
 
     Two orders: the entry, and whichever leg closes it. On a cheap contract
-    this is the largest single cost in the trade.
+    this is the largest single cost in the trade -- a round trip on one
+    contract at $0.28 costs 21.6% of the premium before the market moves.
+
+    Takes no multiplier: commission is charged per CONTRACT, not per share, so
+    the shares-per-contract figure does not enter into it. That distinction is
+    the whole point of the measurement above.
 
     Args:
         quantity: Contracts.
-        multiplier: Shares per contract.
 
     Returns:
         Estimated round-trip commission in cash.
     """
-    return round(OBSERVED_COMMISSION_PER_ORDER * 2, 2)
+    return round(estimate_commission_per_order(quantity) * 2, 2)
 
 
 def is_take_profit_a_losing_exit(
@@ -1099,7 +1135,7 @@ def calculate_intended_risk(
         The intended loss in cash, including estimated round-trip commission.
     """
     price_risk = (entry_limit_price - stop_loss_price) * multiplier * quantity
-    commission = estimate_round_trip_commission(quantity, multiplier)
+    commission = estimate_round_trip_commission(quantity)
     return round(price_risk + commission, 2)
 
 
@@ -1192,7 +1228,7 @@ def print_bracket_preview(
     quantity = estimate.quantity
     multiplier = estimate.multiplier
 
-    round_trip_commission = estimate_round_trip_commission(quantity, multiplier)
+    round_trip_commission = estimate_round_trip_commission(quantity)
     commission_per_share = estimate_commission_per_share(quantity, multiplier)
     intended_risk = calculate_intended_risk(
         entry_price, legs.stop_loss_price, quantity, multiplier
@@ -1226,8 +1262,9 @@ def print_bracket_preview(
         f"  Est. round-trip commission : ${round_trip_commission:,.2f}"
         f"  (${commission_per_share:.4f}/share)"
     )
-    print("    ESTIMATE, from the single $3.02 seen on the Phase 5 fill.")
-    print("    Whether that is flat, per contract, or a minimum is not known.")
+    print("    ESTIMATE. Fitted to four real orders: $2.985 base plus")
+    print("    $0.035 per contract, each way. The base dominates, so a")
+    print("    small position pays a large percentage.")
     print("-" * RULE_WIDTH)
     print(f"  If the stop triggers : lose about ${intended_risk:,.2f}")
     print(f"  If the target hits   : make about ${profit_at_target:,.2f}")
