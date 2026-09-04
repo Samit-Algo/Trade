@@ -22,7 +22,7 @@ Approved and implemented.
 | 4 | Cost estimation and simulated orders | **done** | BUY 1x AAPL 320 CALL → CASH REQUIRED $1,160.00, break-even $331.60. SELL 2x 300 PUT → CASH RECEIVED $110.00, max loss correctly refused as unbounded-if-opening. A deliberate decimal slip (ask 115.00 against an 11.21 last close) was blocked; `y` rejected, `USE 115.00` accepted. |
 | 5 | Paper order submission | **done — a real order was placed** | See below. |
 | 6 | Positions and P&L | **done** | The Phase 5 position read back and valued at a typed bid. See §3. |
-| 7 | Attached take-profit and stop-loss (new, outside the spec) | **done** | Two bracketed orders placed live, one with DAY legs and one with GTC. Both filled; all four legs confirmed live. See §3a. |
+| 7 | Attached take-profit and stop-loss (new, outside the spec) | **done** | Three bracketed orders placed live: DAY legs, GTC legs, and a 3-contract bracket whose legs were cancelled to settle the commission question. All filled; legs confirmed live and cancellable. See §3a. |
 
 ### The real paper order
 
@@ -119,55 +119,99 @@ ATM marker on the strike nearest spot, thin rows flagged, and the header saying
 
 ---
 
-## 3. Commission is 10.8% of a cheap option, and it changes break-even
+## 3. Commission: mostly a flat fee, and it dictates minimum position size
 
-**The single most surprising finding of the build.** Measured, not estimated,
-from the real order:
+**Settled by measurement on 2026-09-03.** Four real paper orders, two sizes,
+both directions:
+
+| Order | Qty | Avg fill | Commission |
+|---|---|---|---|
+| BUY `44506652990393344` | 1 | 0.2800 | **$3.02** |
+| SELL `44506900356154368` | 1 | 0.2800 | **$3.02** |
+| BUY `44507006831184896` | 3 | 0.0700 | **$3.09** |
+| SELL `44507017730476032` | 3 | 0.0600 | **$3.10** |
+
+### Which model it fits: neither of the simple two
+
+- **Flat per order** would have predicted $3.02 for three contracts. Out by $0.07.
+- **Per contract** would have predicted $9.06. Out by $5.97.
+
+It is a **base fee plus a small per-contract component**:
 
 ```
-premium paid       $28.00     (1 contract, filled at 0.2800)
-all-in cost basis  $31.02     (average_cost 0.3102 per share x 100)
-commission         $3.02      = 10.8% of the premium
+commission per order  ~=  $2.985  +  $0.035 x contracts
+
+  1 contract  ->  2.985 + 0.035 = $3.02   (matches, both directions)
+  3 contracts ->  2.985 + 0.105 = $3.09   (matches the buy exactly)
 ```
 
-`average_cost` is reported **per share and including commission**. The $28.00
-that appeared in the fill report is not what the position cost.
+The 3-contract sell came back at $3.10, a cent above the buy. Too small to
+model from one observation — rounding, or a tiny proceeds-based regulatory fee
+that applies on sales only. It does not change the shape.
 
-What this means in practice:
+**The base dominates.** Going from one contract to three added seven cents.
+Commission is, for practical purposes, a fixed ~$3.00 toll per order.
 
-- The bid must reach **0.3102**, not 0.2800, before the position is level.
-  That is **+10.8%** before any profit exists at all.
-- Selling costs commission again. Round trip on this position is roughly
-  **$6.04, about 22%** of a $28 trade.
-- The Phase 4 break-even line is computed from the limit price and therefore
-  **excludes commission**. On a $1,160 order that is noise. On a $28 order it
+### What that costs, as a percentage
+
+As actually traded — note this is *not* like-for-like, because the
+three-contract trade also used a cheaper contract:
+
+| Trade | Premium | Round trip | % of premium |
+|---|---|---|---|
+| 1 contract @ 0.28 | $28.00 | $6.04 | **21.6%** |
+| 3 contracts @ 0.07 | $21.00 | $6.19 | **29.5%** |
+
+The larger trade looks *worse* only because the contract was cheaper. To see
+what size actually does, hold the contract price constant at $0.28/share
+($28 per contract) and vary quantity:
+
+| Contracts | Premium | Round-trip commission | % of premium |
+|---:|---:|---:|---:|
+| 1 | $28 | $6.04 | **21.6%** |
+| 2 | $56 | $6.11 | 10.9% |
+| 3 | $84 | $6.18 | 7.4% |
+| 5 | $140 | $6.32 | 4.5% |
+| 10 | $280 | $6.67 | 2.4% |
+| 20 | $560 | $7.37 | 1.3% |
+| 50 | $1,400 | $9.47 | 0.7% |
+
+### What it implies for a minimum position size
+
+Because the fee is essentially fixed, the percentage is set by **total premium**,
+not by contract count as such:
+
+- below **10%** of premium at about **$84** of premium
+- below **5%** at about **$140**
+- below **2%** at about **$364**
+
+**A $28 position is not a small trade, it is a bad one.** It pays a 21.6%
+round-trip toll before the market does anything at all, and it needs a 21.6%
+move just to break even. That is not a risk-management problem; it is
+arithmetic.
+
+Demonstrated rather than argued: the 1-contract round trip bought at 0.28 and
+sold at 0.28 — the price did not move — and `realized_pnl` came back **−$6.04**,
+entirely commission. The 3-contract round trip lost **−$9.19**, of which $6.19
+was commission and $3.00 was a genuine one-cent-per-share price move.
+
+**Rule of thumb: keep total premium above ~$150 per position** so commission
+stays under about 4%, and treat anything under ~$85 as a trade the fee
+structure has already decided against.
+
+### Where this leaks into the code
+
+- `positions.py` uses `average_cost`, which Tiger reports **per share and
+  including commission**, so Phase 6 profit and loss is already net of the
+  entry fee. That is why a $28.00 fill shows a $31.02 cost basis.
+- `pricing.py` computes break-even from the limit price and therefore
+  **excludes commission**. On a $1,160 order that is noise; on a $28 order it
   is most of the position.
-
-### The round trip, now measured rather than estimated
-
-The Phase 5 position was closed on 2026-09-03 to make way for a bracketed
-order. It bought at 0.28 and sold at 0.28 — **the price did not move at all**:
-
-```
-BUY  44506652990393344   filled 0.2800   commission $3.02
-SELL 44506900356154368   filled 0.2800   commission $3.02
-                                         realized_pnl -$6.04
-```
-
-**The entire loss was commission.** $6.04 on a $28 premium is **21.6%**, paid
-for a trade that was flat. `estimate_round_trip_commission()` predicted exactly
-$6.04.
-
-**Still one contract, though.** $3.02 appeared on both a buy and a sell, so it
-is confirmed for a 1-contract order in each direction — but flat-per-order and
-per-contract are still indistinguishable, because both orders were 1 contract.
-A multi-contract order is what separates them. If it is flat, cheap contracts
-are disproportionately punished and the practical floor for a sensible trade is
-far above $28.
-
-Phase 6 uses `average_cost`, so its P&L is already net of entry commission.
-Phase 4's estimate is not.
-
+- `orders.estimate_round_trip_commission()` returns a flat $6.04 from the
+  original single observation. Given the fee is `2 x (2.985 + 0.035q)`, that is
+  correct at one contract and understates slightly as size grows — by seven
+  cents at three contracts, thirty-five at ten. Accurate enough for a warning,
+  and it is labelled an estimate wherever it prints.
 ---
 
 ## 3a. Attached orders (Phase 7) — everything that had to be discovered live
@@ -291,7 +335,7 @@ Not derivable from the repo, because `.env` and `secrets/` are gitignored.
 | Virtualenv | `vnv/`, not `.venv`. `vnv\Scripts\activate`. |
 | Python | 3.11.9, `tigeropen` 3.7.1 |
 | Git | Repo root is this directory. `C:\Users\manoj` is *itself* a git repo (a Cursor worktree accident); never `git add -A` from there. |
-| Open positions | 1x `AAPL  260918C00360000` (DAY legs live) and 1x `AAPL  260918C00370000` (GTC legs live) |
+| Open positions | 1x `AAPL  260918C00360000` (DAY legs live) and 1x `AAPL  260918C00370000` (GTC legs live). The 3-contract 380 call was opened and closed to settle §3. |
 
 ### The private key, and the trap in it
 
@@ -613,10 +657,13 @@ confirmation.
 
 Nothing is outstanding. Reasonable next steps, in rough order of value:
 
-1. **Place a MULTI-CONTRACT order** to establish whether the $3.02 commission
-   is flat per order or per contract (§3). Both samples so far were 1 contract,
-   which cannot separate the two. It decides what a sensible minimum trade is.
-2. Buy `usOptionQuote` and write `TigerQuoteProvider` (§2).
-3. Watch the two live brackets. The DAY legs on the 360 call expire at the
+1. Buy `usOptionQuote` and write `TigerQuoteProvider` (§2). It is the only
+   purchase still worth making, and no file outside `providers.py` should
+   change.
+2. Watch the two live brackets. The DAY legs on the 360 call expire at the
    close of the US trading day; the GTC legs on the 370 call should survive it.
-   That is a free, direct confirmation of §3a if you check them tomorrow.
+   A free, direct confirmation of §3a if you check them tomorrow.
+3. Consider raising `orders.estimate_round_trip_commission()` from its flat
+   $6.04 to the measured `2 x (2.985 + 0.035q)` (§3). It only matters above a
+   few contracts, and the current value is labelled an estimate, so this is
+   tidying rather than a fix.

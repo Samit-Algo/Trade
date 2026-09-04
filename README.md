@@ -237,10 +237,28 @@ immediately.
 
 ### One thing worth knowing before you trade
 
-That $28.00 fill cost **$31.02**. `average_cost` comes back per share
-*including commission*, so the $3.02 of commission is **10.8% of the premium**
-— and you pay it again to sell. On a cheap contract, commission is most of the
-distance to break-even. HANDOVER.md §3 has the arithmetic.
+**Commission is a fixed toll of about $3.00 per order**, measured across four
+real orders at two sizes: $3.02 for one contract, $3.09 for three. Neither flat
+nor per-contract — it fits `$2.985 + $0.035 x contracts`, and the base
+dominates.
+
+Because it is essentially fixed, what matters is **total premium**, not
+contract count:
+
+| Premium | Round-trip commission | % of premium |
+|---:|---:|---:|
+| $28 | $6.04 | **21.6%** |
+| $84 | $6.18 | 7.4% |
+| $140 | $6.32 | 4.5% |
+| $280 | $6.67 | 2.4% |
+
+A $28 position is not a small trade, it is a bad one: it pays a 21.6% toll
+before the market does anything, and needs a 21.6% move just to break even.
+Demonstrated rather than argued — a round trip that bought at 0.28 and sold at
+0.28 returned `realized_pnl -$6.04`, entirely commission.
+
+**Keep total premium above roughly $150 per position.** HANDOVER.md §3 has the
+full arithmetic.
 
 ---
 
@@ -248,7 +266,8 @@ distance to break-even. HANDOVER.md §3 has the arithmetic.
 
 Official documentation: <https://docs-en.itigerup.com/docs/>
 
-All API calls used so far are read-only:
+Every API call used. All are read-only except the last line, which is
+reachable only through `05_paper_order.py` and only past the three locks:
 
 - `TradeClient.get_managed_accounts(account=None, lang=None)`
 - `TradeClient.get_prime_assets(account=None, base_currency=None, consolidated=True, lang=None)`
@@ -260,7 +279,8 @@ All API calls used so far are read-only:
 - `QuoteClient.get_option_bars(identifiers, ...)` — 60/min
 - `TradeClient.get_contract(...)`, `get_derivative_contracts(...)` — 60/min
 - `TradeClient.get_positions(...)` — 60/min
-- `TradeClient.get_order(...)`, `place_order(order)`, `cancel_order(...)` — 120/min
+- `TradeClient.get_order(...)` — 120/min
+- `TradeClient.place_order(order)`, `cancel_order(...)` — 120/min — **these write**
 
 Every documented per-endpoint rate limit is enforced by `tiger_backend/throttle.py`.
 
