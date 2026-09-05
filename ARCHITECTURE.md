@@ -49,7 +49,7 @@ api/service/
 │     audit.py       What did I do, and when?
 │
 ├── market/        What exists out there, and what it is worth.
-│     fields.py      Reading Tiger's dataframes without crashing
+│     read_data.py   Reading Tiger's dataframes without crashing
 │     calendar.py    What expiries exist, and the date maths
 │     prices.py      Underlying price, last traded close, spread, liquidity
 │     quotes.py      THE SEAM — where bid and ask come from
@@ -58,12 +58,14 @@ api/service/
 │     errors.py      The four ways resolution can fail
 │     identifiers.py Turning a contract into a string, and back
 │     resolve.py     Does it exist? Is it expired? What is its ID?
+│     selection.py   Which one, when the caller named none?
 │
 ├── order/         Everything about an order.
 │     cost.py        What will this cost me?        pure maths, no network
 │     build.py       Build it, and show a human first
 │     bracket.py     Take-profit and stop-loss legs
-│     lifecycle.py   Status, fills, cancelling
+│     status.py      Status, fills, cancelling
+│     ticks.py       The price grid. Measured, not assumed.
 │     submit.py      THE ONLY FILE THAT CAN SPEND MONEY
 │
 └── position/      What is held, and how it is doing.
@@ -94,7 +96,7 @@ you that.
 
 **`order/submit.py` is the entire spend path**, and nothing else is in it.
 Every `place_order` call in the project is in that one file, each between two
-`assert_order_allowed` gates. Cancelling lives next door in `lifecycle.py`,
+`assert_order_allowed` gates. Cancelling lives next door in `status.py`,
 because cancelling cannot open a position. If you are reviewing whether this
 project can lose money by accident, `submit.py` is the file to read.
 
@@ -115,7 +117,7 @@ project can lose money by accident, `submit.py` is the file to read.
 | Change cost, break-even, or commission maths | `service/order/cost.py` |
 | Change what the preview prints | `service/order/build.py` |
 | Change the take-profit / stop-loss rules | `service/order/bracket.py` |
-| Change polling, fills, or cancelling | `service/order/lifecycle.py` |
+| Change polling, fills, or cancelling | `service/order/status.py` |
 | Change the submission path itself | `service/order/submit.py` |
 | Change position P&L or the expiry warning | `service/position/valuation.py` |
 | Add or change an HTTP endpoint | `api/routes/` |
@@ -128,22 +130,24 @@ project can lose money by accident, `submit.py` is the file to read.
 
 | File | Job |
 |---|---|
-| `app.py` | The server. API key check, error handlers, startup. |
+| `main.py` | The server. API key check, error handlers, startup. |
 | `errors.py` | One table: which exception becomes which HTTP status. |
-| `wiring.py` | Builds settings and clients once. Request logging. |
+| `shared.py` | Builds settings and clients once. Request logging. |
 | `schemas.py` | Every request/response shape, and how to build one. |
-| `order_rules.py` | Quote checks, and the preview tokens. |
+| `order_rules.py` | Quote checks, preview tokens, idempotency keys. |
 | `routes/health.py` | `GET /health` |
 | `routes/account.py` | `GET /account` |
 | `routes/market.py` | `GET /expirations/{underlying}` |
 | `routes/contracts.py` | `GET /contracts/resolve` |
 | `routes/positions.py` | `GET /positions` |
 | `routes/orders.py` | preview, submit, status, legs, cancel |
+| `routes/trade.py` | `POST /trade` — one call, one bracketed BUY |
+| `routes/ui.py` | `GET /ui` — a hand-testing form for `/trade` |
 
-**`app.py` is the root of the import graph.** It imports everything; nothing
+**`main.py` is the root of the import graph.** It imports everything; nothing
 imports it. That is why `errors.py` and the request logger live outside it —
-the low-level modules need them, and `app.py` already imports those modules.
-Putting them in `app.py` creates a circular import, which is exactly what
+the low-level modules need them, and `main.py` already imports those modules.
+Putting them in `main.py` creates a circular import, which is exactly what
 happened the first time and is why they are where they are.
 
 ---
@@ -168,7 +172,7 @@ Placing an order via HTTP, in order:
 
 ```
 1. POST /orders/preview
-      api/app.py                     checks X-API-Key           ← Lock 0
+      api/main.py                     checks X-API-Key           ← Lock 0
       api/routes/orders.py           reads the request
       service/contract/resolve.py    is this contract real?
       api/order_rules.py             are these prices sane?
@@ -184,7 +188,7 @@ Placing an order via HTTP, in order:
             build the order          (service/order/build.py)
             assert_order_allowed()   ← again, right before the wire
             place_order()            ← the only one in the codebase
-      service/order/lifecycle.py     poll until it settles
+      service/order/status.py     poll until it settles
       service/core/audit.py          writes the record
    → what actually filled
 ```
@@ -207,7 +211,7 @@ service layer and apply everywhere; the fourth is HTTP-only.
 
 | Lock | Where | Default |
 |---|---|---|
-| 0 — API key | `api/app.py` | no key set → the service will not start |
+| 0 — API key | `api/main.py` | no key set → the service will not start |
 | 1 — Account allowlist | `service/core/safety.py` | fails closed |
 | 2 — Live opt-in | `service/core/safety.py` | `false` |
 | 3 — Dry run | `service/core/safety.py` | `true` — nothing can be sent |

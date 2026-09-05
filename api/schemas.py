@@ -21,6 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from api.service.market import calculate_spread, is_low_liquidity
+from api.service.order import TICK_SOURCE_NOTE
 from api.service.order import (
     BracketLegs,
     calculate_intended_risk,
@@ -731,3 +732,79 @@ class TradeResponse(BaseModel):
     )
     legs_note: str
     audit_log: str | None
+
+
+def shape_tick(calculation) -> TickDetail:
+    """Describe the price grid an order was built on.
+
+    Args:
+        calculation: A BracketCalculation.
+
+    Returns:
+        The response model, carrying where the tick size came from.
+    """
+    return TickDetail(
+        tick_size=calculation.tick_size,
+        buffer_ticks=calculation.buffer_ticks,
+        source=TICK_SOURCE_NOTE,
+    )
+
+
+def shape_bracket_prices(calculation) -> BracketPrices:
+    """Turn a bracket calculation into its response shape.
+
+    The raw, pre-rounding values are included so a reader can tell a
+    deliberate rounding from a bug.
+
+    Args:
+        calculation: A BracketCalculation.
+
+    Returns:
+        The response model.
+    """
+    return BracketPrices(
+        entry_price_requested=calculation.entry_requested,
+        entry_price_snapped=calculation.entry_snapped,
+        entry_price_actual=calculation.entry_actual,
+        take_profit_percent=calculation.take_profit_percent,
+        take_profit_raw=calculation.take_profit_raw,
+        take_profit_price=calculation.take_profit_price,
+        stop_loss_percent=calculation.stop_loss_percent,
+        stop_loss_raw=calculation.stop_loss_raw,
+        stop_loss_price=calculation.stop_loss_price,
+        rounding_note=calculation.rounding_note,
+    )
+
+
+def shape_submitted_legs(calculation, time_in_force: str) -> list[OrderLegOut]:
+    """Describe the legs as they were SENT, without asking the broker.
+
+    Confirming them on the book costs a round trip, which POST /trade skips on
+    purpose. Every row is marked SUBMITTED rather than given a real status, so
+    it cannot be mistaken for a confirmation.
+
+    Args:
+        calculation: A BracketCalculation.
+        time_in_force: DAY or GTC, as sent on both legs.
+
+    Returns:
+        Two rows: the take-profit and the stop-loss.
+    """
+    return [
+        OrderLegOut(
+            order_id=None,
+            leg_kind="TAKE_PROFIT",
+            order_type="LMT",
+            price=calculation.take_profit_price,
+            time_in_force=time_in_force,
+            status="SUBMITTED",
+        ),
+        OrderLegOut(
+            order_id=None,
+            leg_kind="STOP_LOSS",
+            order_type="STP",
+            price=calculation.stop_loss_price,
+            time_in_force=time_in_force,
+            status="SUBMITTED",
+        ),
+    ]

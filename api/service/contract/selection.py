@@ -13,7 +13,14 @@ file chooses which one to name.
 
 from __future__ import annotations
 
-from .errors import ExpiryNotListedError, StrikeNotFoundError
+from .errors import (
+    ExpiryNotListedError,
+    StrikeNotFoundError,
+    SymbolNotListedError,
+)
+from .identifiers import to_tiger_expiry_format, validate_option_type
+from .resolve import find_option_contract, list_strikes_for_expiry
+from ..market import list_expirations
 
 #: Do not trade something expiring today or tomorrow by default. An option a
 #: day from expiry loses value fast and gaps hard, and `find_next_tradable_
@@ -131,3 +138,63 @@ def find_closest_strike(
         f"{target_price:,.2f} sits exactly between {min(tied):,.2f} and "
         f"{max(tied):,.2f}; took the out-of-the-money side for a {put_call}"
     )
+
+
+def select_contract(
+    quote_client,
+    trade_client,
+    symbol: str,
+    option_type: str,
+    current_price: float,
+    minimum_days: int = DEFAULT_MIN_DAYS_TO_EXPIRY,
+):
+    """Turn a symbol, a side and a spot price into one verified contract.
+
+    The whole job in one call: list the expiries, pick one, list that expiry's
+    strikes, pick the nearest, then hand the result to Phase 3 to be verified
+    against Tiger. Three lookups, none of which needs a market-data
+    entitlement.
+
+    Args:
+        quote_client: A tigeropen QuoteClient.
+        trade_client: A tigeropen TradeClient.
+        symbol: The underlying, e.g. "AAPL".
+        option_type: "CALL" or "PUT".
+        current_price: The underlying's price. Used ONLY to pick the strike;
+            it is never treated as an option price.
+        minimum_days: Refuse an expiry sooner than this.
+
+    Returns:
+        A triple of (OptionContractInfo, why this expiry, why this strike).
+        The two sentences exist so a surprising fill can be traced back to the
+        decision that caused it.
+
+    Raises:
+        SymbolNotListedError: If Tiger lists no options for the symbol.
+        ExpiryNotListedError: If nothing is far enough out.
+        StrikeNotFoundError: If the expiry has no strikes on that side.
+        ContractError: If the chosen contract fails verification.
+    """
+    normalised = symbol.strip().upper()
+    side = validate_option_type(option_type)
+
+    expiries = list_expirations(quote_client, normalised)
+    if not expiries:
+        raise SymbolNotListedError(
+            f"Tiger lists no option expirations for {normalised!r}. Either the "
+            "symbol is wrong or it has no listed options."
+        )
+
+    expiry, expiry_reason = choose_expiry(expiries, minimum_days=minimum_days)
+    compact = to_tiger_expiry_format(expiry.date_text)
+
+    strikes = list_strikes_for_expiry(trade_client, normalised, compact, side)
+    strike, strike_reason = find_closest_strike(strikes, current_price, side)
+
+    # Phase 3, unchanged. It re-checks the expiry and asks Tiger to confirm the
+    # contract. That repeats the expiry lookup, which is the price of having
+    # one verification path rather than two; callers cache the whole result.
+    contract = find_option_contract(
+        quote_client, trade_client, normalised, side, strike, expiry.date_text
+    )
+    return contract, expiry_reason, strike_reason

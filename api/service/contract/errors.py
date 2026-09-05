@@ -28,3 +28,12 @@ class ExpiredContractError(ContractError):
 
 class StrikeNotFoundError(ContractError):
     """No contract exists at that strike for that expiry and side."""
+
+
+class SymbolNotListedError(ContractError):
+    """Tiger lists no options at all for this underlying.
+
+    Different from an expiry or strike being wrong: the symbol itself is not
+    something you can trade options on here, so suggesting a nearer date or
+    strike would be nonsense.
+    """

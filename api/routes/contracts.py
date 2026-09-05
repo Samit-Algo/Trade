@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query
 
 from api.service.contract import find_option_contract
 
-from ..wiring import get_quote_client, get_trade_client
+from ..shared import get_quote_client, get_trade_client
 from ..schemas import ContractOut
 from ..schemas import shape_contract
 

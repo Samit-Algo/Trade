@@ -14,8 +14,8 @@ This file has two jobs:
 
 Two things deliberately do NOT live here, because this file is the root of the
 import graph and nothing may import it back: the exception-to-status table is
-in `errors.py`, and request logging is in `wiring.py`. Both are needed by the
-low-level modules that `app.py` itself imports.
+in `errors.py`, and request logging is in `shared.py`. Both are needed by the
+low-level modules that `main.py` itself imports.
 
 The three original safety locks are untouched, and `assert_order_allowed`
 still runs twice on every order path inside `orders.py`.
@@ -34,12 +34,17 @@ from fastapi.responses import JSONResponse
 from api.service.core.config import ConfigError
 
 from .errors import ApiError, classify_exception
-from .wiring import get_settings
-from .routes import account, contracts, health, market, orders, positions, trade
+from .shared import get_settings
+from .routes import account, contracts, health, market, orders, positions, trade, ui
 
 #: Paths reachable without a key. Deliberately tiny: only the liveness check,
-#: and the docs, which describe the API without exposing account data.
-UNPROTECTED_PATHS = frozenset({"/health", "/docs", "/redoc", "/openapi.json"})
+#: the docs, which describe the API without exposing account data, and the
+#: hand-testing form, which is static HTML holding no secrets. The form still
+#: cannot place anything: the key it sends with POST /trade is typed in by
+#: whoever is using it, and that request is checked like any other.
+UNPROTECTED_PATHS = frozenset(
+    {"/health", "/docs", "/redoc", "/openapi.json", "/ui"}
+)
 
 API_KEY_HEADER = "X-API-Key"
 
@@ -86,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(positions.router)
     app.include_router(orders.router)
     app.include_router(trade.router)
+    app.include_router(ui.router)
 
     return app
 

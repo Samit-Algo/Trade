@@ -218,8 +218,8 @@ class TestErrorMapping:
         assert error.error_code == "INTERNAL_ERROR"
 
 
-class TestDepsAreNotDeadlocked:
-    """The lock in deps.py is reentrant, and this is why.
+class TestSharedClientsAreNotDeadlocked:
+    """The lock in shared.py is reentrant, and this is why.
 
     get_quote_client holds the lock and then calls get_settings, which takes it
     again on the same thread. With a plain Lock that deadlocks on the first
@@ -227,18 +227,18 @@ class TestDepsAreNotDeadlocked:
     """
 
     def test_the_dependency_lock_is_reentrant(self):
-        from api import wiring as deps
+        from api import shared
 
-        assert deps._lock.__class__.__name__ == "RLock"
+        assert shared._lock.__class__.__name__ == "RLock"
 
     def test_nested_acquisition_does_not_hang(self):
-        from api import wiring as deps
+        from api import shared
 
         acquired = []
 
         def nested():
-            with deps._lock:
-                with deps._lock:
+            with shared._lock:
+                with shared._lock:
                     acquired.append(True)
 
         thread = threading.Thread(target=nested)
@@ -257,7 +257,7 @@ class TestOpenApiSecurityMatchesMiddleware:
     """
 
     def test_every_route_except_the_unprotected_ones_declares_the_key(self):
-        from api.app import UNPROTECTED_PATHS, create_app
+        from api.main import UNPROTECTED_PATHS, create_app
 
         spec = create_app().openapi()
 
@@ -272,7 +272,7 @@ class TestOpenApiSecurityMatchesMiddleware:
                 assert declares_key, f"{path} is enforced but not marked in the schema"
 
     def test_the_scheme_names_the_header_the_middleware_reads(self):
-        from api.app import API_KEY_HEADER, create_app
+        from api.main import API_KEY_HEADER, create_app
 
         spec = create_app().openapi()
         scheme = spec["components"]["securitySchemes"]["ApiKeyAuth"]

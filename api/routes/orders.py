@@ -32,7 +32,7 @@ from api.service.order import (
 from api.service.position import fetch_cash_available
 from api.service.order import compare_to_available_cash, estimate_cost
 
-from ..wiring import (
+from ..shared import (
     log_order_request,
     get_quote_client,
     get_settings,

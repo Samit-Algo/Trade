@@ -11,6 +11,7 @@ what lets the rest of this project work without one.
 from __future__ import annotations
 
 from .errors import (
+    SymbolNotListedError,
     ContractError, ExpiryNotListedError, ExpiredContractError,
     StrikeNotFoundError
 )
@@ -20,6 +21,7 @@ from .identifiers import (
 )
 from .selection import (
     DEFAULT_MIN_DAYS_TO_EXPIRY, choose_expiry, find_closest_strike,
+    select_contract,
 )
 from .resolve import (
     NEAREST_STRIKE_COUNT, OptionContractInfo, resolve_expiry,
@@ -29,6 +31,7 @@ from .resolve import (
 )
 
 __all__ = [
+    "SymbolNotListedError", "select_contract",
     "DEFAULT_MIN_DAYS_TO_EXPIRY", "choose_expiry", "find_closest_strike",
     "ContractError", "ExpiryNotListedError", "ExpiredContractError",
     "StrikeNotFoundError", "VALID_OPTION_TYPES", "to_tiger_expiry_format",

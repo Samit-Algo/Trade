@@ -345,7 +345,7 @@ handler. `scripts/` is unchanged in behaviour and still works — those scripts
 are the verified evidence behind everything in this file, and they stay.
 
 ```bash
-python -m api.main                                     # 127.0.0.1:8000
+python -m api.main                                      # 127.0.0.1:8000
 curl -H "X-API-Key: $KEY" http://127.0.0.1:8000/health
 ```
 
@@ -466,7 +466,7 @@ rather than flattening it into a generic upstream failure.
 
 ### The deadlock this phase introduced, and how it hid
 
-`api/wiring.py` (then called `deps.py`) originally used a plain
+`api/shared.py` (then called `deps.py`) originally used a plain
 `threading.Lock`. `get_quote_client()`
 acquires it and then calls `get_settings()`, which acquires the same lock on
 the same thread. A plain `Lock` is not reentrant, so that deadlocks.
@@ -546,9 +546,9 @@ one folder per subject, one file per question:
 | Folder | Files | Was |
 |---|---|---|
 | `service/core/` | `safety`, `config`, `broker`, `audit` | `safety.py`, `config.py`, `clients.py`+`throttle.py`, `audit.py` |
-| `service/market/` | `fields`, `calendar`, `prices`, `quotes` | `market.py`, `providers.py` |
+| `service/market/` | `read_data`, `calendar`, `prices`, `quotes` | `market.py`, `providers.py` |
 | `service/contract/` | `errors`, `identifiers`, `resolve` | `contracts.py` |
-| `service/order/` | `cost`, `build`, `bracket`, `lifecycle`, `submit` | `pricing.py`, `orders.py` |
+| `service/order/` | `cost`, `build`, `bracket`, `status`, `submit` | `pricing.py`, `orders.py` |
 | `service/position/` | `holdings`, `valuation` | `positions.py` |
 
 Each folder's `__init__.py` re-exports its public names, so callers import from
@@ -573,7 +573,7 @@ grep -rl '^[[:space:]]*assert_order_allowed(' --include='*.py' api scripts
 #   api/service/order/submit.py, and nothing else
 ```
 
-`cancel_order` was deliberately moved *out* of it into `lifecycle.py`, because
+`cancel_order` was deliberately moved *out* of it into `status.py`, because
 cancelling cannot open a position and its presence weakened the claim the file
 docstring makes. What is left in `submit.py` is the submission path, and
 nothing else.
@@ -617,29 +617,29 @@ covering the probe's age formatting went with it, so the suite is **236**.
 
 Splitting a file splits its import graph, and the graph has opinions.
 
-**1. `app.py` cannot hold `errors.py`.** Merging them broke the build at once:
+**1. `main.py` cannot hold `errors.py`.** Merging them broke the build at once:
 
 ```
-app.py -> wiring.py -> order_rules.py -> app.py   (ApiError)
+main.py -> shared.py -> order_rules.py -> main.py   (ApiError)
 ```
 
 `ApiError` is raised by the lowest-level checks and handled by the highest-level
 server, so it must sit **below both**. The same applied to `log_order_request`,
-which the routes need while `app.py` imports the routes. So `app.py` is the
+which the routes need while `main.py` imports the routes. So `main.py` is the
 root of the import graph -- it imports everything, nothing imports it --
 `errors.py` stayed a separate leaf module, and the request logger moved into
-`wiring.py`.
+`shared.py`.
 
 **2. `market/calendar.py` and `market/prices.py` needed each other.** Both used
 the three pandas-cell readers and the shared `MarketDataError`. Those moved
-down into `market/fields.py`, which neither imports back.
+down into `market/read_data.py`, which neither imports back.
 
 **3. `contract/identifiers.py` and `contract/resolve.py` needed each other,**
 over `ContractError`. The four exception types moved down into
 `contract/errors.py`.
 
 The pattern in all three: when two files need each other, the thing they share
-belongs in a third file *below* both. That is why `fields.py` and `errors.py`
+belongs in a third file *below* both. That is why `read_data.py` and `errors.py`
 exist, and both say so in their docstrings.
 
 ### Two tests had to change, and why
@@ -844,7 +844,7 @@ behind a load balancer. Note it before scaling out.
 | leg confirmation | `legs_confirmed` is always `false`; use `GET /orders/{id}/legs` |
 
 **Nothing in the safety system was touched.** `core/safety.py`,
-`order/submit.py`, `order/lifecycle.py`, `core/audit.py` and
+`order/submit.py`, `order/status.py`, `core/audit.py` and
 `market/quotes.py` are all unmodified. `/trade` calls the same
 `buy_option_with_bracket` the CLI does, with both `assert_order_allowed` gates
 and the single `place_order` exactly where they were.
@@ -866,6 +866,85 @@ core/config -> contract/selection -> contract/__init__ -> resolve
 constants are therefore *copied* into `config.py`, and `tests/test_ticks.py`
 asserts the copies still agree -- the cheap half of what the import would have
 bought. Same lesson as §3c: the import graph has opinions.
+
+---
+
+## 3f. Making the trade endpoint readable (Phase 10a)
+
+`routes/trade.py` had one function of **185 lines**. Every other route file in
+the project is smaller than that in total. The flow was invisible.
+
+### The route is now four steps
+
+```python
+replay = claim_request_id(...)      # 1. seen this request before?
+if replay is not None: return replay
+
+try:
+    plan = prepare_trade(body)      # 2. work it out. CANNOT SEND.
+except Exception:
+    release_request_id(...); raise
+
+if body.validate_only:
+    return ... describe_only(plan, body)      # 3. just testing?
+
+return ... submit_and_record(plan, body, request)   # 4. send it
+```
+
+A `TradePlan` dataclass carries the decisions between steps, which retired the
+`common = dict(...)` that used to be unpacked twice with `**`.
+
+| | Before | After |
+|---|---|---|
+| Longest function | **185** | **66** |
+| The route itself | 185 | **35** |
+
+The file grew from 428 to 493 lines, because nine small documented functions
+cost more lines than one big undocumented block. That was the trade wanted.
+
+### The `placed` flag is gone, and that is a safety improvement
+
+There used to be a `placed = False` variable flipped to `True` just before
+submission, with the error handler consulting it to decide whether releasing
+the idempotency key was safe. Trusting it meant tracing the flag.
+
+`prepare_trade` now **imports nothing that can place an order**, so a failure
+inside it provably reached no broker. The release sits in one place, wrapping
+only that call. Structure instead of a flag, and two tests assert it.
+
+### Moved to where their siblings already live
+
+| What | To | Why |
+|---|---|---|
+| Choosing + verifying a contract | `service/contract/selection.py` | It is business logic; routes do not hold that |
+| `shape_bracket_prices`, `shape_tick`, `shape_submitted_legs` | `api/schemas.py` | Every other `shape_*` is there |
+| `build_price_only_snapshot` → `build_price_only_quote` | `api/order_rules.py` | Sits beside `build_quote_snapshot`, its sibling |
+| `TICK_SOURCE` note | `service/order/ticks.py` | Belongs with the measurement it describes |
+
+`SymbolNotListedError` was added so a bad symbol returns **404 SYMBOL_NOT_FOUND**
+from the exception map, rather than the route hand-rolling the error.
+
+### Three files renamed for plain English
+
+| Was | Now | Why |
+|---|---|---|
+| `api/wiring.py` | `api/shared.py` | "wiring" is a metaphor; these are shared things built once |
+| `service/order/lifecycle.py` | `service/order/status.py` | It answers "what happened to my order?" |
+| `service/market/fields.py` | `service/market/read_data.py` | "fields" said nothing |
+
+`api/app.py` also went back to `api/main.py`, because debugger launch configs
+point at it and the rename in Phase 9 broke them for no gain.
+
+### A hand-testing form
+
+`GET /ui` serves a plain HTML form for `POST /trade`, from
+`routes/trade_form.html`. It is served **by the API itself** rather than opened
+as a file, because a `file://` page calling `127.0.0.1` is cross-origin and the
+browser blocks it — serving it same-origin avoids opening CORS on a service
+that can place orders. `/ui` needs no key (it is static HTML holding no
+secrets); the order it sends still does.
+
+329 tests pass. Behaviour unchanged, which is what the unchanged tests prove.
 
 ---
 
@@ -1160,14 +1239,15 @@ comment above the import.
 
 ```
 api/
-  app.py         The server. API-key middleware, error handlers, uvicorn entry.
+  main.py         The server. API-key middleware, error handlers, uvicorn entry.
   errors.py      Exception -> (status, error_code), in one table. A LEAF module:
-                 folding it into app.py makes app -> wiring -> order_rules -> app.
-  wiring.py      Settings and clients, built once. RLock, not Lock -- see 3b.
+                 folding it into main.py makes main -> shared -> order_rules -> main.
+  shared.py      Settings and clients, built once. RLock, not Lock -- see 3b.
                  Also the request log, for the same import-graph reason.
   schemas.py     Every Pydantic shape, and the functions that build them.
   order_rules.py Quote checks, preview tokens, and the idempotency store.
-  routes/        health, account, market, contracts, positions, orders, trade.
+  routes/        health, account, market, contracts, positions, orders,
+                 trade (POST /trade), ui (the hand-testing form).
                  Thin: check the request, call the service, shape the reply.
 
   service/       ALL the logic. One folder per subject, one file per question.
@@ -1180,7 +1260,7 @@ api/
       audit.py     JSONL order trail in logs/ (gitignored).
 
     market/      What exists out there, and what it is worth.
-      fields.py    Reading Tiger's dataframes without crashing, and the one
+      read_data.py    Reading Tiger's dataframes without crashing, and the one
                    error this folder raises. Below calendar.py and prices.py
                    because both need it.
       calendar.py  Expiries, and every date conversion. US/Eastern, always.
@@ -1199,7 +1279,7 @@ api/
       cost.py        Pure arithmetic, no network. Cash, break-even, max loss.
       build.py       Build the order object and print the preview. Sends nothing.
       bracket.py     Take-profit and stop-loss legs, and the commission model.
-      lifecycle.py   Status, fills, polling, cancelling. Cannot open a position.
+      status.py   Status, fills, polling, cancelling. Cannot open a position.
       submit.py      THE ONLY FILE THAT CAN SPEND MONEY. Both place_order calls,
                      all four assert_order_allowed gates, and nothing else.
 

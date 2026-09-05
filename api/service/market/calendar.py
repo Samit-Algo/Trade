@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from tigeropen.common.consts import Market
 
 from ..core.broker import EXPIRATIONS_LIMITER
-from .fields import MarketDataError, _read_optional_int, _read_text
+from .read_data import MarketDataError, _read_optional_int, _read_text
 
 
 #: US options trade on US Eastern time. Days-to-expiry must be counted on the

@@ -18,7 +18,7 @@ from ..core.broker import (
     OPTION_BRIEFS_LIMITER, STOCK_BRIEFS_LIMITER,
 )
 from .calendar import milliseconds_to_date, today_in_market_timezone
-from .fields import (
+from .read_data import (
 
 
     MarketDataError, _read_optional_float, _read_optional_int, _read_text

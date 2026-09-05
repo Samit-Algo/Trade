@@ -23,7 +23,7 @@ from .build import (
     print_order_preview,
 )
 from .cost import CostEstimate, compare_to_available_cash, estimate_cost
-from .lifecycle import (
+from .status import (
     DEFAULT_POLL_ATTEMPTS, DEFAULT_POLL_DELAY_SECONDS, FillOutcome,
     OrderSubmissionError, poll_until_settled,
 )

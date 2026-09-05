@@ -24,6 +24,13 @@ import math
 #: symbol class that turns out to quote more coarsely -- see HANDOVER 3d.
 MEASURED_TICK_SIZE = 0.01
 
+#: Said in every response that uses it, so the number is never mistaken for
+#: something the broker reported. It is not: Tiger returns min_tick as None.
+TICK_SOURCE_NOTE = (
+    "measured from 32,360 real traded prices across 6 symbols; Tiger reports "
+    "no min_tick. See HANDOVER.md section 3d."
+)
+
 #: Prices are compared in whole ticks, so the arithmetic is integer and exact.
 #: Floating point makes 8.05 / 0.05 = 161.00000000000003, and a naive modulo
 #: on that reports a perfectly legal price as invalid.

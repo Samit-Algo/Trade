@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from api.service.market import list_expirations
 
 from ..schemas import ExpirationsResponse, ExpiryOut
-from ..wiring import get_quote_client
+from ..shared import get_quote_client
 
 router = APIRouter(tags=["market"])
 

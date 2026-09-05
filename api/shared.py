@@ -8,8 +8,8 @@ Nothing here contains business logic. It hands routes the same objects the
 CLI scripts build for themselves, so both entry points call the same library
 functions with the same inputs.
 
-Request logging lives here rather than in `app.py` for an import reason:
-routes need it, and `app.py` imports the routes, so putting it there would
+Request logging lives here rather than in `main.py` for an import reason:
+routes need it, and `main.py` imports the routes, so putting it there would
 make the graph circular.
 """
 
@@ -188,8 +188,8 @@ def orders_are_enabled(settings: Settings) -> tuple[bool, str]:
 # in service/core/audit.py already records WHAT the order was; this records
 # WHERE the request came from, alongside it.
 #
-# It lives here rather than in app.py for an import reason: routes need it, and
-# app.py imports the routes, so putting it there would make the graph circular.
+# It lives here rather than in main.py for an import reason: routes need it, and
+# main.py imports the routes, so putting it there would make the graph circular.
 # ---------------------------------------------------------------------------
 
 LOG_DIRECTORY = Path(__file__).resolve().parent.parent / "logs"

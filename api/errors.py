@@ -2,7 +2,7 @@
 
 A leaf module on purpose. `ApiError` is raised by the lowest-level checks and
 handled by the highest-level server, so it must sit below both -- folding it
-into `app.py` creates `app -> wiring -> order_rules -> app`.
+into `main.py` creates `main -> shared -> order_rules -> main`.
 
 Two ideas govern it:
 
@@ -24,6 +24,7 @@ from api.service.contract import (
     ExpiredContractError,
     ExpiryNotListedError,
     StrikeNotFoundError,
+    SymbolNotListedError,
 )
 from api.service.market import MarketDataError
 from api.service.order import BracketError, OrderSubmissionError
@@ -51,6 +52,7 @@ EXCEPTION_MAP: tuple[tuple[type, int, str], ...] = (
     (ExpiredContractError, 410, "EXPIRY_EXPIRED"),
     (ExpiryNotListedError, 404, "EXPIRY_NOT_LISTED"),
     # The request is well formed; the strike simply does not exist.
+    (SymbolNotListedError, 404, "SYMBOL_NOT_FOUND"),
     (StrikeNotFoundError, 422, "STRIKE_NOT_FOUND"),
     (BracketError, 422, "BRACKET_INVALID"),
     (PricingError, 422, "PRICING_FAILED"),

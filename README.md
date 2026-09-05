@@ -23,7 +23,7 @@ read-only.
 
 ```
 api/
-  app.py       the HTTP server        routes/    the endpoints
+  main.py       the HTTP server        routes/    the endpoints
   service/     ALL the logic, one folder per subject:
     core/        connect, configure, and the three safety locks
     market/      expiries, prices, and where bid/ask come from
@@ -278,7 +278,7 @@ documentation does not say:
 ## Phase 8 — HTTP API
 
 ```bash
-python -m api.main            # binds 127.0.0.1:8000 by default
+python -m api.main             # binds 127.0.0.1:8000 by default
 curl -H "X-API-Key: $KEY" http://127.0.0.1:8000/health
 ```
 

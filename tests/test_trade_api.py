@@ -310,18 +310,18 @@ class TestRequestValidation:
 
 class TestTheEndpointIsRegisteredAndProtected:
     def test_trade_is_in_the_schema(self):
-        from api.app import create_app
+        from api.main import create_app
 
         assert "/trade" in create_app().openapi()["paths"]
 
     def test_trade_is_not_an_unprotected_path(self):
         """It can place orders, so it must sit behind the API key."""
-        from api.app import UNPROTECTED_PATHS
+        from api.main import UNPROTECTED_PATHS
 
         assert "/trade" not in UNPROTECTED_PATHS
 
     def test_trade_declares_the_api_key_in_its_schema(self):
-        from api.app import create_app
+        from api.main import create_app
 
         spec = create_app().openapi()
         assert spec["paths"]["/trade"]["post"].get("security")
@@ -344,45 +344,64 @@ class TestSafetyIsNotBypassed:
     def test_the_route_checks_the_locks_before_doing_work(self):
         from api.routes import trade
 
-        assert hasattr(trade, "require_orders_enabled")
+        assert hasattr(trade, "check_safety_locks")
 
-    def test_validate_only_never_reaches_the_submission_function(self):
+    def test_only_one_function_can_submit(self):
+        """buy_option_with_bracket is called from submit_and_record, nowhere else."""
+        from api.routes import trade
+
         source = (
             Path(__file__).resolve().parent.parent / "api/routes/trade.py"
         ).read_text(encoding="utf-8")
-        # The validate_only branch returns before buy_option_with_bracket.
-        early_return = source.index("if body.validate_only:")
-        submission = source.index("outcome, final_estimate, legs = buy_option")
-        assert early_return < submission
+        calls = source.count("buy_option_with_bracket(")
+        assert calls == 1, f"expected one call site, found {calls}"
+
+        submit_starts = source.index("def submit_and_record(")
+        assert source.rindex("buy_option_with_bracket(") > submit_starts
+
+    def test_prepare_trade_cannot_send_an_order(self):
+        """The whole safety of releasing an idempotency key rests on this."""
+        import inspect
+
+        from api.routes import trade
+
+        source = inspect.getsource(trade.prepare_trade)
+        assert "buy_option_with_bracket" not in source
+        assert "place_order" not in source
+
+    def test_validate_only_returns_before_submitting(self):
+        import inspect
+
+        from api.routes import trade
+
+        source = inspect.getsource(trade.place_bracketed_trade)
+        assert source.index("if body.validate_only:") < source.index(
+            "submit_and_record("
+        )
 
 
-class TestPriceOnlySnapshot:
+class TestPriceOnlyQuote:
     """No quote exists on this path. What stands in for one must be honest."""
 
     def test_it_is_stamped_manual_not_fetched(self):
-        from api.routes.trade import build_price_only_snapshot
-        from api.service.order.bracket import calculate_bracket_from_percentages
+        from api.order_rules import build_price_only_quote
 
-        calculation = calculate_bracket_from_percentages(0.30, 20, 15, 0.01, 1)
-        snapshot = build_price_only_snapshot(calculation)
-        assert snapshot.is_manual is True
+        assert build_price_only_quote(0.31).is_manual is True
 
-    def test_the_limit_price_is_the_buffered_entry(self):
-        from api.routes.trade import build_price_only_snapshot
-        from api.service.order.bracket import calculate_bracket_from_percentages
+    def test_the_one_price_becomes_bid_ask_and_limit(self):
+        from api.order_rules import build_price_only_quote
 
-        calculation = calculate_bracket_from_percentages(0.30, 20, 15, 0.01, 1)
-        snapshot = build_price_only_snapshot(calculation)
-        assert snapshot.limit_price == 0.31
+        quote = build_price_only_quote(0.31)
+        assert quote.limit_price == 0.31
+        assert quote.bid == 0.31
+        assert quote.ask == 0.31
 
     def test_liquidity_is_absent_rather_than_invented(self):
         """is_low_liquidity treats None as thin, so the gap fails safe."""
-        from api.routes.trade import build_price_only_snapshot
+        from api.order_rules import build_price_only_quote
         from api.service.market import is_low_liquidity
-        from api.service.order.bracket import calculate_bracket_from_percentages
 
-        calculation = calculate_bracket_from_percentages(0.30, 20, 15, 0.01, 1)
-        snapshot = build_price_only_snapshot(calculation)
-        assert snapshot.volume is None
-        assert snapshot.open_interest is None
-        assert is_low_liquidity(snapshot.volume, snapshot.open_interest) is True
+        quote = build_price_only_quote(0.31)
+        assert quote.volume is None
+        assert quote.open_interest is None
+        assert is_low_liquidity(quote.volume, quote.open_interest) is True

@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trade tester</title>
+<style>
+  :root {
+    --ground: #f4f6f8; --card: #fff; --ink: #16202b; --muted: #5f6b7a;
+    --line: #d8dee6; --accent: #2c4b8c; --accent-soft: #e9eef8;
+    --good: #17714f; --good-soft: #e4f2ea;
+    --bad: #a8362a; --bad-soft: #fae9e6;
+    --warn: #8a5a08; --warn-soft: #fbf0dc;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0f1319; --card: #171d26; --ink: #e2e7ef; --muted: #96a0ae;
+      --line: #2a323d; --accent: #7fa3e8; --accent-soft: #1b2537;
+      --good: #4fba93; --good-soft: #12271f;
+      --bad: #e2705d; --bad-soft: #2b1714;
+      --warn: #d09a44; --warn-soft: #2a2013;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+  .cols { display: grid; grid-template-columns: 400px 1fr; gap: 24px; align-items: start; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
+  fieldset { border: none; padding: 0; margin: 0 0 18px; }
+  legend {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); font-weight: 600; padding: 0 0 8px;
+  }
+  label { display: block; margin-bottom: 12px; font-size: 13px; font-weight: 500; }
+  label .hint { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  input, select {
+    width: 100%; margin-top: 5px; padding: 9px 10px; font-size: 14px;
+    font-family: inherit; color: var(--ink); background: var(--ground);
+    border: 1px solid var(--line); border-radius: 5px;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .idrow { display: flex; gap: 8px; align-items: flex-end; }
+  .idrow label { flex: 1; margin-bottom: 0; }
+
+  button {
+    font: inherit; font-weight: 600; padding: 11px 14px; border-radius: 6px;
+    border: 1px solid transparent; cursor: pointer; width: 100%;
+  }
+  button:disabled { opacity: .5; cursor: wait; }
+  .btn-test { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .btn-real { background: var(--bad); color: #fff; margin-top: 10px; }
+  .btn-small {
+    width: auto; padding: 9px 12px; font-size: 13px; font-weight: 500;
+    background: var(--ground); color: var(--muted); border-color: var(--line);
+  }
+
+  .out { min-height: 200px; }
+  .placeholder { color: var(--muted); font-size: 14px; padding: 40px 0; text-align: center; }
+  .banner { padding: 12px 14px; border-radius: 6px; font-weight: 600; margin-bottom: 16px; }
+  .b-good { background: var(--good-soft); color: var(--good); }
+  .b-bad { background: var(--bad-soft); color: var(--bad); }
+  .b-warn { background: var(--warn-soft); color: var(--warn); }
+
+  .prices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .price { padding: 12px; border: 1px solid var(--line); border-radius: 6px; text-align: center; }
+  .price .lab { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+  .price .val { font-family: var(--mono); font-size: 22px; font-weight: 600; margin-top: 3px; }
+  .p-tp { border-color: var(--good); } .p-tp .val { color: var(--good); }
+  .p-sl { border-color: var(--bad); }  .p-sl .val { color: var(--bad); }
+  .p-en { border-color: var(--accent); } .p-en .val { color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px; }
+  td { padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { color: var(--muted); width: 42%; }
+  td:last-child { font-family: var(--mono); font-size: 12.5px; }
+  tr:last-child td { border-bottom: none; }
+
+  details { margin-top: 8px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  pre {
+    background: var(--ground); border: 1px solid var(--line); border-radius: 6px;
+    padding: 12px; overflow-x: auto; font-family: var(--mono); font-size: 12px;
+    margin: 8px 0 0; max-height: 420px;
+  }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Trade tester</h1>
+  <p class="sub">Fill the form, press <strong>Test</strong>. Nothing is bought until you press the red button.</p>
+
+  <div class="cols">
+    <form class="card" id="form" autocomplete="off">
+      <fieldset>
+        <legend>Access</legend>
+        <label>API key
+          <span class="hint">TIGER_API_KEY from your .env. Saved in this browser only.</span>
+          <input type="password" id="apikey" placeholder="paste your key">
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>What to buy</legend>
+        <div class="row">
+          <label>Symbol<input id="symbol" value="AAPL"></label>
+          <label>Call or put
+            <select id="option_type"><option>CALL</option><option>PUT</option></select>
+          </label>
+        </div>
+        <div class="row">
+          <label>Stock price
+            <span class="hint">picks the strike</span>
+            <input type="number" step="0.01" id="current_price" value="318.40">
+          </label>
+          <label>Contracts<input type="number" step="1" min="1" id="quantity" value="1"></label>
+        </div>
+        <label>Option price
+          <span class="hint">what the option costs, not the stock</span>
+          <input type="number" step="0.01" id="entry_price" value="0.30">
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Exits</legend>
+        <div class="row">
+          <label>Take profit %<input type="number" step="1" id="take_profit_percent" value="20"></label>
+          <label>Stop loss %<input type="number" step="1" id="stop_loss_percent" value="15"></label>
+        </div>
+        <label>Legs live for
+          <select id="leg_time_in_force">
+            <option value="DAY">DAY — expire at close</option>
+            <option value="GTC">GTC — stay overnight</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Limits</legend>
+        <label>Max cash
+          <span class="hint">refuses if it costs more than this</span>
+          <input type="number" step="1" id="max_cash" value="100">
+        </label>
+        <div class="idrow">
+          <label>Order ID<input id="client_order_id"></label>
+          <button type="button" class="btn-small" id="newid">New</button>
+        </div>
+      </fieldset>
+
+      <button type="button" class="btn-test" id="test">Test — buys nothing</button>
+      <button type="button" class="btn-real" id="place">Place the order for real</button>
+      <p class="note">The red button only works when <code>DRY_RUN=false</code> in .env.</p>
+    </form>
+
+    <div class="card out" id="out">
+      <div class="placeholder">Results appear here.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const out = $("out");
+
+function newId() {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+  $("client_order_id").value = "ui-" + stamp + "-" + Math.random().toString(36).slice(2, 6);
+}
+newId();
+$("newid").onclick = newId;
+
+// Remember the key so it is typed once, not on every test.
+try {
+  const saved = localStorage.getItem("tigerApiKey");
+  if (saved) $("apikey").value = saved;
+} catch (e) { /* private window, or storage blocked */ }
+$("apikey").onchange = () => {
+  try { localStorage.setItem("tigerApiKey", $("apikey").value); } catch (e) {}
+};
+
+const money = n => (n === null || n === undefined) ? "—" : Number(n).toFixed(2);
+
+function body(validateOnly) {
+  return {
+    client_order_id: $("client_order_id").value.trim(),
+    symbol: $("symbol").value.trim().toUpperCase(),
+    option_type: $("option_type").value,
+    current_price: parseFloat($("current_price").value),
+    quantity: parseInt($("quantity").value, 10),
+    entry_price: parseFloat($("entry_price").value),
+    take_profit_percent: parseFloat($("take_profit_percent").value),
+    stop_loss_percent: parseFloat($("stop_loss_percent").value),
+    max_cash: parseFloat($("max_cash").value),
+    leg_time_in_force: $("leg_time_in_force").value,
+    validate_only: validateOnly
+  };
+}
+
+function renderError(status, data) {
+  const detail = data && data.error ? data.error : data;
+  const code = (detail && detail.error_code) || "HTTP " + status;
+  const message = (detail && detail.message) || JSON.stringify(data);
+  out.innerHTML = `
+    <div class="banner b-bad">${status} &nbsp;·&nbsp; ${code}</div>
+    <p>${message}</p>
+    <details><summary>Full response</summary><pre>${JSON.stringify(data, null, 2)}</pre></details>`;
+}
+
+function renderOk(data) {
+  const p = data.prices;
+  const real = !data.validate_only;
+  const banner = data.duplicate
+    ? `<div class="banner b-warn">Already done — this repeats an earlier order. Nothing new was placed.</div>`
+    : real
+      ? `<div class="banner b-good">ORDER PLACED &nbsp;·&nbsp; id ${data.order_id} &nbsp;·&nbsp; ${data.order_status}</div>`
+      : `<div class="banner b-warn">Test only — nothing was bought</div>`;
+
+  const legs = (data.legs_submitted || [])
+    .map(l => `${l.leg_kind} ${l.order_type} @ ${money(l.price)} ${l.time_in_force || ""}`)
+    .join("<br>") || "—";
+
+  out.innerHTML = banner + `
+    <div class="prices">
+      <div class="price p-sl"><div class="lab">Stop loss</div><div class="val">${money(p.stop_loss_price)}</div></div>
+      <div class="price p-en"><div class="lab">You buy at</div><div class="val">${money(p.entry_price_actual)}</div></div>
+      <div class="price p-tp"><div class="lab">Take profit</div><div class="val">${money(p.take_profit_price)}</div></div>
+    </div>
+    <table>
+      <tr><td>Contract</td><td>${data.contract.identifier}</td></tr>
+      <tr><td>Strike / expiry</td><td>${data.strike} &nbsp; ${data.expiry} (${data.contract.days_to_expiry}d)</td></tr>
+      <tr><td>Why this expiry</td><td>${data.expiry_selection_reason}</td></tr>
+      <tr><td>Why this strike</td><td>${data.strike_selection_reason}</td></tr>
+      <tr><td>Your price → placed</td><td>${money(p.entry_price_requested)} → ${money(p.entry_price_actual)} &nbsp;(+${data.tick.buffer_ticks} tick of ${data.tick.tick_size})</td></tr>
+      <tr><td>Cash needed</td><td>$${money(data.cash_required)} &nbsp;of $${money(data.max_cash)} allowed</td></tr>
+      <tr><td>Commission round trip</td><td>$${money(data.commission.round_trip)}</td></tr>
+      <tr><td>Legs sent</td><td>${legs}</td></tr>
+      ${real ? `<tr><td>Filled</td><td>${data.parent_filled} of ${data.quantity}</td></tr>` : ""}
+    </table>
+    <p class="note">${p.rounding_note}</p>
+    <details><summary>Full response</summary><pre>${JSON.stringify(data, null, 2)}</pre></details>`;
+}
+
+async function send(validateOnly, button) {
+  const key = $("apikey").value.trim();
+  if (!key) {
+    out.innerHTML = `<div class="banner b-bad">No API key</div>
+      <p>Paste TIGER_API_KEY from your .env file into the first box.</p>`;
+    return;
+  }
+
+  const buttons = [$("test"), $("place")];
+  buttons.forEach(b => b.disabled = true);
+  button.textContent = "Working…";
+  out.innerHTML = `<div class="placeholder">Talking to Tiger…</div>`;
+
+  try {
+    const response = await fetch("/trade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": key },
+      body: JSON.stringify(body(validateOnly))
+    });
+    const data = await response.json();
+    if (response.ok) {
+      renderOk(data);
+      if (!validateOnly) newId();   // a used id must never be sent twice
+    } else {
+      renderError(response.status, data);
+    }
+  } catch (error) {
+    out.innerHTML = `<div class="banner b-bad">Could not reach the server</div>
+      <p>${error.message}. Is it still running?</p>`;
+  } finally {
+    buttons.forEach(b => b.disabled = false);
+    $("test").textContent = "Test — buys nothing";
+    $("place").textContent = "Place the order for real";
+  }
+}
+
+$("test").onclick = e => send(true, e.target);
+$("place").onclick = e => {
+  const cost = ($("entry_price").value * 100 * $("quantity").value).toFixed(2);
+  if (confirm(`Place a REAL order?\n\n${$("quantity").value} x ${$("symbol").value} ${$("option_type").value}\nabout $${cost}\n\nThis spends money.`)) {
+    send(false, e.target);
+  }
+};
+</script>
+</body>
+</html>

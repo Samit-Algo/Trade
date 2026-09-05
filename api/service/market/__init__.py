@@ -1,6 +1,6 @@
 """Market data: what exists, what it last traded at, what it is worth now.
 
-    fields.py    Reading Tiger's dataframes without crashing
+    read_data.py    Reading Tiger's dataframes without crashing
     calendar.py  What expiries exist, and the date maths
     prices.py    Underlying price, last traded close, spread, liquidity
     quotes.py    THE SEAM -- where bid and ask come from
@@ -14,7 +14,7 @@ true only while no other file names either class.
 
 from __future__ import annotations
 
-from .fields import (
+from .read_data import (
     MarketDataError
 )
 from .calendar import (

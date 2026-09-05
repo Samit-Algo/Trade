@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ..wiring import get_settings, orders_are_enabled
+from ..shared import get_settings, orders_are_enabled
 from ..schemas import HealthResponse
 
 router = APIRouter(tags=["health"])

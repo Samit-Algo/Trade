@@ -19,7 +19,7 @@ from ..core.broker import ORDERS_LIMITER
 from ..market import QuoteSnapshot
 from .build import DEFAULT_TIME_IN_FORCE, RULE_WIDTH, format_money
 from .cost import CostEstimate
-from .lifecycle import get_order_status, normalise_status
+from .status import get_order_status, normalise_status
 from .ticks import TickError, apply_buffer, snap_down, snap_nearest, snap_up
 
 # ---------------------------------------------------------------------------

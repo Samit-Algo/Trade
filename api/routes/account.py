@@ -17,7 +17,7 @@ from api.service.core.broker import MANAGED_ACCOUNTS_LIMITER, PRIME_ASSETS_LIMIT
 from api.service.position import SECURITIES_SEGMENT
 
 from ..schemas import AccountResponse
-from ..wiring import get_settings, get_trade_client
+from ..shared import get_settings, get_trade_client
 
 router = APIRouter(tags=["account"])
 

@@ -473,3 +473,35 @@ class IdempotencyStore:
             if record.created_at < cutoff
         ]:
             del self._records[key]
+
+
+def build_price_only_quote(entry_price: float) -> QuoteSnapshot:
+    """Build the snapshot the library expects, from one price and nothing else.
+
+    The sibling of build_quote_snapshot above. That one has five typed numbers
+    to work with; this one has a single price, because POST /trade asks for a
+    price and nothing else.
+
+    bid and ask both carry that price so the arithmetic downstream stays
+    consistent, and it is stamped MANUAL because that is what it is: a number a
+    human read off a screen and a client forwarded.
+
+    volume and open_interest stay None deliberately. is_low_liquidity treats
+    missing data as thin, so the absence fails safe instead of reading as
+    "perfectly liquid".
+
+    Args:
+        entry_price: The price the order will actually be placed at.
+
+    Returns:
+        A QuoteSnapshot carrying that price as bid, ask and limit.
+    """
+    return QuoteSnapshot(
+        bid=entry_price,
+        ask=entry_price,
+        volume=None,
+        open_interest=None,
+        limit_price=entry_price,
+        source=QuoteSource.MANUAL,
+        captured_at=datetime.now(timezone.utc),
+    )

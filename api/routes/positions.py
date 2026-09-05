@@ -13,7 +13,7 @@ from api.service.position import (
 )
 from api.service.market import BidSnapshot, QuoteSource
 
-from ..wiring import get_settings, get_trade_client
+from ..shared import get_settings, get_trade_client
 from ..errors import ApiError
 from ..schemas import PositionsResponse
 from ..schemas import shape_position

@@ -3,7 +3,7 @@
     cost.py       What will this cost me?          pure maths, no network
     build.py      Build it, and show it to a human  builds nothing live
     bracket.py    Take-profit and stop-loss legs
-    lifecycle.py  Status, fills, cancelling  <- cancel_order lives here
+    status.py  Status, fills, cancelling  <- cancel_order lives here
     submit.py     THE ONLY FILE THAT CAN SPEND MONEY
 
 Read `submit.py` if you are reviewing safety. Every `place_order` call in the
@@ -23,7 +23,7 @@ from .build import (
     print_manual_data_banner, print_order_preview, simulate_order
 )
 from .ticks import (
-    MEASURED_TICK_SIZE, TickError, apply_buffer, is_on_tick,
+    MEASURED_TICK_SIZE, TICK_SOURCE_NOTE, TickError, apply_buffer, is_on_tick,
     snap_down, snap_nearest, snap_up,
 )
 from .bracket import (
@@ -35,7 +35,7 @@ from .bracket import (
     calculate_intended_risk, build_option_order_with_bracket,
     print_bracket_preview, get_attached_legs, print_attached_legs
 )
-from .lifecycle import (
+from .status import (
     DEFAULT_POLL_ATTEMPTS, DEFAULT_POLL_DELAY_SECONDS, NOTHING_FILLED,
     PARTIALLY_FILLED, FULLY_FILLED, TERMINAL_STATUSES, FillOutcome,
     OrderSubmissionError, normalise_status, is_terminal_status,
@@ -48,7 +48,7 @@ from .submit import (
 )
 
 __all__ = [
-    "MEASURED_TICK_SIZE", "TickError", "snap_up", "snap_down",
+    "MEASURED_TICK_SIZE", "TICK_SOURCE_NOTE", "TickError", "snap_up", "snap_down",
     "snap_nearest", "apply_buffer", "is_on_tick", "BracketCalculation",
     "calculate_bracket_from_percentages",
     "BUY", "SELL", "VALID_ACTIONS", "PricingError", "CostEstimate",
