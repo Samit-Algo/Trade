@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.config import ConfigError, load_settings  # noqa: E402
-from tiger_backend.safety import LiveTradingBlocked  # noqa: E402
+from api.service.core.config import ConfigError, load_settings  # noqa: E402
+from api.service.core.safety import LiveTradingBlocked  # noqa: E402
 
 PAPER = "20191106192858300"
 

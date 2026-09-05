@@ -1,70 +1,28 @@
-"""Phase 3 -- turn a human request into exactly one verified contract.
+"""Does this contract exist, and what exactly is it?
 
-Contract identity only. Nothing here fetches a price, and nothing here prompts
-for one. Bid, ask, volume, open interest and the limit price arrive later from
-a MarketDataProvider, as set out in SPEC-ADDENDUM-manual-market-data.md.
-
-That split is why OptionContractInfo carries no market-data fields at all.
-Holding them here as None would be worse than not holding them: a `bid` of None
-reads as "there is no bid" when the truth is "nobody has asked yet".
-
-The verification chain, in order, and each step has a different authority:
-
-  1. option_type       is CALL or PUT                    -- checked locally
-  2. expiry            exists and has not passed         -- Tiger's expiry list
-  3. strike            exists for that expiry and side   -- Tiger's strike ladder
-  4. contract          resolves to a real tradable thing -- Tiger's own refusal
-
-Step 4 matters most. An impossible strike comes back from get_contract as
-ERROR 1200 bad_request, so the final word on whether a contract exists belongs
-to the exchange rather than to any check written here.
-
-Documented calls used, all read-only:
-  TradeClient.get_contract(symbol, sec_type, currency, exchange, expiry,
-                           strike, put_call, lang)                    60/min
-  TradeClient.get_derivative_contracts(symbol, sec_type, expiry, lang) 60/min
-https://docs-en.itigerup.com/docs/get-contract
+Identity only. Nothing here reads a bid, an ask or a price -- resolving a
+contract needs no market-data entitlement, which is what makes the rest of
+this project possible without one.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from tigeropen.common.consts import Currency, SecurityType
-from tigeropen.common.util.contract_utils import (
-    extract_option_info,
-    get_option_identifier,
+
+from ..core.broker import CONTRACT_LIMITER, DERIVATIVE_CONTRACTS_LIMITER
+from ..market import MarketDataError, days_until_expiry, list_expirations
+from .errors import (
+
+
+    ContractError, ExpiredContractError, ExpiryNotListedError,
+    StrikeNotFoundError,
 )
-
-from .market import MarketDataError, days_until_expiry, list_expirations
-from .throttle import CONTRACT_LIMITER, DERIVATIVE_CONTRACTS_LIMITER
-
-VALID_OPTION_TYPES = ("CALL", "PUT")
+from .identifiers import build_identifier, from_tiger_expiry_format, to_tiger_expiry_format, validate_option_type
 
 #: How many neighbouring strikes to name when a requested one does not exist.
 NEAREST_STRIKE_COUNT = 3
-
-
-class ContractError(Exception):
-    """A contract could not be resolved. Always carries an actionable message."""
-
-
-class ExpiryNotListedError(ContractError):
-    """The requested expiry is not one Tiger lists for this underlying."""
-
-
-class ExpiredContractError(ContractError):
-    """The expiry is listed, but the date has already passed.
-
-    Kept separate from ExpiryNotListedError on purpose. Reporting an expired
-    contract as "not found" sends the reader hunting for a typo in a date that
-    is real, correct, and was tradable yesterday.
-    """
-
-
-class StrikeNotFoundError(ContractError):
-    """No contract exists at that strike for that expiry and side."""
 
 
 @dataclass(frozen=True)
@@ -106,139 +64,6 @@ class OptionContractInfo:
             f"{self.underlying} {self.expiry_date_text} "
             f"{self.strike:,.2f} {self.put_call}"
         )
-
-
-# ---------------------------------------------------------------------------
-# Format conversion
-# ---------------------------------------------------------------------------
-
-
-def to_tiger_expiry_format(date_text: str) -> str:
-    """Convert "YYYY-MM-DD" to the "yyyyMMdd" form Tiger's contract calls want.
-
-    Tiger's expiration list returns the dashed form and its contract functions
-    require the compact one. This mismatch is the single most common bug in
-    this integration, so the conversion exists in exactly one place.
-
-    Args:
-        date_text: An expiry as "YYYY-MM-DD".
-
-    Returns:
-        The same date as "yyyyMMdd".
-
-    Raises:
-        ContractError: If the text is not in the expected format.
-    """
-    try:
-        parsed = datetime.strptime(date_text, "%Y-%m-%d")
-    except ValueError as error:
-        raise ContractError(
-            f"Could not read {date_text!r} as a date (expected YYYY-MM-DD)."
-        ) from error
-    return parsed.strftime("%Y%m%d")
-
-
-def from_tiger_expiry_format(compact_date_text: str) -> str:
-    """Convert "yyyyMMdd" back to "YYYY-MM-DD".
-
-    Args:
-        compact_date_text: An expiry as "yyyyMMdd".
-
-    Returns:
-        The same date as "YYYY-MM-DD".
-
-    Raises:
-        ContractError: If the text is not in the expected format.
-    """
-    try:
-        parsed = datetime.strptime(compact_date_text, "%Y%m%d")
-    except ValueError as error:
-        raise ContractError(
-            f"Could not read {compact_date_text!r} as a date (expected yyyyMMdd)."
-        ) from error
-    return parsed.strftime("%Y-%m-%d")
-
-
-# ---------------------------------------------------------------------------
-# Identifier helpers -- thin wrappers, both directions
-# ---------------------------------------------------------------------------
-
-
-def build_identifier(
-    underlying: str,
-    expiry_compact: str,
-    put_call: str,
-    strike: float,
-) -> str:
-    """Build the 21-character option identifier using the SDK's own helper.
-
-    The identifier is never assembled with string formatting. Its padding and
-    price-scaling rules are fiddly, and a hand-built one that is subtly wrong
-    looks entirely correct while referring to nothing.
-
-    Args:
-        underlying: Underlying symbol, e.g. "AAPL".
-        expiry_compact: Expiry as "yyyyMMdd".
-        put_call: "CALL" or "PUT".
-        strike: Strike price.
-
-    Returns:
-        The identifier, e.g. "AAPL  260918C00320000".
-    """
-    return get_option_identifier(underlying, expiry_compact, put_call, strike)
-
-
-def parse_identifier(identifier: str) -> tuple[str, str, str, float]:
-    """Split a 21-character option identifier back into its four elements.
-
-    DORMANT, not dead. A Phase 3 deliverable -- the spec asks for both
-    directions of the identifier conversion -- that nothing calls yet because
-    every current caller starts from the four elements rather than the string.
-    Anything that reads identifiers back from Tiger will need it.
-
-    The reverse of build_identifier, again using the SDK's helper rather than
-    slicing the string by hand.
-
-    Args:
-        identifier: An identifier, e.g. "AAPL  260918C00320000".
-
-    Returns:
-        A tuple of (underlying, expiry, put_call, strike).
-
-    Raises:
-        ContractError: If the identifier cannot be parsed.
-    """
-    underlying, expiry, put_call, strike = extract_option_info(identifier)
-
-    if underlying is None or expiry is None or put_call is None or strike is None:
-        raise ContractError(f"Could not parse the option identifier {identifier!r}.")
-
-    return underlying, expiry, put_call, float(strike)
-
-
-# ---------------------------------------------------------------------------
-# Validation steps
-# ---------------------------------------------------------------------------
-
-
-def validate_option_type(option_type: str) -> str:
-    """Check the option type and return it normalised.
-
-    Args:
-        option_type: What the caller supplied.
-
-    Returns:
-        "CALL" or "PUT".
-
-    Raises:
-        ContractError: If it is neither.
-    """
-    normalised = option_type.strip().upper()
-    if normalised not in VALID_OPTION_TYPES:
-        raise ContractError(
-            f"Option type must be CALL or PUT, not {option_type!r}."
-        )
-    return normalised
 
 
 def resolve_expiry(quote_client, underlying: str, expiry_date_text: str):

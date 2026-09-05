@@ -39,14 +39,14 @@ from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.clients import (  # noqa: E402
+from api.service.core.broker import (  # noqa: E402
     ClientSetupError,
     build_quote_client,
     build_trade_client,
 )
-from tiger_backend.config import ConfigError, load_settings  # noqa: E402
-from tiger_backend.safety import LiveTradingBlocked, print_startup_banner  # noqa: E402
-from tiger_backend.throttle import (  # noqa: E402
+from api.service.core.config import ConfigError, load_settings  # noqa: E402
+from api.service.core.safety import LiveTradingBlocked, print_startup_banner  # noqa: E402
+from api.service.core.broker import (  # noqa: E402
     BARS_LIMITER,
     CHAIN_LIMITER,
     DELAYED_STOCK_BRIEFS_LIMITER,
@@ -527,7 +527,7 @@ def _capture_expiry(quote_client, context: ProbeContext) -> None:
         quote_client: A tigeropen QuoteClient.
         context: Updated in place with the chosen expiry.
     """
-    from tiger_backend.market import MarketDataError, list_expirations
+    from api.service.market import MarketDataError, list_expirations
 
     try:
         expiries = list_expirations(quote_client, TEST_SYMBOL)

@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.orders import (  # noqa: E402
+from api.service.order import (  # noqa: E402
     COMMISSION_BASE,
     COMMISSION_PER_CONTRACT,
     BracketError,

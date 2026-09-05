@@ -19,13 +19,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.clients import (  # noqa: E402
+from api.service.core.broker import (  # noqa: E402
     ClientSetupError,
     build_quote_client,
     build_trade_client,
 )
-from tiger_backend.config import ConfigError, load_settings  # noqa: E402
-from tiger_backend.contracts import (  # noqa: E402
+from api.service.core.config import ConfigError, load_settings  # noqa: E402
+from api.service.contract import (  # noqa: E402
     ContractError,
     ExpiredContractError,
     ExpiryNotListedError,
@@ -33,7 +33,7 @@ from tiger_backend.contracts import (  # noqa: E402
     StrikeNotFoundError,
     find_option_contract,
 )
-from tiger_backend.safety import LiveTradingBlocked, print_startup_banner  # noqa: E402
+from api.service.core.safety import LiveTradingBlocked, print_startup_banner  # noqa: E402
 
 RULE_WIDTH = 68
 

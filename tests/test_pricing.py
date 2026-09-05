@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.contracts import OptionContractInfo  # noqa: E402
-from tiger_backend.pricing import (  # noqa: E402
+from api.service.contract import OptionContractInfo  # noqa: E402
+from api.service.order import (  # noqa: E402
     PricingError,
     calculate_break_even,
     calculate_maximum_loss,

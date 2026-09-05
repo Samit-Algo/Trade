@@ -15,8 +15,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.contracts import OptionContractInfo  # noqa: E402
-from tiger_backend.orders import (  # noqa: E402
+from api.service.contract import OptionContractInfo  # noqa: E402
+from api.service.order import (  # noqa: E402
     FULLY_FILLED,
     NOTHING_FILLED,
     PARTIALLY_FILLED,
@@ -29,8 +29,8 @@ from tiger_backend.orders import (  # noqa: E402
     normalise_status,
     poll_until_settled,
 )
-from tiger_backend.pricing import estimate_cost  # noqa: E402
-from tiger_backend.providers import QuoteSnapshot, QuoteSource  # noqa: E402
+from api.service.order import estimate_cost  # noqa: E402
+from api.service.market import QuoteSnapshot, QuoteSource  # noqa: E402
 
 
 def make_contract():

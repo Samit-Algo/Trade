@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.safety import (  # noqa: E402
+from api.service.core.safety import (  # noqa: E402
     LiveTradingBlocked,
     assert_order_allowed,
     mask_account,

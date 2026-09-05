@@ -1,20 +1,26 @@
-"""The FastAPI application: the fourth lock, error handling, and startup.
+"""The web server: the API key lock, error handling, and startup.
 
-A second entry point over `tiger_backend`, not a rewrite. The CLI scripts in
-`scripts/` remain the verified evidence behind HANDOVER.md and keep working;
-both call the same library functions.
+A second entry point over `api/service`, not a rewrite. The CLI scripts in
+`scripts/` call the same library functions, and neither doorway holds logic of
+its own.
 
-**The fourth lock.** An HTTP port that can place orders is a different risk
-from a CLI. Assume anything that can reach the port will try. So:
+This file has two jobs:
 
-  - every request must carry a matching `X-API-Key` header, or it is refused
-    with 401 before it reaches a route
-  - the service refuses to start at all without a key configured
-  - it binds to 127.0.0.1 by default
+  1. **The API key lock.** An HTTP port that can place orders is a different
+     risk from a CLI, so every route except /health needs a matching
+     `X-API-Key` header, the service refuses to start without one configured,
+     and it binds to 127.0.0.1 by default.
+  2. **Startup.** Building the app and running it under uvicorn.
 
-The three original locks are untouched, and `assert_order_allowed` still runs
-twice on every order path inside `orders.py`.
+Two things deliberately do NOT live here, because this file is the root of the
+import graph and nothing may import it back: the exception-to-status table is
+in `errors.py`, and request logging is in `wiring.py`. Both are needed by the
+low-level modules that `app.py` itself imports.
+
+The three original safety locks are untouched, and `assert_order_allowed`
+still runs twice on every order path inside `orders.py`.
 """
+
 
 from __future__ import annotations
 
@@ -25,11 +31,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
-from tiger_backend.config import ConfigError
+from api.service.core.config import ConfigError
 
-from .deps import get_settings
 from .errors import ApiError, classify_exception
-from .routes import contracts, health, market, orders, positions
+from .wiring import get_settings
+from .routes import account, contracts, health, market, orders, positions
 
 #: Paths reachable without a key. Deliberately tiny: only the liveness check,
 #: and the docs, which describe the API without exposing account data.
@@ -74,6 +80,7 @@ def create_app() -> FastAPI:
     register_openapi(app)
 
     app.include_router(health.router)
+    app.include_router(account.router)
     app.include_router(market.router)
     app.include_router(contracts.router)
     app.include_router(positions.router)

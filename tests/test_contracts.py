@@ -14,8 +14,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend import contracts  # noqa: E402
-from tiger_backend.contracts import (  # noqa: E402
+from api.service import contract as contracts  # noqa: E402
+from api.service.contract import (  # noqa: E402
     ContractError,
     ExpiredContractError,
     ExpiryNotListedError,
@@ -30,7 +30,7 @@ from tiger_backend.contracts import (  # noqa: E402
     to_tiger_expiry_format,
     validate_option_type,
 )
-from tiger_backend.market import OptionExpiry, parse_expiry_date  # noqa: E402
+from api.service.market import OptionExpiry, parse_expiry_date  # noqa: E402
 
 
 class StubLadderContract:
@@ -191,8 +191,12 @@ class TestResolveExpiry:
     """The three-outcome rule. This is the requirement from HANDOVER.md section 6."""
 
     def stub_expirations(self, monkeypatch, expiries):
+        # Patch the module that DOES the lookup, not the package that re-exports
+        # it: resolve.py holds its own reference to the imported name.
+        from api.service.contract import resolve
+
         monkeypatch.setattr(
-            contracts, "list_expirations", lambda quote_client, underlying: expiries
+            resolve, "list_expirations", lambda quote_client, underlying: expiries
         )
 
     def test_listed_and_current_resolves(self, monkeypatch):

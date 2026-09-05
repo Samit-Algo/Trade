@@ -6,17 +6,17 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query
 
-from tiger_backend.positions import (
+from api.service.position import (
     DEFAULT_EXPIRY_WARNING_DAYS,
     list_option_positions,
     value_position,
 )
-from tiger_backend.providers import BidSnapshot, QuoteSource
+from api.service.market import BidSnapshot, QuoteSource
 
-from ..deps import get_settings, get_trade_client
+from ..wiring import get_settings, get_trade_client
 from ..errors import ApiError
-from ..models import PositionsResponse
-from ..shaping import shape_position
+from ..schemas import PositionsResponse
+from ..schemas import shape_position
 
 router = APIRouter(tags=["positions"])
 

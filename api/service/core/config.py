@@ -1,7 +1,7 @@
 """Loads and validates configuration from .env, and resolves the account mode.
 
 Fails closed: anything missing, malformed or ambiguous raises ConfigError with a
-message a human can act on. The private key is read from disk by clients.py --
+message a human can act on. The private key is read from disk by broker.py --
 this module only locates it and confirms it exists. Its contents are never read,
 logged or printed here.
 """
@@ -13,12 +13,15 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+
 from dotenv import load_dotenv
+
 
 from .safety import mask_account, resolve_account_mode
 
 #: Repository root -- the directory containing .env and secrets/.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+#: core/ -> service/ -> api/ -> the repo root, where .env lives.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 DEFAULT_PRIVATE_KEY_PATH = "./secrets/tiger_private_key.pem"
 

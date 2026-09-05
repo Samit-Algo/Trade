@@ -1,11 +1,15 @@
 """Exception to HTTP status mapping, in one table.
 
-Two ideas govern this module.
+A leaf module on purpose. `ApiError` is raised by the lowest-level checks and
+handled by the highest-level server, so it must sit below both -- folding it
+into `app.py` creates `app -> wiring -> order_rules -> app`.
+
+Two ideas govern it:
 
 **Status codes are coarse; `error_code` is precise.** A client should branch on
-the machine-readable `error_code` string, never on prose. Several different
-problems share status 400, and a caller that greps the message will break the
-first time the wording improves.
+the machine-readable code, never on prose. Several different problems share
+status 400, and a caller that greps the message breaks the first time the
+wording improves.
 
 **Messages are written for a human reading them at 2am.** Say what went wrong
 and what to do about it. `detail` carries the numbers.
@@ -15,17 +19,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tiger_backend.contracts import (
+from api.service.contract import (
     ContractError,
     ExpiredContractError,
     ExpiryNotListedError,
     StrikeNotFoundError,
 )
-from tiger_backend.market import MarketDataError
-from tiger_backend.orders import BracketError, OrderSubmissionError
-from tiger_backend.pricing import PricingError
-from tiger_backend.providers import QuoteEntryError
-from tiger_backend.safety import LiveTradingBlocked
+from api.service.market import MarketDataError
+from api.service.order import BracketError, OrderSubmissionError
+from api.service.order import PricingError
+from api.service.market import QuoteEntryError
+from api.service.core.safety import LiveTradingBlocked
 
 
 @dataclass(frozen=True)

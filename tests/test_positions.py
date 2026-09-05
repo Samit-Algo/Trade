@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.positions import (  # noqa: E402
+from api.service.position import (  # noqa: E402
     DEFAULT_EXPIRY_WARNING_DAYS,
     OptionPosition,
     build_expiry_warning,
@@ -24,7 +24,7 @@ from tiger_backend.positions import (  # noqa: E402
     read_position_quantity,
     value_position,
 )
-from tiger_backend.providers import BidSnapshot, QuoteSource  # noqa: E402
+from api.service.market import BidSnapshot, QuoteSource  # noqa: E402
 
 
 class StubContract:

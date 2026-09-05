@@ -16,10 +16,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+
 from .safety import mask_account
 
 #: Appended to, never rewritten. logs/ is gitignored.
-LOG_DIRECTORY = Path(__file__).resolve().parent.parent / "logs"
+#: core/ -> service/ -> api/ -> the repo root, then logs/ (gitignored).
+LOG_DIRECTORY = Path(__file__).resolve().parents[3] / "logs"
 ORDER_LOG_PATH = LOG_DIRECTORY / "order_audit.log"
 
 

@@ -1,7 +1,12 @@
 # Handover
 
-**All six spec phases complete, plus Phase 7 (attached orders) and Phase 8
-(HTTP API), 2026-09-04.** Everything below is verified, not assumed. Read this before touching the code so nothing gets re-derived.
+**All six spec phases complete, plus Phase 7 (attached orders), Phase 8
+(HTTP API) and Phase 9 (simplification), 2026-09-04.** Everything below is
+verified, not assumed.
+
+> **New here? Read `ARCHITECTURE.md` first.** It is one page and explains the
+> whole shape: two front doors, one brain, four locks. This file is the
+> reference you come back to, not the place to start. Read this before touching the code so nothing gets re-derived.
 
 The build specification is `../tiger-options-backend-spec.md`. It is the
 authority; this file records what has actually been done against it.
@@ -24,6 +29,7 @@ Approved and implemented.
 | 6 | Positions and P&L | **done** | The Phase 5 position read back and valued at a typed bid. See §3. |
 | 7 | Attached take-profit and stop-loss (new, outside the spec) | **done** | Three bracketed orders placed live: DAY legs, GTC legs, and a 3-contract bracket whose legs were cancelled to settle the commission question. All filled; legs confirmed live and cancellable. See §3a. |
 | 8 | HTTP API (new, outside the spec) | **done** | FastAPI over the same library. Health, 401 without a key, a full preview → submit cycle, a retried submit refused, a decimal-slip 400, a 403 under DRY_RUN, and GET/DELETE on a real order — all exercised live. See §3b. |
+| 9 | Simplification (new) | **done** | Reshaped for readability. `tiger_backend/` is gone; all logic now lives in `api/service/`, one folder per subject. The file that can spend money went from 1,548 lines to 427 and holds nothing else. Scripts trimmed to five, the orphaned chain-table feature removed, `ARCHITECTURE.md` added. All 236 tests pass and every script was re-run live. See §3c. |
 
 ### The real paper order
 
@@ -45,7 +51,7 @@ blocked at step 4, before the confirmation prompt was even offered. `DRY_RUN`
 was set false for that one order and restored immediately afterwards, verified
 blocking again. It is `true` now.
 
-266 unit tests pass, all offline — no network, no credentials:
+236 unit tests pass, all offline — no network, no credentials:
 
 ```bash
 python -m pytest tests/ -q
@@ -82,7 +88,8 @@ ee8a39e  Initial commit: project skeleton and .gitignore
 
 Only one thing: **`usOptionQuote`**, US option market data.
 
-Without it `scripts/02_show_chain.py` cannot print a live chain, and quotes are
+Without it there is no live chain display -- the script that printed one was
+removed in Phase 9, recoverable from git -- and quotes are
 typed by hand instead. Everything else works. Run
 `python scripts/00_check_capabilities.py` to regenerate the picture; it writes
 `capabilities-<date>-<grab|nograb>.txt` so two runs can be diffed across a
@@ -114,11 +121,12 @@ verification.
 ### When `usOptionQuote` is bought
 
 Set `MARKET_DATA_SOURCE=tiger` in `.env` and write `TigerQuoteProvider` in
-`providers.py`. **No other file should change** — if one does, the seam has
+`service/market/quotes.py`. **No other file should change** — if one does, the seam has
 leaked. Until then that setting raises `NotImplementedError` with a message
 pointing at the unbought entitlement, rather than silently falling back.
 
-Then re-check `02_show_chain.py` against live data: row widths, no `nan`, the
+Then restore the chain display from git (see §3c) and re-check it against
+live data: row widths, no `nan`, the
 ATM marker on the strike nearest spot, thin rows flagged, and the header saying
 `real-time` rather than `delayed ~15 min`.
 
@@ -457,7 +465,8 @@ rather than flattening it into a generic upstream failure.
 
 ### The deadlock this phase introduced, and how it hid
 
-`api/deps.py` originally used a plain `threading.Lock`. `get_quote_client()`
+`api/wiring.py` (then called `deps.py`) originally used a plain
+`threading.Lock`. `get_quote_client()`
 acquires it and then calls `get_settings()`, which acquires the same lock on
 the same thread. A plain `Lock` is not reentrant, so that deadlocks.
 
@@ -517,6 +526,148 @@ polls, not as a success. It was then cancelled through
 
 ---
 
+## 3c. The simplification (Phase 9)
+
+The project had grown to two top-level packages and 48 files, and the layout
+no longer told you where anything lived. Files were named after the **phase**
+that built them rather than the **question** they answer, so `orders.py` alone
+held 1,548 lines covering arithmetic, printing, submission and cancellation.
+
+Reshaped for readability. **No behaviour changed**: all tests pass and
+every remaining script was re-run against the live paper account afterwards.
+(236 after the `/capabilities` removal below; 240 before it.)
+
+### The shape now
+
+`tiger_backend/` no longer exists. Everything it held is in **`api/service/`**,
+one folder per subject, one file per question:
+
+| Folder | Files | Was |
+|---|---|---|
+| `service/core/` | `safety`, `config`, `broker`, `audit` | `safety.py`, `config.py`, `clients.py`+`throttle.py`, `audit.py` |
+| `service/market/` | `fields`, `calendar`, `prices`, `quotes` | `market.py`, `providers.py` |
+| `service/contract/` | `errors`, `identifiers`, `resolve` | `contracts.py` |
+| `service/order/` | `cost`, `build`, `bracket`, `lifecycle`, `submit` | `pricing.py`, `orders.py` |
+| `service/position/` | `holdings`, `valuation` | `positions.py` |
+
+Each folder's `__init__.py` re-exports its public names, so callers import from
+the folder: `from api.service.order import buy_option, estimate_cost`. Moving a
+function between files inside a folder therefore breaks nothing outside it.
+`core/` is the exception -- you name the file, because `core.safety` reads
+better than a bare `core`.
+
+Counts: 53 Python files, up from 48. **File count went up; file size went
+down**, which is the trade that was wanted. Nothing in `service/` is over 700
+lines, and the largest is the manual-entry seam, which is one coherent thing.
+
+### The one that matters: `order/submit.py`
+
+`orders.py` was 1,548 lines with the submission path buried in the middle. It
+is now five files, and the whole spend path is one of them, at 427 lines:
+
+```bash
+grep -rn 'trade_client\.place_order(' --include='*.py' api scripts
+#   2 hits, both in api/service/order/submit.py
+grep -rl '^[[:space:]]*assert_order_allowed(' --include='*.py' api scripts
+#   api/service/order/submit.py, and nothing else
+```
+
+`cancel_order` was deliberately moved *out* of it into `lifecycle.py`, because
+cancelling cannot open a position and its presence weakened the claim the file
+docstring makes. What is left in `submit.py` is the submission path, and
+nothing else.
+
+### What was deleted, and how to get it back
+
+Everything below is in git history. `git log --oneline` and
+`git show <sha>:<path>` will bring any of it back.
+
+**Three scripts.** `02_show_chain.py` (blocked on `usOptionQuote` regardless),
+`04_simulate_order.py` (superseded by `POST /orders/preview`), and
+`07_premium_history.py` (a learning tool).
+
+**The whole chain-table feature**, which existed only to serve `02`. Removing
+that script orphaned it: `fetch_option_chain`, `build_option_rows`, `OptionRow`,
+`StrikeRow`, `pair_calls_and_puts_by_strike`, `find_atm_strike`,
+`select_strikes_around_price`, plus `tests/chain_fixture.py` and
+`tests/test_chain_table.py`. Roughly 240 lines and 28 tests.
+
+**Worth knowing before you buy `usOptionQuote`:** the chain display goes with
+it. When the entitlement arrives, recover it from git rather than rewriting --
+including `chain_fixture.py`, the deliberately lopsided fixture that caught a
+real column-width bug. It was uniform at first, and the uniform version hid an
+8-wide volume column that fitted `71,626` but not `1,204,553`, so busy rows ran
+the volume into the spread column.
+
+**Four dead symbols**, zero uses between them: `reset_for_testing`,
+`PreviewTokenStore.outstanding_count`, `PositionError`, and
+`get_market_data_provider` (whose only caller left with `04_simulate_order.py`).
+
+**The `/capabilities` endpoint pair.** `GET /capabilities` returned a cached
+probe and `POST /capabilities/probe` refreshed it -- twenty live API calls,
+about ten seconds. Nothing consumed either one over HTTP, and
+`scripts/00_check_capabilities.py` answers the same question in the place the
+question is actually asked: at a terminal, once, after buying a market-data
+package. The pair cost 250 of the 361 lines in `routes/account.py`, which is
+now 69 lines and one endpoint. The API is down to **9 paths**; the four tests
+covering the probe's age formatting went with it, so the suite is **236**.
+
+### Three circular imports the restructure exposed
+
+Splitting a file splits its import graph, and the graph has opinions.
+
+**1. `app.py` cannot hold `errors.py`.** Merging them broke the build at once:
+
+```
+app.py -> wiring.py -> order_rules.py -> app.py   (ApiError)
+```
+
+`ApiError` is raised by the lowest-level checks and handled by the highest-level
+server, so it must sit **below both**. The same applied to `log_order_request`,
+which the routes need while `app.py` imports the routes. So `app.py` is the
+root of the import graph -- it imports everything, nothing imports it --
+`errors.py` stayed a separate leaf module, and the request logger moved into
+`wiring.py`.
+
+**2. `market/calendar.py` and `market/prices.py` needed each other.** Both used
+the three pandas-cell readers and the shared `MarketDataError`. Those moved
+down into `market/fields.py`, which neither imports back.
+
+**3. `contract/identifiers.py` and `contract/resolve.py` needed each other,**
+over `ContractError`. The four exception types moved down into
+`contract/errors.py`.
+
+The pattern in all three: when two files need each other, the thing they share
+belongs in a third file *below* both. That is why `fields.py` and `errors.py`
+exist, and both say so in their docstrings.
+
+### Two tests had to change, and why
+
+`monkeypatch.setattr(module, "list_expirations", ...)` has to patch the module
+that *does the lookup*, not the package that re-exports the name. After the
+split those are different objects: `resolve.py` holds its own reference to the
+imported function, so patching `api.service.contract` does nothing. The same
+applies to `fetch_last_traded_close`, which `quotes.py` imports from `prices.py`
+inside the function body -- that patch has to land on `prices.py`.
+
+Both are commented in place now. It is the one thing about this layout that
+will catch you out.
+
+### `ARCHITECTURE.md`
+
+New, and the actual fix for "I cannot find anything". One page:
+
+- the one-brain-two-doors diagram
+- the whole `service/` tree, one line per file
+- a **"I want to change X, open file Y"** table
+- a request traced end to end, through both `assert_order_allowed` calls
+- the four locks and their defaults
+- the three greps that prove the structural guarantees still hold
+
+Every line count and grep result in it was verified against the tree.
+
+---
+
 ## 4. Environment facts
 
 Not derivable from the repo, because `.env` and `secrets/` are gitignored.
@@ -571,8 +722,8 @@ The consequence:
 | `current device does not have permission` | Another device holds primary status | Re-run with `--grab` |
 | `...permissions in the US OPT quote market` | The entitlement was never bought | Buy `usOptionQuote` |
 
-`--grab` is available on `00_check_capabilities.py`, `02_show_chain.py`,
-`03_find_contract.py`, `04_simulate_order.py`, `05_paper_order.py` and
+`--grab` is available on `00_check_capabilities.py`,
+`03_find_contract.py`, `05_paper_order.py` and
 `06_positions.py`.
 
 ### Do not switch to props_path
@@ -588,7 +739,7 @@ the single source of truth.
 
 Read off the docs and used as written. Do not guess; if something is needed
 that is not listed here, fetch the page. Every documented limit is enforced by
-`tiger_backend/throttle.py`, one `RateLimiter` per endpoint.
+`api/service/core/broker.py`, one `RateLimiter` per endpoint.
 
 ### Account and orders
 
@@ -716,7 +867,8 @@ values anything: the spec requires the bid. On the held position Tiger says
 **13. `get_option_bars` ignores `limit`** — asking for 5 returned all 61 — and
 returns an empty **list**, not an empty DataFrame, when a contract has no
 history. It does work on expired contracts, which is what makes
-`07_premium_history.py` possible.
+`07_premium_history.py` possible. That script was removed in Phase 9; the
+endpoint is still free, and the script is recoverable from git.
 
 **14. Expiry timestamps are midnight US/Eastern**, not UTC. Reading one in
 another zone lands on the wrong calendar day. All conversion goes through
@@ -776,81 +928,110 @@ the wrong number. The anchored patterns below count only what executes.
 # 1. The submission call lives in one file and is reached from exactly two
 #    places: the plain order path and the bracketed one. A call site
 #    anywhere else is a second submission route outside the guards.
-grep -c 'trade_client\.place_order(' tiger_backend/orders.py
-#    expect 2
-grep -rl 'trade_client\.place_order(' --include='*.py' tiger_backend api scripts
-#    expect tiger_backend/orders.py, and nothing else
+grep -rn 'trade_client\.place_order(' --include='*.py' api scripts
+#    expect 2 hits, both in api/service/order/submit.py
 
-# 2. The provider seam. A concrete provider named outside providers.py means
-#    the abstraction has leaked, and swapping to fetched data will no longer
-#    be one line in .env.
-grep -rn 'ManualEntryProvider' --include='*.py' tiger_backend api scripts | grep -v providers.py
-#    expect nothing but docstring prose
-
-# 3. assert_order_allowed is CALLED four times: twice on the plain path and
+# 2. assert_order_allowed is CALLED four times: twice on the plain path and
 #    twice on the bracketed one. Once as the gate before the human is asked
 #    anything, once immediately before the wire. Three means a guard was
 #    dropped from one of the two paths.
-grep -c '^[[:space:]]*assert_order_allowed(' tiger_backend/orders.py
+grep -c '^[[:space:]]*assert_order_allowed(' api/service/order/submit.py
 #    expect 4
+grep -rl '^[[:space:]]*assert_order_allowed(' --include='*.py' api scripts
+#    expect api/service/order/submit.py, and nothing else
+
+# 3. The provider seam. A concrete provider named outside quotes.py means the
+#    abstraction has leaked, and swapping to fetched data will no longer be
+#    one line in .env.
+grep -rn 'ManualEntryProvider\|TigerQuoteProvider' --include='*.py' api scripts \
+  | grep -v 'market/quotes.py'
+#    expect nothing at all
 ```
-tiger_backend/
-  safety.py      Three locks, account masking, startup banner. Pure logic.
-  config.py      .env -> frozen Settings. Fails closed.
-  clients.py     QuoteClient and TradeClient, built separately on purpose.
-  throttle.py    RateLimiter + one instance per endpoint. All limits live here.
-  market.py      Phase 2. All pandas access lives here; nothing else touches it.
-  contracts.py   Phase 3. Contract identity only, no market data.
-  providers.py   The market-data seam. THE ONLY file naming a concrete provider.
-  pricing.py     Phase 4. Pure arithmetic, no network.
-  orders.py      Phase 4 build + preview, Phase 5 submit + poll.
-  positions.py   Phase 6. Read-only, values at the bid.
-  audit.py       JSONL order trail in logs/ (gitignored).
 
-api/             Phase 8. A second entry point, NOT a rewrite. No business
-                 logic in a route handler.
-  main.py        App, the API-key middleware, error handlers, uvicorn entry.
-  deps.py        Settings and clients, built once. RLock, not Lock -- see 3b.
-  models.py      Every Pydantic request and response shape.
-  errors.py      Exception -> (status, error_code), in one table.
-  tokens.py      Preview tokens: issue, redeem once, expire.
-  quote_check.py The Phase 4 checks against a body instead of a prompt.
-  shaping.py     Library dataclasses -> response models. Decides nothing.
-  probe.py       The capability probe, returning rows instead of a table.
-  routes/        health, market, contracts, positions, orders.
+Grep 3 covers `api` and `scripts` but not `tests`: `tests/test_providers.py` is
+the test *of* the seam, so it names the class deliberately and says so in a
+comment above the import.
+---
 
-scripts/
+## 8. Where things are
+
+**`ARCHITECTURE.md` is the map. This is the inventory.**
+
+```
+api/
+  app.py         The server. API-key middleware, error handlers, uvicorn entry.
+  errors.py      Exception -> (status, error_code), in one table. A LEAF module:
+                 folding it into app.py makes app -> wiring -> order_rules -> app.
+  wiring.py      Settings and clients, built once. RLock, not Lock -- see 3b.
+                 Also the request log, for the same import-graph reason.
+  schemas.py     Every Pydantic shape, and the functions that build them.
+  order_rules.py Quote checks against a body, and the preview tokens.
+  routes/        health, account, market, contracts, positions, orders.
+                 Thin: check the request, call the service, shape the reply.
+
+  service/       ALL the logic. One folder per subject, one file per question.
+
+    core/        Foundations. Nothing here knows what an option is.
+      safety.py    Three locks, account masking, startup banner. Pure logic.
+      config.py    .env -> frozen Settings. Fails closed.
+      broker.py    QuoteClient and TradeClient, built separately on purpose,
+                   plus the RateLimiter and one instance per endpoint.
+      audit.py     JSONL order trail in logs/ (gitignored).
+
+    market/      What exists out there, and what it is worth.
+      fields.py    Reading Tiger's dataframes without crashing, and the one
+                   error this folder raises. Below calendar.py and prices.py
+                   because both need it.
+      calendar.py  Expiries, and every date conversion. US/Eastern, always.
+      prices.py    Underlying price, last traded close, spread, liquidity.
+                   All pandas access is in this folder and nowhere else.
+      quotes.py    THE SEAM. The only file naming a concrete provider.
+
+    contract/    Which exact contract are we talking about?
+      errors.py       The four failures. Expired is not the same as missing.
+      identifiers.py  The two expiry formats and the 21-char OCC identifier.
+      resolve.py      Identity only. No market data, so no entitlement needed.
+
+    order/       Everything about an order.
+      cost.py        Pure arithmetic, no network. Cash, break-even, max loss.
+      build.py       Build the order object and print the preview. Sends nothing.
+      bracket.py     Take-profit and stop-loss legs, and the commission model.
+      lifecycle.py   Status, fills, polling, cancelling. Cannot open a position.
+      submit.py      THE ONLY FILE THAT CAN SPEND MONEY. Both place_order calls,
+                     all four assert_order_allowed gates, and nothing else.
+
+    position/    What is held, and how it is doing.
+      holdings.py    What the account holds, and the cash available.
+      valuation.py   P&L at the bid, and the expiry warning.
+
+scripts/         Five. Each one is the evidence behind a finding above.
   00_check_capabilities.py  Diagnostic, outside the phases. Read-only probe of
                             every endpoint. Run after buying market data to see
                             exactly what changed.
   01_check_connection.py    Phase 1.
-  02_show_chain.py          Phase 2. Blocked on usOptionQuote.
   03_find_contract.py       Phase 3.
-  04_simulate_order.py      Phase 4. Sends nothing.
   05_paper_order.py         Phase 5 and 7. THE ONLY SCRIPT THAT SUBMITS.
                             --take-profit/--stop-loss attach a bracket,
                             --leg-tif sets leg time in force (default DAY),
                             --legs shows what is attached to an order.
                             Also --status and --cancel.
   06_positions.py           Phase 6. Read-only.
-  07_premium_history.py     Learning tool, outside the phases. Daily traded
-                            prices for one contract via the free get_option_bars.
 
-tests/                      266 tests, all offline.
-  chain_fixture.py          A deliberately awkward synthetic chain. Run directly:
-                            python tests/chain_fixture.py --all
+tests/                      236 tests, all offline. No network, no credentials.
 ```
 
-**The seam review rule:** if any file other than `providers.py` imports
-`ManualEntryProvider` or `TigerQuoteProvider` by name, the abstraction has
-leaked. One grep is the whole test, and it currently passes.
+53 Python files. Nothing in `service/` is over 700 lines.
 
-A note on `tests/chain_fixture.py`: it is deliberately lopsided — volume from
-12 to 1,204,553, an IV smile, uneven strike spacing, rows with no bid, one with
-no ask, a call with no matching put. That is not decoration. The first, uniform
-version hid a real bug: an 8-wide volume column that fitted `71,626` but not
-`1,204,553`, so busy rows ran the volume into the spread column. Simplifying
-the fixture makes that class of bug invisible again.
+**The seam review rule:** if any file other than `service/market/quotes.py`
+names `ManualEntryProvider` or `TigerQuoteProvider`, the abstraction has
+leaked and swapping to fetched data is no longer one line in `.env`. Grep 3 in
+section 7 is the whole test, and it currently returns nothing.
+
+**The import rule:** import from the folder, not the file --
+`from api.service.order import buy_option`. Each `__init__.py` re-exports its
+folder's public names, so moving a function between files inside a folder
+breaks nothing outside it. `core/` is the exception: name the file there.
+
 
 ---
 
@@ -886,7 +1067,7 @@ confirmation.
 Nothing is outstanding. Reasonable next steps, in rough order of value:
 
 1. Buy `usOptionQuote` and write `TigerQuoteProvider` (§2). It is the only
-   purchase still worth making, and no file outside `providers.py` should
+   purchase still worth making, and no file outside `service/market/quotes.py` should
    change.
 2. Watch the two live brackets. The DAY legs on the 360 call expire at the
    close of the US trading day; the GTC legs on the 370 call should survive it.

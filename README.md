@@ -4,14 +4,40 @@ A Python backend that talks to the Tiger Brokers OpenAPI, built in deliberate
 stages so that no code capable of spending real money exists until the final
 phase, and even then it is locked behind two independent switches.
 
-**Current state: all six spec phases complete, plus Phase 7 (attached orders)
-and Phase 8 (HTTP API).** Eight real orders have been placed on the paper
-account. Every script except `05_paper_order.py` is read-only.
+**Current state: all six spec phases complete, plus Phase 7 (attached orders),
+Phase 8 (HTTP API) and Phase 9 (simplification).** Eight real orders have been
+placed on the paper account. Every script except `05_paper_order.py` is
+read-only.
 
-> Resuming work after a break? Read **[HANDOVER.md](HANDOVER.md)** first.
-> It records what is verified and how, the one entitlement still worth buying,
-> the confirmed SDK signatures, the sixteen documented gotchas, and the
-> environment facts that are not in the repo.
+> **New to this code? Read [ARCHITECTURE.md](ARCHITECTURE.md) first.** One
+> page, two minutes: where everything lives and why.
+>
+> Resuming work after a break? Read **[HANDOVER.md](HANDOVER.md)**. It records
+> what is verified and how, the one entitlement still worth buying, the
+> confirmed SDK signatures, the sixteen documented gotchas, and the environment
+> facts that are not in the repo.
+
+---
+
+## Where the code lives
+
+```
+api/
+  app.py       the HTTP server        routes/    the endpoints
+  service/     ALL the logic, one folder per subject:
+    core/        connect, configure, and the three safety locks
+    market/      expiries, prices, and where bid/ask come from
+    contract/    which exact contract
+    order/       cost it, build it, send it, track it
+    position/    what is held, and the P&L
+scripts/       five command-line tools, the same logic, no HTTP
+tests/         236 tests, all offline
+```
+
+The rule: to change **what the system does**, change something in
+`api/service/`. To change **how you ask it**, change a route or a script. You
+should almost never change both for one task. `ARCHITECTURE.md` has the file
+-by-file map and a "I want to change X, open file Y" table.
 
 ---
 
@@ -54,7 +80,7 @@ An order can only reach Tiger if **all three** locks are satisfied:
 With the shipped defaults the system is physically incapable of placing an
 order. That is intentional.
 
-`tiger_backend/safety.py` holds these guards. `assert_order_allowed()` also
+`api/service/core/safety.py` holds these guards. `assert_order_allowed()` also
 blocks LIVE outright. Removing that line is a separate, deliberate act you must
 perform yourself — it is not part of this build.
 
@@ -128,20 +154,19 @@ These run without Tiger credentials and without the `tigeropen` SDK installed.
 ## Phase 2 — market data: expirations and chains
 
 ```bash
-python scripts/02_show_chain.py AAPL
-python scripts/02_show_chain.py AAPL --all           # every strike
-python scripts/02_show_chain.py AAPL --strikes 5     # 5 either side of the money
-python scripts/02_show_chain.py AAPL --expiry 2026-09-18
+python scripts/00_check_capabilities.py AAPL     # lists the real expirations
+curl -H "X-API-Key: $KEY" localhost:8000/expirations/AAPL
 ```
 
-Lists the expiration dates Tiger reports, with days-to-expiry and a
-weekly/monthly tag, lets you pick one, then prints a CALLS | STRIKE | PUTS
-table with bid, ask, spread, volume, open interest and implied volatility.
+Expiration dates come back with days-to-expiry and a weekly/monthly tag. This
+part is free and works today.
 
-By default it shows ten strikes either side of the money, with the
-at-the-money strike marked `> ... <`. Rows whose volume or open interest is
-below the threshold are flagged `!` — those have wide spreads and can be hard
-to sell later.
+**The chain table does not.** A CALLS | STRIKE | PUTS display was built and
+verified against a synthetic fixture, but `get_option_chain` needs the US
+option market-data entitlement, so it never ran against live data. The script
+was removed in Phase 9 rather than left as a thing that always fails —
+`git log` has it, and `HANDOVER.md` §3c says how to bring it back the day the
+entitlement is bought.
 
 **Expiry dates are never constructed.** Listed expiries are irregular, and a
 date built from a calendar rule can look entirely plausible while not existing
@@ -172,8 +197,8 @@ Real-time OpenAPI market data is purchased separately from the Tiger Trade app
 or Personal Center; it is not included with a developer account. The underlying
 price falls back to the free delayed feed automatically and says which one you
 got. The option chain has no free fallback — Tiger publishes no delayed option
-endpoint — so `02_show_chain.py` cannot print a chain until US option market
-data is active on the account.
+endpoint — so nothing here can print a chain until US option market data is
+active on the account.
 
 ---
 
@@ -181,7 +206,6 @@ data is active on the account.
 
 ```bash
 python scripts/03_find_contract.py AAPL 2026-09-18 320 CALL
-python scripts/04_simulate_order.py AAPL 2026-09-18 320 CALL BUY 1
 python scripts/05_paper_order.py   AAPL 2026-09-18 360 CALL BUY 1
 python scripts/05_paper_order.py --status 44506652990393344
 python scripts/06_positions.py
@@ -192,7 +216,9 @@ itself refuses an impossible strike, so validation is the exchange's answer
 rather than a local guess. An expiry that is listed but already past is
 refused as **expired**, not as "not found".
 
-**Phase 4** costs the order and sends nothing. Quotes are typed by hand from
+**Phase 4** costs the order and sends nothing. Its own script was removed in
+Phase 9 — `POST /orders/preview` and the preview step inside `05_paper_order.py`
+both do the same thing, and the standalone version had no remaining caller. Quotes are typed by hand from
 the Tiger app behind a `MarketDataProvider` seam, labelled `[MANUAL]`
 everywhere, stale after 60 seconds, and checked against the contract's last
 traded price — a price more than 3x or less than 0.33x that must be retyped
@@ -404,7 +430,8 @@ reachable only through `05_paper_order.py` and only past the three locks:
 - `TradeClient.get_order(...)` — 120/min
 - `TradeClient.place_order(order)`, `cancel_order(...)` — 120/min — **these write**
 
-Every documented per-endpoint rate limit is enforced by `tiger_backend/throttle.py`.
+Every documented per-endpoint rate limit is enforced by
+`api/service/core/broker.py`.
 
 The full signature list, with every gotcha found while using them, is in
 [HANDOVER.md](HANDOVER.md).

@@ -29,19 +29,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.audit import build_order_record, write_order_record  # noqa: E402
-from tiger_backend.clients import (  # noqa: E402
+from api.service.core.audit import build_order_record, write_order_record  # noqa: E402
+from api.service.core.broker import (  # noqa: E402
     ClientSetupError,
     build_quote_client,
     build_trade_client,
 )
-from tiger_backend.config import ConfigError, load_settings  # noqa: E402
-from tiger_backend.contracts import ContractError, find_option_contract  # noqa: E402
-from tiger_backend.market import (  # noqa: E402
+from api.service.core.config import ConfigError, load_settings  # noqa: E402
+from api.service.contract import ContractError, find_option_contract  # noqa: E402
+from api.service.market import (  # noqa: E402
     DEFAULT_LIQUIDITY_THRESHOLD,
     fetch_underlying_price_safely,
 )
-from tiger_backend.orders import (  # noqa: E402
+from api.service.order import (  # noqa: E402
     DEFAULT_POLL_ATTEMPTS,
     DEFAULT_POLL_DELAY_SECONDS,
     DEFAULT_TIME_IN_FORCE,
@@ -57,14 +57,14 @@ from tiger_backend.orders import (  # noqa: E402
     print_fill_outcome,
     sell_option,
 )
-from tiger_backend.positions import fetch_cash_available  # noqa: E402
-from tiger_backend.pricing import PricingError  # noqa: E402
-from tiger_backend.providers import (  # noqa: E402
+from api.service.position import fetch_cash_available  # noqa: E402
+from api.service.order import PricingError  # noqa: E402
+from api.service.market import (  # noqa: E402
     DEFAULT_MAX_QUOTE_AGE_SECONDS,
     QuoteEntryError,
     build_market_data_provider,
 )
-from tiger_backend.safety import LiveTradingBlocked, print_startup_banner  # noqa: E402
+from api.service.core.safety import LiveTradingBlocked, print_startup_banner  # noqa: E402
 
 RULE_WIDTH = 60
 

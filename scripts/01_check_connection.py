@@ -22,9 +22,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.clients import ClientSetupError, build_trade_client  # noqa: E402
-from tiger_backend.config import ConfigError, Settings, load_settings  # noqa: E402
-from tiger_backend.safety import (  # noqa: E402
+from api.service.core.broker import ClientSetupError, build_trade_client  # noqa: E402
+from api.service.core.config import ConfigError, Settings, load_settings  # noqa: E402
+from api.service.core.safety import (  # noqa: E402
     LiveTradingBlocked,
     mask_account,
     print_startup_banner,

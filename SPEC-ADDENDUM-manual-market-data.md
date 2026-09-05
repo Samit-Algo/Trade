@@ -95,6 +95,7 @@ reads it.
 ## 3. The interface
 
 New file, `tiger_backend/providers.py`. One file, no others.
+_(Phase 9 moved it to `api/service/market/quotes.py`. Still one file, no others.)_
 
 ```
 QuoteSource            enum: MANUAL | TIGER_API

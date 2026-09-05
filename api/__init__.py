@@ -1,5 +1,9 @@
-"""HTTP API over the tiger_backend library.
+"""The HTTP door, and the service layer behind it.
 
-A second entry point, not a rewrite. Every route calls the same library
-functions the CLI scripts call; no business logic lives in a handler.
+    app.py        the server itself
+    routes/       one file per group of endpoints -- thin, they decide nothing
+    service/      ALL the logic, grouped by subject
+
+The CLI scripts in `scripts/` skip `routes/` and call `service/` directly.
+Both doors run the same code, and the safety locks live behind both.
 """

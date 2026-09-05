@@ -1,22 +1,32 @@
-"""Running the Phase 4 sanity checks against a quote that arrived in a body.
+"""The rules an order must pass before it can be submitted.
 
-The CLI asks a human for five numbers and re-prompts on a bad one. Over HTTP
-there is nobody to re-prompt, so the same checks run against the supplied
-values and a failure becomes a 400 that names which check failed and what was
-wrong. Nothing is weakened; only the recovery differs.
+Two halves, both guarding the same doorway:
 
-The decimal-slip check keeps its special status. At the CLI it demands the
-value retyped inside a phrase that a reflexive "y" cannot clear. Over HTTP the
-equivalent is an explicit boolean the client must set on a second, deliberate
-request -- never a query parameter, never defaulted true.
+  1. Quote checks. The CLI asks a human for five numbers and re-prompts on a
+     bad one. Over HTTP there is nobody to re-prompt, so the same checks run
+     against the supplied values and a failure becomes a 400 naming which
+     check failed. Nothing is weakened; only the recovery differs.
+  2. Preview tokens. The HTTP replacement for typing the cash amount. A
+     preview issues a single-use token; submitting presents that token and the
+     exact cash figure. The prices are NOT resent, so a client cannot preview
+     at one price and submit at another.
+
+The decimal-slip check keeps its special status in both worlds: at the CLI it
+demands the value retyped inside a phrase a reflexive "y" cannot clear; here it
+demands an explicit boolean on a second, deliberate request.
 """
+
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import secrets
+import threading
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from tiger_backend.market import LastTrade, calculate_spread, fetch_last_traded_close
-from tiger_backend.providers import (
+from api.service.market import LastTrade, calculate_spread, fetch_last_traded_close
+from api.service.market import (
     QuoteSnapshot,
     QuoteSource,
     check_bid_below_ask,
@@ -201,3 +211,137 @@ def build_quote_snapshot(quote_input, last_trade: LastTrade | None) -> QuoteSnap
         last_close_date=last_trade.trade_date if last_trade else None,
         last_close_ratio=ratio,
     )
+
+
+
+#: Long enough that guessing is not a strategy.
+TOKEN_BYTES = 32
+
+
+@dataclass(frozen=True)
+class PreviewIntent:
+    """Everything needed to submit an order, captured at preview time.
+
+    Held server-side so the submit request carries only a token and a cash
+    figure, and cannot restate the prices.
+    """
+
+    contract: Any
+    quote: Any
+    estimate: Any
+    action: str
+    quantity: int
+    expected_cash: float
+    take_profit_price: float | None
+    stop_loss_price: float | None
+    leg_time_in_force: str
+    underlying_price: Any
+    cash_available: float | None
+    created_at: datetime
+    expires_at: datetime
+
+    @property
+    def has_bracket(self) -> bool:
+        """True when this order carries attached legs."""
+        return self.take_profit_price is not None and self.stop_loss_price is not None
+
+
+class TokenExpired(Exception):
+    """The token was real but is past its expiry."""
+
+
+class TokenNotFound(Exception):
+    """No such token: never issued, already redeemed, or lost to a restart."""
+
+
+class PreviewTokenStore:
+    """Issues, redeems and expires preview tokens.
+
+    Guarded by a lock because a redeem must be atomic. Two concurrent submits
+    presenting the same token must not both succeed -- that is precisely the
+    double-order this class exists to prevent.
+    """
+
+    def __init__(self, ttl_seconds: int) -> None:
+        """Create the store.
+
+        Args:
+            ttl_seconds: How long an issued token stays valid.
+        """
+        self.ttl_seconds = ttl_seconds
+        self._intents: dict[str, PreviewIntent] = {}
+        self._lock = threading.Lock()
+
+    def issue(self, **intent_fields) -> tuple[str, PreviewIntent]:
+        """Store an intent and return the token that unlocks it.
+
+        Args:
+            **intent_fields: Everything PreviewIntent needs except the times.
+
+        Returns:
+            A pair of (token, the stored intent).
+        """
+        now = datetime.now(timezone.utc)
+        intent = PreviewIntent(
+            created_at=now,
+            expires_at=now + timedelta(seconds=self.ttl_seconds),
+            **intent_fields,
+        )
+        token = secrets.token_urlsafe(TOKEN_BYTES)
+
+        with self._lock:
+            self._forget_expired(now)
+            self._intents[token] = intent
+
+        return token, intent
+
+    def redeem(self, token: str) -> PreviewIntent:
+        """Consume a token and return its intent.
+
+        The token is deleted whether or not it had expired, so a retry after a
+        timeout cannot place a second order.
+
+        Args:
+            token: The token from a preview response.
+
+        Returns:
+            The stored intent.
+
+        Raises:
+            TokenNotFound: If the token was never issued or is already spent.
+            TokenExpired: If the token was valid but is now too old.
+        """
+        now = datetime.now(timezone.utc)
+
+        with self._lock:
+            intent = self._intents.pop(token, None)
+
+        if intent is None:
+            raise TokenNotFound(
+                "That preview token is not valid. It was either already used, "
+                "or it expired, or the service restarted. Request a new preview "
+                "with POST /orders/preview and submit against that."
+            )
+
+        if now > intent.expires_at:
+            age = (now - intent.created_at).total_seconds()
+            raise TokenExpired(
+                f"That preview expired {age:.0f} seconds ago, and prices move. "
+                "Read the quote again and request a fresh preview."
+            )
+
+        return intent
+
+    def _forget_expired(self, now: datetime) -> None:
+        """Drop tokens that are past their expiry. Caller holds the lock.
+
+        Args:
+            now: The current time.
+        """
+        expired_tokens = [
+            token
+            for token, intent in self._intents.items()
+            if now > intent.expires_at
+        ]
+        for token in expired_tokens:
+            del self._intents[token]

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from tiger_backend.contracts import find_option_contract
+from api.service.contract import find_option_contract
 
-from ..deps import get_quote_client, get_trade_client
-from ..models import ContractOut
-from ..shaping import shape_contract
+from ..wiring import get_quote_client, get_trade_client
+from ..schemas import ContractOut
+from ..schemas import shape_contract
 
 router = APIRouter(tags=["contracts"])
 

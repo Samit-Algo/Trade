@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from tiger_backend.audit import build_order_record, write_order_record
-from tiger_backend.contracts import find_option_contract
-from tiger_backend.market import DEFAULT_LIQUIDITY_THRESHOLD, fetch_underlying_price_safely
-from tiger_backend.orders import (
+from api.service.core.audit import build_order_record, write_order_record
+from api.service.contract import find_option_contract
+from api.service.market import DEFAULT_LIQUIDITY_THRESHOLD, fetch_underlying_price_safely
+from api.service.order import (
     BracketLegs,
     buy_option,
     buy_option_with_bracket,
@@ -29,11 +29,11 @@ from tiger_backend.orders import (
     sell_option,
     validate_bracket_prices,
 )
-from tiger_backend.positions import fetch_cash_available
-from tiger_backend.pricing import compare_to_available_cash, estimate_cost
+from api.service.position import fetch_cash_available
+from api.service.order import compare_to_available_cash, estimate_cost
 
-from ..deps import (
-    get_market_data_provider,
+from ..wiring import (
+    log_order_request,
     get_quote_client,
     get_settings,
     get_token_store,
@@ -41,8 +41,7 @@ from ..deps import (
     orders_are_enabled,
 )
 from ..errors import ApiError
-from ..logging_setup import log_order_request
-from ..models import (
+from ..schemas import (
     CancelResponse,
     FillOutcomeOut,
     OrderLegsResponse,
@@ -50,15 +49,6 @@ from ..models import (
     PreviewResponse,
     SubmitRequest,
     SubmitResponse,
-)
-from ..quote_check import (
-    build_quote_snapshot,
-    check_for_decimal_slip,
-    check_ordinary_rules,
-    collect_quote_warnings,
-    look_up_last_trade,
-)
-from ..shaping import (
     shape_bracket,
     shape_commission,
     shape_contract,
@@ -68,7 +58,15 @@ from ..shaping import (
     shape_liquidity,
     shape_quote,
 )
-from ..tokens import TokenExpired, TokenNotFound
+from ..order_rules import (
+    TokenExpired,
+    TokenNotFound,
+    build_quote_snapshot,
+    check_for_decimal_slip,
+    check_ordinary_rules,
+    collect_quote_warnings,
+    look_up_last_trade,
+)
 
 router = APIRouter(tags=["orders"])
 
@@ -371,7 +369,7 @@ def read_order(order_id: int) -> FillOutcomeOut:
     Returns:
         The order's state.
     """
-    from tiger_backend.orders import calculate_actual_cash, classify_fill
+    from api.service.order import calculate_actual_cash, classify_fill
 
     order = get_order_status(get_trade_client(), order_id)
     if order is None:

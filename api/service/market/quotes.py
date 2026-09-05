@@ -24,7 +24,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from enum import Enum
 
-from .market import calculate_spread
+
+from .prices import calculate_spread
 
 #: How old a typed quote may be, in seconds, before it must be re-entered.
 #: You read the app, type five numbers, think, confirm -- and the market has
@@ -483,7 +484,7 @@ class ManualEntryProvider(MarketDataProvider):
             )
             return None
 
-        from .market import fetch_last_traded_close
+        from .prices import fetch_last_traded_close
 
         last_trade = fetch_last_traded_close(self.quote_client, contract.identifier)
 

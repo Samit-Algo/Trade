@@ -17,17 +17,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from api.errors import classify_exception  # noqa: E402
-from api.quote_check import check_for_decimal_slip, check_ordinary_rules  # noqa: E402
-from api.routes.market import describe_age  # noqa: E402
-from api.tokens import PreviewTokenStore, TokenExpired, TokenNotFound  # noqa: E402
-from tiger_backend.contracts import (  # noqa: E402
+from api.order_rules import check_for_decimal_slip, check_ordinary_rules  # noqa: E402
+from api.order_rules import PreviewTokenStore, TokenExpired, TokenNotFound  # noqa: E402
+from api.service.contract import (  # noqa: E402
     ExpiredContractError,
     ExpiryNotListedError,
     StrikeNotFoundError,
 )
-from tiger_backend.market import LastTrade  # noqa: E402
-from tiger_backend.orders import OrderSubmissionError  # noqa: E402
-from tiger_backend.safety import LiveTradingBlocked  # noqa: E402
+from api.service.market import LastTrade  # noqa: E402
+from api.service.order import OrderSubmissionError  # noqa: E402
+from api.service.core.safety import LiveTradingBlocked  # noqa: E402
 
 
 class StubQuote:
@@ -219,22 +218,6 @@ class TestErrorMapping:
         assert error.error_code == "INTERNAL_ERROR"
 
 
-class TestCapabilityAge:
-    """A stale probe must not read as current."""
-
-    def test_seconds(self):
-        assert "seconds ago" in describe_age(30)
-
-    def test_minutes(self):
-        assert "minutes ago" in describe_age(600)
-
-    def test_hours(self):
-        assert "hours ago" in describe_age(7200)
-
-    def test_days(self):
-        assert "days ago" in describe_age(60 * 60 * 72)
-
-
 class TestDepsAreNotDeadlocked:
     """The lock in deps.py is reentrant, and this is why.
 
@@ -244,12 +227,12 @@ class TestDepsAreNotDeadlocked:
     """
 
     def test_the_dependency_lock_is_reentrant(self):
-        from api import deps
+        from api import wiring as deps
 
         assert deps._lock.__class__.__name__ == "RLock"
 
     def test_nested_acquisition_does_not_hang(self):
-        from api import deps
+        from api import wiring as deps
 
         acquired = []
 
@@ -274,7 +257,7 @@ class TestOpenApiSecurityMatchesMiddleware:
     """
 
     def test_every_route_except_the_unprotected_ones_declares_the_key(self):
-        from api.main import UNPROTECTED_PATHS, create_app
+        from api.app import UNPROTECTED_PATHS, create_app
 
         spec = create_app().openapi()
 
@@ -289,7 +272,7 @@ class TestOpenApiSecurityMatchesMiddleware:
                 assert declares_key, f"{path} is enforced but not marked in the schema"
 
     def test_the_scheme_names_the_header_the_middleware_reads(self):
-        from api.main import API_KEY_HEADER, create_app
+        from api.app import API_KEY_HEADER, create_app
 
         spec = create_app().openapi()
         scheme = spec["components"]["securitySchemes"]["ApiKeyAuth"]

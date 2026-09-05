@@ -14,11 +14,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tiger_backend.contracts import OptionContractInfo  # noqa: E402
-from tiger_backend.market import LastTrade  # noqa: E402
-from tiger_backend.providers import (  # noqa: E402
+from api.service.contract import OptionContractInfo  # noqa: E402
+from api.service.market import LastTrade  # noqa: E402
+# The seam itself, so this one test names the concrete class on purpose.
+from api.service.market.quotes import ManualEntryProvider  # noqa: E402
+from api.service.market import (  # noqa: E402
     DEFAULT_MAX_QUOTE_AGE_SECONDS,
-    ManualEntryProvider,
     QuoteEntryError,
     QuoteSnapshot,
     QuoteSource,
@@ -85,10 +86,12 @@ class StubQuoteClientWithBars:
 
 def install_last_trade(monkeypatch, last_trade):
     """Make fetch_last_traded_close return a fixed value."""
-    import tiger_backend.market as market
+    # quotes.py imports this from prices.py inside the function, so the patch
+    # has to land on prices.py itself.
+    from api.service.market import prices
 
     monkeypatch.setattr(
-        market, "fetch_last_traded_close", lambda quote_client, identifier: last_trade
+        prices, "fetch_last_traded_close", lambda quote_client, identifier: last_trade
     )
 
 
