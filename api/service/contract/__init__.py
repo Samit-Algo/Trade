@@ -18,6 +18,9 @@ from .identifiers import (
     VALID_OPTION_TYPES, to_tiger_expiry_format, from_tiger_expiry_format,
     build_identifier, parse_identifier, validate_option_type
 )
+from .selection import (
+    DEFAULT_MIN_DAYS_TO_EXPIRY, choose_expiry, find_closest_strike,
+)
 from .resolve import (
     NEAREST_STRIKE_COUNT, OptionContractInfo, resolve_expiry,
     find_next_tradable_expiry, list_strikes_for_expiry,
@@ -26,6 +29,7 @@ from .resolve import (
 )
 
 __all__ = [
+    "DEFAULT_MIN_DAYS_TO_EXPIRY", "choose_expiry", "find_closest_strike",
     "ContractError", "ExpiryNotListedError", "ExpiredContractError",
     "StrikeNotFoundError", "VALID_OPTION_TYPES", "to_tiger_expiry_format",
     "from_tiger_expiry_format", "build_identifier", "parse_identifier",

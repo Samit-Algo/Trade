@@ -32,6 +32,14 @@ _PROPERTIES_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9_.]{0,62}=")
 #: from the Tiger app; "tiger" means fetched, once the entitlement exists.
 VALID_MARKET_DATA_SOURCES = ("manual", "tiger")
 
+# These two mirror `order/ticks.py` and `contract/selection.py`. They are
+# COPIED rather than imported on purpose: core/ is the foundation of the
+# import graph, and `config -> contract -> broker -> config` is a cycle that
+# breaks the whole package at import time. `tests/test_ticks.py` asserts the
+# copies still agree, which is the cheap half of what an import would buy.
+DEFAULT_OPTION_TICK_SIZE = 0.01
+DEFAULT_MIN_DAYS_TO_EXPIRY = 3
+
 _TRUE_VALUES = {"true", "1", "yes", "y", "on"}
 _FALSE_VALUES = {"false", "0", "no", "n", "off"}
 
@@ -56,6 +64,13 @@ class Settings:
     api_host: str
     api_port: int
     preview_token_ttl_seconds: int
+
+    # Phase 10, the fast single-call trading path.
+    option_tick_size: float      # MEASURED, not assumed -- see HANDOVER 3d
+    limit_buffer_ticks: int      # whole ticks added to a BUY, to help it fill
+    min_days_to_expiry: int      # refuse to auto-select anything sooner
+    idempotency_ttl_seconds: int # how long a client_order_id is remembered
+
     mode: str  # "PAPER" or "LIVE", resolved by safety.resolve_account_mode
 
     @property
@@ -113,6 +128,31 @@ def _get_int(name: str, default: int) -> int:
         raise ConfigError(
             f"{name} must be a whole number (got {raw!r})."
         ) from error
+
+
+def _get_float(name: str, default: float) -> float:
+    """Read an environment variable as a decimal number.
+
+    Args:
+        name: The variable name.
+        default: Used when the variable is unset or empty.
+
+    Returns:
+        The parsed float.
+
+    Raises:
+        ConfigError: If the value is present but not a number, or not positive.
+    """
+    raw = _get(name)
+    if raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise ConfigError(f"{name} must be a number (got {raw!r}).") from error
+    if value <= 0:
+        raise ConfigError(f"{name} must be greater than zero (got {value}).")
+    return value
 
 
 def _resolve_key_path(raw: str) -> Path:
@@ -224,6 +264,25 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
     api_port = _get_int("API_PORT", 8000)
     preview_token_ttl_seconds = _get_int("PREVIEW_TOKEN_TTL_SECONDS", 60)
 
+    # Phase 10. The tick size is the MEASURED increment, not the widely quoted
+    # "penny under $3, nickel above" convention -- that convention was tested
+    # against 32,360 real traded prices and refused. It is configurable only
+    # so a symbol class that genuinely quotes more coarsely can be handled
+    # without a code change. See HANDOVER.md section 3d before touching it.
+    option_tick_size = _get_float("OPTION_TICK_SIZE", DEFAULT_OPTION_TICK_SIZE)
+    limit_buffer_ticks = _get_int("LIMIT_BUFFER_TICKS", 1)
+    if limit_buffer_ticks < 0:
+        raise ConfigError(
+            f"LIMIT_BUFFER_TICKS must be zero or more (got {limit_buffer_ticks}). "
+            "A negative buffer moves a BUY away from the market."
+        )
+    min_days_to_expiry = _get_int("MIN_DAYS_TO_EXPIRY", DEFAULT_MIN_DAYS_TO_EXPIRY)
+    if min_days_to_expiry < 0:
+        raise ConfigError(
+            f"MIN_DAYS_TO_EXPIRY must be zero or more (got {min_days_to_expiry})."
+        )
+    idempotency_ttl_seconds = _get_int("IDEMPOTENCY_TTL_SECONDS", 600)
+
     # Lock 1 and Lock 2. Raises LiveTradingBlocked rather than returning.
     mode = resolve_account_mode(account, paper_account, allow_live)
 
@@ -240,5 +299,9 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         api_host=api_host,
         api_port=api_port,
         preview_token_ttl_seconds=preview_token_ttl_seconds,
+        option_tick_size=option_tick_size,
+        limit_buffer_ticks=limit_buffer_ticks,
+        min_days_to_expiry=min_days_to_expiry,
+        idempotency_ttl_seconds=idempotency_ttl_seconds,
         mode=mode,
     )

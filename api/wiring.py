@@ -23,7 +23,7 @@ from pathlib import Path
 from api.service.core.broker import build_quote_client, build_trade_client
 from api.service.core.config import Settings, load_settings
 
-from .order_rules import PreviewTokenStore
+from .order_rules import IdempotencyStore, PreviewTokenStore
 
 # REENTRANT on purpose. get_quote_client() holds this lock and then calls
 # get_settings(), which takes it again on the same thread. A plain Lock
@@ -34,6 +34,8 @@ _settings: Settings | None = None
 _quote_client = None
 _trade_client = None
 _token_store: PreviewTokenStore | None = None
+_idempotency_store: IdempotencyStore | None = None
+_contract_cache: dict = {}
 
 
 def get_settings() -> Settings:
@@ -92,6 +94,61 @@ def get_token_store() -> PreviewTokenStore:
                 ttl_seconds=get_settings().preview_token_ttl_seconds
             )
         return _token_store
+
+
+def get_idempotency_store() -> IdempotencyStore:
+    """Return the shared idempotency store, built once.
+
+    Returns:
+        The store, with its TTL taken from settings.
+    """
+    global _idempotency_store
+    with _lock:
+        if _idempotency_store is None:
+            _idempotency_store = IdempotencyStore(
+                ttl_seconds=get_settings().idempotency_ttl_seconds
+            )
+        return _idempotency_store
+
+
+def get_cached_contract(key: tuple, build):
+    """Return a resolved contract, resolving it at most once per market day.
+
+    An OptionContractInfo is stable for the day: identifier, contract_id,
+    strike and multiplier do not move. Only days_to_expiry does, so the market
+    date is part of the key and yesterday's entries simply stop being found.
+
+    This is what takes the fast path from six network calls to one. Resolution
+    is three round trips, and repeating them for every trade on the same
+    contract buys nothing.
+
+    Args:
+        key: Whatever identifies the contract, e.g. (symbol, expiry, strike, side).
+        build: Called with no arguments to resolve it on a miss.
+
+    Returns:
+        The cached or freshly built contract.
+    """
+    from api.service.market import today_in_market_timezone
+
+    dated_key = (today_in_market_timezone().isoformat(),) + tuple(key)
+    with _lock:
+        if dated_key in _contract_cache:
+            return _contract_cache[dated_key]
+
+    # Built OUTSIDE the lock: resolution makes network calls, and holding the
+    # shared lock across them would serialise every request in the process.
+    built = build()
+
+    with _lock:
+        _contract_cache[dated_key] = built
+        return built
+
+
+def clear_contract_cache() -> None:
+    """Empty the contract cache. For tests, and for a manual refresh."""
+    with _lock:
+        _contract_cache.clear()
 
 
 def orders_are_enabled(settings: Settings) -> tuple[bool, str]:

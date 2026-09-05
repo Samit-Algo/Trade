@@ -608,3 +608,126 @@ def shape_position(position, threshold_days: int, valuation=None) -> PositionOut
         tiger_unrealised_pnl=position.tiger_unrealised_pnl,
         valuation=valuation_out,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 -- the fast single-call trading path
+# ---------------------------------------------------------------------------
+
+
+class TradeRequest(BaseModel):
+    """One request, one bracketed BUY. Phase 10 supports BUY only.
+
+    No quote is sent and none is fetched. `current_price` chooses the strike;
+    `entry_price` is the premium the caller is willing to pay. Both come from
+    the frontend, which is already looking at them.
+    """
+
+    client_order_id: str = Field(
+        min_length=8,
+        max_length=64,
+        description="Unique per intended trade. Retrying with the same value "
+        "returns the first result instead of placing a second order.",
+    )
+
+    symbol: str = Field(min_length=1, max_length=16, description="e.g. AAPL")
+    option_type: Literal["CALL", "PUT"]
+    current_price: float = Field(
+        gt=0,
+        description="The UNDERLYING's price. Used only to choose the strike -- "
+        "it is never used as an option price.",
+    )
+    quantity: int = Field(ge=1, le=1000, description="Contracts. One is 100 shares.")
+
+    entry_price: float = Field(
+        gt=0,
+        description="The OPTION premium. Snapped to the tick grid, then "
+        "buffered by LIMIT_BUFFER_TICKS to help it fill.",
+    )
+    take_profit_percent: float = Field(gt=0, le=1000)
+    stop_loss_percent: float = Field(gt=0, lt=100)
+
+    max_cash: float = Field(
+        gt=0,
+        description="Refuse if CASH REQUIRED exceeds this. Required, not "
+        "optional: with no preview step this is the only thing standing "
+        "between a mistyped entry_price and an order 100x too large.",
+    )
+
+    leg_time_in_force: Literal["DAY", "GTC"] = Field(
+        default="DAY",
+        description="GTC is confirmed to work on a leg, though not on the parent.",
+    )
+    validate_only: bool = Field(
+        default=False,
+        description="Run every step and return the prices WITHOUT placing. "
+        "Nothing reaches the broker.",
+    )
+
+
+class TickDetail(BaseModel):
+    """The price grid this order was built on."""
+
+    tick_size: float
+    buffer_ticks: int
+    source: str = Field(
+        description="How the tick size was arrived at, so it is never mistaken "
+        "for something the broker reported."
+    )
+
+
+class BracketPrices(BaseModel):
+    """Every number behind the three prices, including the working."""
+
+    entry_price_requested: float = Field(description="What the caller sent.")
+    entry_price_snapped: float = Field(description="After snapping to the grid.")
+    entry_price_actual: float = Field(description="After the buffer. THE BUY LIMIT.")
+
+    take_profit_percent: float
+    take_profit_raw: float = Field(description="Before rounding.")
+    take_profit_price: float = Field(description="Rounded UP.")
+
+    stop_loss_percent: float
+    stop_loss_raw: float = Field(description="Before rounding.")
+    stop_loss_price: float = Field(description="Rounded DOWN.")
+
+    rounding_note: str
+
+
+class TradeResponse(BaseModel):
+    """What the single call did, and every number it decided along the way."""
+
+    order_id: int | None
+    duplicate: bool = Field(
+        description="True when this replays an earlier identical request. "
+        "No second order was placed."
+    )
+    validate_only: bool
+
+    contract: ContractOut
+    symbol: str
+    option_type: str
+    expiry: str
+    strike: float
+    quantity: int
+    expiry_selection_reason: str
+    strike_selection_reason: str
+
+    tick: TickDetail
+    prices: BracketPrices
+    cash_required: float
+    max_cash: float
+    commission: CommissionOut
+
+    order_status: str
+    parent_filled: int
+    legs_submitted: list[OrderLegOut] = Field(
+        description="The legs as SENT. Confirming them on the book is a "
+        "separate call -- see legs_confirmed."
+    )
+    legs_confirmed: bool = Field(
+        description="Always false here. Legs live as child orders, and reading "
+        "them costs a round trip this endpoint deliberately skips."
+    )
+    legs_note: str
+    audit_log: str | None

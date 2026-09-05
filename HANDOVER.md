@@ -29,7 +29,8 @@ Approved and implemented.
 | 6 | Positions and P&L | **done** | The Phase 5 position read back and valued at a typed bid. See §3. |
 | 7 | Attached take-profit and stop-loss (new, outside the spec) | **done** | Three bracketed orders placed live: DAY legs, GTC legs, and a 3-contract bracket whose legs were cancelled to settle the commission question. All filled; legs confirmed live and cancellable. See §3a. |
 | 8 | HTTP API (new, outside the spec) | **done** | FastAPI over the same library. Health, 401 without a key, a full preview → submit cycle, a retried submit refused, a decimal-slip 400, a 403 under DRY_RUN, and GET/DELETE on a real order — all exercised live. See §3b. |
-| 9 | Simplification (new) | **done** | Reshaped for readability. `tiger_backend/` is gone; all logic now lives in `api/service/`, one folder per subject. The file that can spend money went from 1,548 lines to 427 and holds nothing else. Scripts trimmed to five, the orphaned chain-table feature removed, `ARCHITECTURE.md` added. All 236 tests pass and every script was re-run live. See §3c. |
+| 10 | Fast single-call trading API (new) | **done** | `POST /trade`: seven inputs, one bracketed BUY, one Tiger call. Tick size **measured** from 32,360 real traded prices, refuting the price-band convention the plan was going to hard-code. See §3d and §3e. |
+| 9 | Simplification (new) | **done** | Reshaped for readability. `tiger_backend/` is gone; all logic now lives in `api/service/`, one folder per subject. The file that can spend money went from 1,548 lines to 427 and holds nothing else. Scripts trimmed to five, the orphaned chain-table feature removed, `ARCHITECTURE.md` added. All tests pass and every script was re-run live. See §3c. |
 
 ### The real paper order
 
@@ -51,7 +52,7 @@ blocked at step 4, before the confirmation prompt was even offered. `DRY_RUN`
 was set false for that one order and restored immediately afterwards, verified
 blocking again. It is `true` now.
 
-236 unit tests pass, all offline — no network, no credentials:
+327 unit tests pass, all offline — no network, no credentials:
 
 ```bash
 python -m pytest tests/ -q
@@ -668,6 +669,206 @@ Every line count and grep result in it was verified against the tree.
 
 ---
 
+## 3d. The tick size, MEASURED (Phase 10)
+
+### The problem
+
+Phase 10 needed to add one tick to a price. Tiger will not say what a tick is:
+`read_min_tick` returns `None` from **both** `get_contract` and
+`get_derivative_contracts`, which is why the limit price has been a typed
+human input since Phase 4.
+
+The plan for Phase 10 was going to hard-code the widely quoted US convention:
+**$0.01 below $3.00, $0.05 at $3.00 and above.**
+
+**That convention is wrong for the symbols this account trades.** It was
+measured before it was used, and the measurement refuted it.
+
+### The method: read prices that real trades happened at
+
+`get_option_bars` is free -- no `usOptionQuote` needed. Every `open`, `high`,
+`low` and `close` in a bar is a price something genuinely traded at, so it sits
+on a legal increment by definition. Enough of them, and the grid is measured
+rather than assumed.
+
+Run on **2026-09-05**, market closed, entirely read-only:
+
+| Symbol | Traded prices | Sub-cent | Off-nickel | Off-nickel at ≥ $3.00 | Grid |
+|---|---|---|---|---|---|
+| AAPL | 2,516 | 0 | 1,381 | 486 | **PENNY** |
+| SPY | 860 | 0 | 722 | 332 | **PENNY** |
+| TSLA | 1,796 | 0 | 1,058 | 223 | **PENNY** |
+| MSFT | 2,068 | 0 | 1,166 | 468 | **PENNY** |
+| NVDA | 2,180 | 0 | 1,472 | 353 | **PENNY** |
+| BRK.B | 22,940 | 0 | 8,940 | 4,396 | **PENNY** |
+| **total** | **32,360** | **0** | **14,739** | **6,258** | |
+
+A deeper AAPL-only run over 4,944 prices found the same thing in every band:
+
+```
+BAND                  PRICES  SUB-CENT   VERDICT
+under $1.00             1932         0   PENNY ($0.01)
+$1.00 to $2.99           514         0   PENNY ($0.01)
+$3.00 to $9.99           707         0   PENNY ($0.01)
+$10.00 and above        1791         0   PENNY ($0.01)
+```
+
+Real traded prices above $3.00 that are **not** on a nickel: `114.12`,
+`116.64`, `149.06`, and 6,255 others.
+
+### The measured answer
+
+> **$0.01 at every price level, on all six symbols tested.
+> Zero sub-cent prices in 32,360 observations.**
+
+There is no $3.00 boundary for these names. They are penny-quoted throughout.
+
+### Why this mattered so much
+
+Had the band rule been implemented as planned, every entry buffer above $3.00
+would have been **five times larger than intended**, silently:
+
+| Entry | Planned (band rule) | Measured (correct) | Error |
+|---|---|---|---|
+| $0.30 | 0.31 | 0.31 | none |
+| $8.05 | **8.10** | **8.06** | **+4c per share, +$4 per contract** |
+
+Nobody would have noticed. The order would have filled, at a worse price, and
+the code would have looked right.
+
+### What is NOT settled, and why it does not block
+
+The US market was closed (Saturday; next open Monday 2026-09-08 09:30 ET), so
+two of the four planned questions could not be answered:
+
+1. **Does Tiger reject a sub-tick price, or silently round it?**
+2. **Are the attached legs tick-validated the same way?**
+
+Neither blocks Phase 10, because **every price this code produces is already on
+the grid** -- so the rejecting-versus-rounding behaviour is never reached on
+the happy path. It matters for the error message on a bug, not for correctness.
+
+**To settle it, during US market hours:** place a resting BUY limit far *below*
+the market so it cannot fill -- e.g. `$8.07` on a contract asking $20 -- then
+read the stored `limit_price` back with `get_order` and cancel. If the stored
+price differs from the sent price, Tiger rounds silently, and that is worth
+knowing. Repeat with a legal entry and an illegal take-profit for question 2.
+
+### If a symbol turns out to quote more coarsely
+
+Penny-interval membership is per option class, and only six symbols were
+tested. A nickel-quoted class would reject a penny price -- a **clean refusal**,
+`502 UPSTREAM_REJECTED` carrying the broker's own message, not a bad fill.
+
+Set `OPTION_TICK_SIZE=0.05` in `.env` for that case. Re-measure first, with the
+same method: pull `get_option_bars` for a spread of that symbol's contracts and
+check whether any traded price is off-nickel.
+
+---
+
+## 3e. The fast single-call trading API (Phase 10)
+
+`POST /trade` takes seven trading inputs and places one bracketed BUY.
+
+```
+{ symbol, option_type, current_price, quantity,
+  entry_price, take_profit_percent, stop_loss_percent,
+  client_order_id, max_cash }
+        |
+        v  resolve contract (cached)   ->  0 calls warm, 4 cold
+        v  snap + buffer entry         ->  local
+        v  TP/SL from percentages      ->  local
+        v  ONE place_order with legs   ->  1 call
+        v  one status read             ->  1 call
+BUY + TAKE PROFIT + STOP LOSS, in a single Tiger call
+```
+
+### Prices
+
+Percentages apply to the **buffered** entry, not the price that arrived,
+because the buffered price is what will actually be paid.
+
+```
+entry_price 0.30  -> snap 0.30 -> +1 tick -> 0.31   THE BUY LIMIT
+  TP  0.31 x 1.20 = 0.3720  -> ceil  -> 0.38
+  SL  0.31 x 0.85 = 0.2635  -> floor -> 0.26
+```
+
+**Rounding is deliberately asymmetric: TP up, SL down. The bracket only ever
+widens.** Rounding a target down would sell for less than was asked; rounding a
+stop up would trigger it sooner, and worse, than was asked. Neither leg can
+fire earlier than intended because of a rounding artefact.
+
+A stop that floors below one tick is refused (`BRACKET_INVALID`) rather than
+sent as zero -- this bites on very cheap contracts.
+
+### `max_cash` replaces the confirmation echo
+
+The two-step flow makes the caller echo `expected_cash` back. One call has
+nowhere to put that, so `max_cash` is **required** instead: a ceiling the
+client states up front, checked before anything is sent.
+
+It is not a formality. This endpoint *chooses the strike*, and at one spot
+price the choices differ by 27x:
+
+```
+current_price 318.40  ->  AAPL 320 CALL ~ $8.05
+current_price 318.40  ->  AAPL 360 CALL ~ $0.30
+```
+
+It also catches a decimal slip in `entry_price`, which is what the skipped
+`get_option_bars` check would otherwise have caught.
+
+### Idempotency
+
+`client_order_id` is claimed **before** the order can reach the broker, not
+after. A retry arriving mid-flight gets `409 REQUEST_IN_FLIGHT`; a retry after
+completion replays the original response with `duplicate: true`.
+
+A crash between claim and completion leaves the key stuck. That is deliberate:
+refusing a retry costs a missed trade, allowing one costs a duplicate position.
+Recovery is `GET /orders/{id}`.
+
+**In memory, so it dies with the process** -- correct for one instance, wrong
+behind a load balancer. Note it before scaling out.
+
+### What the fast path skips, and what it does not
+
+| Skipped | Why |
+|---|---|
+| option quote fetch | caller supplies `entry_price`; entitlement not owned anyway |
+| underlying price fetch | caller supplies `current_price` |
+| cash-available check | advisory, and a round trip |
+| decimal-slip check | a round trip; `max_cash` covers it locally |
+| settle polling | `poll_attempts=1` -- one read, no sleeping |
+| leg confirmation | `legs_confirmed` is always `false`; use `GET /orders/{id}/legs` |
+
+**Nothing in the safety system was touched.** `core/safety.py`,
+`order/submit.py`, `order/lifecycle.py`, `core/audit.py` and
+`market/quotes.py` are all unmodified. `/trade` calls the same
+`buy_option_with_bracket` the CLI does, with both `assert_order_allowed` gates
+and the single `place_order` exactly where they were.
+
+`volume` and `open_interest` are left `None` rather than invented.
+`is_low_liquidity` treats missing data as thin, so the gap fails safe.
+
+### The fourth circular import
+
+`config.py` needed the tick and expiry defaults, which live in
+`order/ticks.py` and `contract/selection.py`. Importing them gives:
+
+```
+core/config -> contract/selection -> contract/__init__ -> resolve
+            -> core/broker -> core/config
+```
+
+**`core/` is the foundation and may not import a subject package.** The two
+constants are therefore *copied* into `config.py`, and `tests/test_ticks.py`
+asserts the copies still agree -- the cheap half of what the import would have
+bought. Same lesson as §3c: the import graph has opinions.
+
+---
+
 ## 4. Environment facts
 
 Not derivable from the repo, because `.env` and `secrets/` are gitignored.
@@ -965,8 +1166,8 @@ api/
   wiring.py      Settings and clients, built once. RLock, not Lock -- see 3b.
                  Also the request log, for the same import-graph reason.
   schemas.py     Every Pydantic shape, and the functions that build them.
-  order_rules.py Quote checks against a body, and the preview tokens.
-  routes/        health, account, market, contracts, positions, orders.
+  order_rules.py Quote checks, preview tokens, and the idempotency store.
+  routes/        health, account, market, contracts, positions, orders, trade.
                  Thin: check the request, call the service, shape the reply.
 
   service/       ALL the logic. One folder per subject, one file per question.
@@ -988,11 +1189,13 @@ api/
       quotes.py    THE SEAM. The only file naming a concrete provider.
 
     contract/    Which exact contract are we talking about?
+      selection.py    Which contract, when the caller named none? Pure.
       errors.py       The four failures. Expired is not the same as missing.
       identifiers.py  The two expiry formats and the 21-char OCC identifier.
       resolve.py      Identity only. No market data, so no entitlement needed.
 
     order/       Everything about an order.
+      ticks.py       The price grid. MEASURED, not assumed -- see 3d.
       cost.py        Pure arithmetic, no network. Cash, break-even, max loss.
       build.py       Build the order object and print the preview. Sends nothing.
       bracket.py     Take-profit and stop-loss legs, and the commission model.
@@ -1017,10 +1220,10 @@ scripts/         Five. Each one is the evidence behind a finding above.
                             Also --status and --cancel.
   06_positions.py           Phase 6. Read-only.
 
-tests/                      236 tests, all offline. No network, no credentials.
+tests/                      327 tests, all offline. No network, no credentials.
 ```
 
-53 Python files. Nothing in `service/` is over 700 lines.
+56 Python files. Nothing in `service/` is over 700 lines.
 
 **The seam review rule:** if any file other than `service/market/quotes.py`
 names `ManualEntryProvider` or `TigerQuoteProvider`, the abstraction has

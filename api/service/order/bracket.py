@@ -20,6 +20,7 @@ from ..market import QuoteSnapshot
 from .build import DEFAULT_TIME_IN_FORCE, RULE_WIDTH, format_money
 from .cost import CostEstimate
 from .lifecycle import get_order_status, normalise_status
+from .ticks import TickError, apply_buffer, snap_down, snap_nearest, snap_up
 
 # ---------------------------------------------------------------------------
 # Phase 7 -- attached take-profit and stop-loss legs
@@ -477,3 +478,115 @@ def print_attached_legs(legs_found: list, parent_order_id: int) -> None:
         print("")
 
     print("=" * RULE_WIDTH)
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 -- turning percentages into legal bracket prices
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BracketCalculation:
+    """Every number behind a bracket, so the caller can show its working.
+
+    Both the raw arithmetic and the rounded result are kept. A response that
+    showed only the final prices would leave a reader unable to tell a
+    deliberate rounding from a bug.
+    """
+
+    tick_size: float
+    buffer_ticks: int
+
+    entry_requested: float      # what the caller sent
+    entry_snapped: float        # after snapping onto the grid
+    entry_actual: float         # after the buffer -- this is the BUY limit
+
+    take_profit_percent: float
+    take_profit_raw: float      # before rounding
+    take_profit_price: float    # rounded UP
+
+    stop_loss_percent: float
+    stop_loss_raw: float        # before rounding
+    stop_loss_price: float      # rounded DOWN
+
+    @property
+    def rounding_note(self) -> str:
+        """Explain the rounding directions in one line."""
+        return (
+            "Take-profit rounds up and stop-loss rounds down, so rounding "
+            "only ever widens the bracket. Neither leg can fire sooner, or at "
+            "a worse price, than was asked for."
+        )
+
+
+def calculate_bracket_from_percentages(
+    entry_price: float,
+    take_profit_percent: float,
+    stop_loss_percent: float,
+    tick_size: float,
+    buffer_ticks: int,
+) -> BracketCalculation:
+    """Turn a caller's entry price and two percentages into legal prices.
+
+    The percentages are applied to the BUFFERED entry, not the price that
+    arrived, because the buffered price is what will actually be paid. Taking
+    20% of a price you are not paying would describe a different trade.
+
+    Rounding direction is not symmetric, and that is the point. Take-profit
+    rounds up because rounding a target down sells for less than was asked.
+    Stop-loss rounds down because rounding a stop up triggers it sooner, and
+    at a worse price, than was asked. Both move away from the entry.
+
+    Args:
+        entry_price: The option premium the caller supplied.
+        take_profit_percent: Percent above the buffered entry, e.g. 20.
+        stop_loss_percent: Percent below the buffered entry, e.g. 15.
+        tick_size: The valid price increment.
+        buffer_ticks: Whole ticks to add to the entry, to help it fill.
+
+    Returns:
+        Every intermediate value, for both the order and the response.
+
+    Raises:
+        TickError: If the tick size or buffer is unusable.
+        BracketError: If the rounded stop loss lands at or below zero.
+    """
+    entry_snapped = snap_nearest(entry_price, tick_size)
+    entry_actual = apply_buffer(entry_snapped, tick_size, buffer_ticks)
+
+    if entry_actual <= 0:
+        raise TickError(
+            f"The entry price rounded to {entry_actual}, which cannot be "
+            "placed. The price supplied was below half of one tick."
+        )
+
+    take_profit_raw = entry_actual * (1.0 + take_profit_percent / 100.0)
+    stop_loss_raw = entry_actual * (1.0 - stop_loss_percent / 100.0)
+
+    take_profit_price = snap_up(take_profit_raw, tick_size)
+    stop_loss_price = snap_down(stop_loss_raw, tick_size)
+
+    # A stop that rounds down to nothing is not a stop. This bites on very
+    # cheap contracts: a 15% stop on a $0.01 option floors straight to zero.
+    if stop_loss_price < tick_size:
+        raise BracketError(
+            f"A {stop_loss_percent:g}% stop below {entry_actual:,.2f} works "
+            f"out at {stop_loss_raw:,.4f}, which rounds down to "
+            f"{stop_loss_price:,.2f} -- below the minimum increment of "
+            f"{tick_size:,.2f}. Use a smaller stop percentage, or a contract "
+            "that is not this cheap."
+        )
+
+    return BracketCalculation(
+        tick_size=tick_size,
+        buffer_ticks=buffer_ticks,
+        entry_requested=entry_price,
+        entry_snapped=entry_snapped,
+        entry_actual=entry_actual,
+        take_profit_percent=take_profit_percent,
+        take_profit_raw=round(take_profit_raw, 6),
+        take_profit_price=take_profit_price,
+        stop_loss_percent=stop_loss_percent,
+        stop_loss_raw=round(stop_loss_raw, 6),
+        stop_loss_price=stop_loss_price,
+    )
