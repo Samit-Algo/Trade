@@ -213,7 +213,15 @@
       </div>
 
       <div class="card" id="detailcard" hidden>
-        <h2><span class="live"></span>Position — updating every 5s</h2>
+        <h2 style="display:flex;align-items:center;gap:8px">
+          <span class="live"></span>Position &mdash; live
+          <select id="detailrate" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
+            <option value="2000">every 2s</option>
+            <option value="3000">every 3s</option>
+            <option value="5000" selected>every 5s</option>
+            <option value="10000">every 10s</option>
+          </select>
+        </h2>
         <div id="detailbox"></div>
       </div>
 
@@ -335,18 +343,31 @@ async function loadPositions() {
 /* ---------- one position, priced live ---------- */
 let detailId = null;
 let detailTimer = null;
+// Guards against stacking. The call is usually ~576ms but has been seen at
+// 3179ms, so at a 2s interval a slow one is still running when the next
+// fires. Skipping a tick beats piling requests up.
+let detailBusy = false;
+
+function detailInterval() {
+  return parseInt($("detailrate").value, 10) || 5000;
+}
+
+function startDetailTimer() {
+  if (detailTimer) clearInterval(detailTimer);
+  detailTimer = setInterval(pollDetail, detailInterval());
+}
 
 function showPosition(identifier) {
   detailId = identifier;
   $("detailcard").hidden = false;
-  if (detailTimer) clearInterval(detailTimer);
   pollDetail();
-  detailTimer = setInterval(pollDetail, 5000);
+  startDetailTimer();
   loadPositions();
 }
 
 async function pollDetail() {
-  if (!detailId) return;
+  if (!detailId || detailBusy) return;
+  detailBusy = true;
   const box = $("detailbox");
   try {
     const r = await fetch(`/positions/detail?identifier=${encodeURIComponent(detailId)}`,
@@ -391,6 +412,8 @@ async function pollDetail() {
          You would sell into the bid, which is lower.</p>`;
   } catch (e) {
     box.innerHTML = `<div class="placeholder">${e.message}</div>`;
+  } finally {
+    detailBusy = false;
   }
 }
 
@@ -411,6 +434,7 @@ async function loadExpiries() {
   } catch (e) { /* leave the dropdown as it is */ }
 }
 $("symbol").onchange = loadExpiries;
+$("detailrate").onchange = () => { if (detailId) startDetailTimer(); };
 
 function refreshAll() { loadStatus(); loadPositions(); loadExpiries(); if (detailId) pollDetail(); }
 refreshAll();
@@ -487,8 +511,11 @@ function startLive(orderId) {
   liveTimer = setInterval(pollLive, 3000);
 }
 
+let liveBusy = false;
+
 async function pollLive() {
-  if (!liveOrderId) return;
+  if (!liveOrderId || liveBusy) return;
+  liveBusy = true;
   const box = $("livebox");
   try {
     const [oRes, lRes] = await Promise.all([
@@ -521,6 +548,8 @@ async function pollLive() {
     if (done) { clearInterval(liveTimer); liveTimer = null; loadPositions(); }
   } catch (e) {
     box.innerHTML = `<div class="placeholder">${e.message}</div>`;
+  } finally {
+    liveBusy = false;
   }
 }
 
