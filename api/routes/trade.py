@@ -486,7 +486,7 @@ def submit_and_record(
         body,
         order_id=outcome.order_id,
         order_status=outcome.status,
-        parent_filled=outcome.filled,
+        parent_filled=outcome.filled_quantity,
         legs_submitted=shape_submitted_legs(
             plan.calculation, body.leg_time_in_force
         ),

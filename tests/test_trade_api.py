@@ -7,6 +7,7 @@ replaces the preview token.
 
 from __future__ import annotations
 
+import inspect
 import sys
 import threading
 from datetime import date, timedelta
@@ -25,6 +26,32 @@ from api.service.contract.selection import (  # noqa: E402
     choose_expiry,
     find_closest_strike,
 )
+
+
+def make_contract():
+    """A verified contract, as find_option_contract would return one."""
+    from api.service.contract import OptionContractInfo
+
+    return OptionContractInfo(
+        identifier="TSLA  260909C00357500",
+        underlying="TSLA",
+        name="Tesla",
+        expiry_date_text="2026-09-09",
+        expiry_compact="20260909",
+        strike=357.5,
+        put_call="CALL",
+        multiplier=100.0,
+        contract_id=1,
+        days_to_expiry=1,
+        min_tick=None,
+    )
+
+
+def TradeRequestFactory(**overrides):
+    """A valid TradeRequest for response-building tests."""
+    from api.schemas import TradeRequest
+
+    return TradeRequest(**{**make_body(), **overrides})
 
 
 class StubExpiry:
@@ -411,3 +438,81 @@ class TestPriceOnlyQuote:
         assert quote.volume is None
         assert quote.open_interest is None
         assert is_low_liquidity(quote.volume, quote.open_interest) is True
+
+
+class TestTheResponseMatchesFillOutcome:
+    """A real order filled and the response builder crashed on outcome.filled.
+
+    The field is filled_quantity. Nothing caught it because no test ever built
+    a response from a real FillOutcome -- the earlier tests only read the
+    source text. These do the real thing.
+    """
+
+    def make_outcome(self):
+        from api.service.order import FillOutcome
+
+        return FillOutcome(
+            order_id=44561393351150592,
+            status="FILLED",
+            requested_quantity=1,
+            filled_quantity=1,
+            average_fill_price=5.04,
+            actual_cash=504.0,
+            outcome="FULLY FILLED",
+            poll_attempts=1,
+            reached_terminal_status=True,
+            reason="",
+        )
+
+    def test_every_attribute_the_route_reads_exists(self):
+        """Catches a renamed or mistyped field without placing an order."""
+        import re
+
+        from api.routes import trade
+
+        source = inspect.getsource(trade.submit_and_record)
+        outcome = self.make_outcome()
+        for attribute in set(re.findall(r"\boutcome\.(\w+)", source)):
+            assert hasattr(outcome, attribute), (
+                f"submit_and_record reads outcome.{attribute}, "
+                f"which FillOutcome does not have"
+            )
+
+    def test_a_filled_response_can_actually_be_built(self):
+        from api.routes.trade import TradePlan, build_response
+        from api.order_rules import build_price_only_quote
+        from api.schemas import PriceSource, shape_submitted_legs
+        from api.service.order import calculate_bracket_from_percentages, estimate_cost
+
+        contract = make_contract()
+        calculation = calculate_bracket_from_percentages(5.04, 5, 2, 0.01, 0)
+        quote = build_price_only_quote(calculation.entry_actual)
+        plan = TradePlan(
+            contract=contract,
+            expiry_reason="test",
+            strike_reason="test",
+            calculation=calculation,
+            quote=quote,
+            estimate=estimate_cost(
+                contract=contract, action="BUY", quantity=1,
+                bid=quote.bid, ask=quote.ask, limit_price=quote.limit_price,
+            ),
+            price_source=PriceSource(
+                source="caller", price=5.04, age_seconds=None, note="test"
+            ),
+        )
+        outcome = self.make_outcome()
+
+        response = build_response(
+            plan,
+            TradeRequestFactory(),
+            order_id=outcome.order_id,
+            order_status=outcome.status,
+            parent_filled=outcome.filled_quantity,
+            legs_submitted=shape_submitted_legs(calculation, "DAY"),
+            audit_log="order_audit.log",
+        )
+
+        assert response.order_id == 44561393351150592
+        assert response.parent_filled == 1
+        assert len(response.legs_submitted) == 2
