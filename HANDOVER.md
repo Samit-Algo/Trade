@@ -802,22 +802,30 @@ fire earlier than intended because of a rounding artefact.
 A stop that floors below one tick is refused (`BRACKET_INVALID`) rather than
 sent as zero -- this bites on very cheap contracts.
 
-### `max_cash` replaces the confirmation echo
+### There is no cash ceiling, by request
 
-The two-step flow makes the caller echo `expected_cash` back. One call has
-nowhere to put that, so `max_cash` is **required** instead: a ceiling the
-client states up front, checked before anything is sent.
+`max_cash` was built as the single-call replacement for the two-step
+`expected_cash` echo: a limit the client stated up front, refusing the order
+with 422 before anything was sent. **It was removed on 2026-09-07 at the
+owner's instruction.**
 
-It is not a formality. This endpoint *chooses the strike*, and at one spot
-price the choices differ by 27x:
+What that gives up, recorded so it is not rediscovered as a surprise:
+
+- **A decimal slip in `entry_price` is no longer caught.** `30` instead of
+  `0.30` is a $3,000 order rather than a $30 one, and nothing refuses it. The
+  two-step endpoint still catches this via the last-traded-close comparison;
+  this one skips that call for speed.
+- **A surprising strike is no longer caught.** This endpoint *chooses* the
+  strike, and at one spot price the choices differ by 27x:
 
 ```
 current_price 318.40  ->  AAPL 320 CALL ~ $8.05
 current_price 318.40  ->  AAPL 360 CALL ~ $0.30
 ```
 
-It also catches a decimal slip in `entry_price`, which is what the skipped
-`get_option_bars` check would otherwise have caught.
+`validate_only: true` remains the way to see the cost before committing, and
+`cash_required` is still in every response. Restoring the ceiling means adding
+one optional field and one comparison -- see commit history for the original.
 
 ### Idempotency
 

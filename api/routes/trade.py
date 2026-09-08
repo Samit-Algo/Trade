@@ -28,7 +28,7 @@ WHAT IS DELIBERATELY NOT DONE, because this endpoint is built for speed:
   no quote fetch        the caller supplies entry_price
   no underlying fetch   the caller supplies current_price
   no cash check         advisory, and a round trip
-  no decimal-slip check a round trip; max_cash replaces it, locally
+  no decimal-slip check a round trip, and it needs a quote to compare to
   no settle polling     one immediate status read, no sleeping
 
 That leaves ONE network call on a warm cache: place_order.
@@ -210,40 +210,6 @@ def find_contract(body: TradeRequest):
     return get_cached_contract(key, resolve)
 
 
-def check_cost_against_ceiling(estimate, contract, max_cash: float) -> None:
-    """Refuse an order that costs more than the caller allowed.
-
-    The single-call stand-in for the two-step cash confirmation. With no
-    preview to read, this is the only thing that catches a decimal slip in
-    entry_price, or a strike far pricier than the caller pictured.
-
-    Args:
-        estimate: The CostEstimate.
-        contract: The resolved contract, named in the message.
-        max_cash: The caller's ceiling.
-
-    Raises:
-        ApiError: 422 when the cost exceeds the ceiling.
-    """
-    if estimate.total_cash <= max_cash:
-        return
-
-    raise ApiError(
-        status_code=422,
-        error_code="MAX_CASH_EXCEEDED",
-        message=(
-            f"This order needs {estimate.total_cash:,.2f} but max_cash is "
-            f"{max_cash:,.2f}. Nothing was sent. Check entry_price and the "
-            f"resolved strike ({contract.strike:,.2f})."
-        ),
-        detail={
-            "cash_required": estimate.total_cash,
-            "max_cash": max_cash,
-            "resolved_strike": contract.strike,
-        },
-    )
-
-
 def prepare_trade(body: TradeRequest) -> TradePlan:
     """Resolve the contract and work out all three prices.
 
@@ -291,8 +257,6 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
         ask=quote.ask,
         limit_price=quote.limit_price,
     )
-
-    check_cost_against_ceiling(estimate, contract, body.max_cash)
 
     return TradePlan(
         contract=contract,
@@ -349,7 +313,6 @@ def build_response(
         tick=shape_tick(plan.calculation),
         prices=shape_bracket_prices(plan.calculation),
         cash_required=plan.estimate.total_cash,
-        max_cash=body.max_cash,
         commission=shape_commission(body.quantity, plan.estimate.multiplier),
         order_status=order_status,
         parent_filled=parent_filled,
@@ -411,7 +374,7 @@ def submit_and_record(
         take_profit_price=plan.calculation.take_profit_price,
         stop_loss_price=plan.calculation.stop_loss_price,
         leg_time_in_force=body.leg_time_in_force,
-        # The cash was already confirmed against max_cash, so the library's
+        # There is no interactive prompt over HTTP, so the library's
         # typed prompt is answered programmatically. Both assert_order_allowed
         # calls still run inside it; nothing is skipped.
         input_function=lambda _prompt: f"{plan.estimate.total_cash:.2f}",

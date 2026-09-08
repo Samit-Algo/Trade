@@ -648,13 +648,6 @@ class TradeRequest(BaseModel):
     take_profit_percent: float = Field(gt=0, le=1000)
     stop_loss_percent: float = Field(gt=0, lt=100)
 
-    max_cash: float = Field(
-        gt=0,
-        description="Refuse if CASH REQUIRED exceeds this. Required, not "
-        "optional: with no preview step this is the only thing standing "
-        "between a mistyped entry_price and an order 100x too large.",
-    )
-
     leg_time_in_force: Literal["DAY", "GTC"] = Field(
         default="DAY",
         description="GTC is confirmed to work on a leg, though not on the parent.",
@@ -717,7 +710,6 @@ class TradeResponse(BaseModel):
     tick: TickDetail
     prices: BracketPrices
     cash_required: float
-    max_cash: float
     commission: CommissionOut
 
     order_status: str

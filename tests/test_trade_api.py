@@ -1,9 +1,8 @@
 """The single-call trading endpoint. Offline: no client is ever built.
 
 What matters here is the part POST /trade adds over POST /orders: choosing the
-expiry and strike from nothing but a spot price, the idempotency key that
-replaces the preview token, and `max_cash` -- which is the only thing left
-standing between a mistyped entry_price and an order a hundred times too big.
+expiry and strike from nothing but a spot price, and the idempotency key that
+replaces the preview token.
 """
 
 from __future__ import annotations
@@ -237,7 +236,6 @@ def make_body(**overrides):
         "entry_price": 0.30,
         "take_profit_percent": 20,
         "stop_loss_percent": 15,
-        "max_cash": 100.0,
     }
     body.update(overrides)
     return body
@@ -266,7 +264,6 @@ class TestRequestValidation:
             ("stop_loss_percent", 0),
             ("stop_loss_percent", 100),
             ("stop_loss_percent", 150),
-            ("max_cash", 0),
             ("client_order_id", "short"),
             ("leg_time_in_force", "IOC"),
         ],
@@ -282,7 +279,7 @@ class TestRequestValidation:
     @pytest.mark.parametrize(
         "field", ["client_order_id", "symbol", "option_type", "current_price",
                   "quantity", "entry_price", "take_profit_percent",
-                  "stop_loss_percent", "max_cash"]
+                  "stop_loss_percent"]
     )
     def test_every_required_field_is_required(self, field):
         from pydantic import ValidationError
@@ -293,12 +290,6 @@ class TestRequestValidation:
         del body[field]
         with pytest.raises(ValidationError):
             TradeRequest(**body)
-
-    def test_max_cash_has_no_default(self):
-        """It must be stated. It replaces the two-step cash confirmation."""
-        from api.schemas import TradeRequest
-
-        assert TradeRequest.model_fields["max_cash"].is_required()
 
     def test_defaults_are_the_conservative_ones(self):
         from api.schemas import TradeRequest
