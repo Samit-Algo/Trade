@@ -147,6 +147,7 @@ def select_contract(
     option_type: str,
     current_price: float,
     minimum_days: int = DEFAULT_MIN_DAYS_TO_EXPIRY,
+    expiry_date_text: str | None = None,
 ):
     """Turn a symbol, a side and a spot price into one verified contract.
 
@@ -162,7 +163,11 @@ def select_contract(
         option_type: "CALL" or "PUT".
         current_price: The underlying's price. Used ONLY to pick the strike;
             it is never treated as an option price.
-        minimum_days: Refuse an expiry sooner than this.
+        minimum_days: Refuse an auto-picked expiry sooner than this.
+        expiry_date_text: An explicit expiry as "YYYY-MM-DD". When given it is
+            used as-is and `minimum_days` is not applied -- naming a date is a
+            deliberate act, so it is not second-guessed. It is still verified
+            against Tiger, which refuses an expired or unlisted one.
 
     Returns:
         A triple of (OptionContractInfo, why this expiry, why this strike).
@@ -185,7 +190,19 @@ def select_contract(
             "symbol is wrong or it has no listed options."
         )
 
-    expiry, expiry_reason = choose_expiry(expiries, minimum_days=minimum_days)
+    if expiry_date_text:
+        matching = [e for e in expiries if e.date_text == expiry_date_text]
+        if not matching:
+            raise ExpiryNotListedError(
+                f"Tiger does not list {expiry_date_text!r} for {normalised}. "
+                f"The nearest listed dates are: "
+                + ", ".join(e.date_text for e in expiries[:5])
+            )
+        expiry = matching[0]
+        expiry_reason = f"chosen by the caller ({expiry.days_to_expiry} days out)"
+    else:
+        expiry, expiry_reason = choose_expiry(expiries, minimum_days=minimum_days)
+
     compact = to_tiger_expiry_format(expiry.date_text)
 
     strikes = list_strikes_for_expiry(trade_client, normalised, compact, side)

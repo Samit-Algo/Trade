@@ -640,10 +640,18 @@ class TradeRequest(BaseModel):
     )
     quantity: int = Field(ge=1, le=1000, description="Contracts. One is 100 shares.")
 
-    entry_price: float = Field(
+    expiry: str | None = Field(
+        default=None,
+        description="Expiry as YYYY-MM-DD. Leave it out and the backend picks "
+        "the soonest monthly at least MIN_DAYS_TO_EXPIRY days away.",
+    )
+
+    entry_price: float | None = Field(
+        default=None,
         gt=0,
-        description="The OPTION premium. Snapped to the tick grid, then "
-        "buffered by LIMIT_BUFFER_TICKS to help it fill.",
+        description="The OPTION premium. Leave it out and the backend fetches "
+        "the last traded price from free one-minute bars -- seconds old during "
+        "the session, but a LAST TRADE, not a bid or an ask.",
     )
     take_profit_percent: float = Field(gt=0, le=1000)
     stop_loss_percent: float = Field(gt=0, lt=100)
@@ -657,6 +665,18 @@ class TradeRequest(BaseModel):
         description="Run every step and return the prices WITHOUT placing. "
         "Nothing reaches the broker.",
     )
+
+
+class PriceSource(BaseModel):
+    """Where the option price came from, so it is never mistaken for a quote."""
+
+    source: Literal["caller", "last_trade"]
+    price: float
+    age_seconds: float | None = Field(
+        default=None,
+        description="How old the fetched price is. Null when the caller sent it.",
+    )
+    note: str
 
 
 class TickDetail(BaseModel):
@@ -708,6 +728,7 @@ class TradeResponse(BaseModel):
     strike_selection_reason: str
 
     tick: TickDetail
+    price_source: PriceSource
     prices: BracketPrices
     cash_required: float
     commission: CommissionOut

@@ -278,8 +278,7 @@ class TestRequestValidation:
 
     @pytest.mark.parametrize(
         "field", ["client_order_id", "symbol", "option_type", "current_price",
-                  "quantity", "entry_price", "take_profit_percent",
-                  "stop_loss_percent"]
+                  "quantity", "take_profit_percent", "stop_loss_percent"]
     )
     def test_every_required_field_is_required(self, field):
         from pydantic import ValidationError
@@ -290,6 +289,22 @@ class TestRequestValidation:
         del body[field]
         with pytest.raises(ValidationError):
             TradeRequest(**body)
+
+    def test_entry_price_and_expiry_are_optional(self):
+        """Absent means: fetch the price, and auto-pick the expiry."""
+        from api.schemas import TradeRequest
+
+        body = make_body()
+        del body["entry_price"]
+        request = TradeRequest(**body)
+        assert request.entry_price is None
+        assert request.expiry is None
+
+    def test_an_explicit_expiry_is_kept(self):
+        from api.schemas import TradeRequest
+
+        request = TradeRequest(**make_body(expiry="2026-09-18"))
+        assert request.expiry == "2026-09-18"
 
     def test_defaults_are_the_conservative_ones(self):
         from api.schemas import TradeRequest

@@ -373,3 +373,86 @@ def fetch_underlying_price_safely(quote_client, underlying: str) -> UnderlyingPr
         return fetch_underlying_price(quote_client, underlying)
     except Exception:
         return None
+
+
+@dataclass(frozen=True)
+class RecentTrade:
+    """The most recent price an option actually traded at, and how old it is.
+
+    Not a quote. There is no bid and no ask here, because the endpoint that
+    carries those needs the usOptionQuote entitlement this account does not
+    have. What this IS: the last price somebody paid, usually seconds old
+    while the market is open.
+    """
+
+    price: float
+    bar_time_ms: int
+    age_seconds: float
+    volume: int | None
+
+    @property
+    def is_fresh(self) -> bool:
+        """True when the price is recent enough to place an order against."""
+        return self.age_seconds <= MAX_RECENT_TRADE_AGE_SECONDS
+
+
+#: Older than this and the price is not worth trading on. Measured live on
+#: 2026-09-08: six AAPL contracts across the ladder all came back 18-19s old
+#: during the session, so anything past a few minutes means the contract has
+#: simply stopped trading -- or the market has closed.
+MAX_RECENT_TRADE_AGE_SECONDS = 300
+
+
+def fetch_recent_traded_price(quote_client, identifier: str) -> RecentTrade | None:
+    """Fetch the newest traded price for one contract, from one-minute bars.
+
+    FREE -- get_option_bars needs no market data entitlement, unlike
+    get_option_briefs which would give a real bid and ask.
+
+    The bar is bucketed by minute but its `close` updates as trades arrive, so
+    polling this returns a price that is seconds old rather than a minute old.
+    Verified live: the 09:34 bar read 6.43 and then 6.35 within the same
+    minute.
+
+    Do not ask for a period finer than one minute. Tiger ACCEPTS '1sec' and
+    silently returns DAILY bars instead of refusing -- a wrong answer with a
+    200 status, which is worse than an error.
+
+    Args:
+        quote_client: A tigeropen QuoteClient.
+        identifier: A full option identifier.
+
+    Returns:
+        The most recent trade, or None when the contract has never traded or
+        the request failed. None is a legitimate answer, not an error.
+    """
+    from tigeropen.common.consts import BarPeriod, Market
+
+    OPTION_BARS_LIMITER.wait()
+
+    try:
+        bars = quote_client.get_option_bars(
+            identifiers=[identifier], period=BarPeriod.ONE_MINUTE, market=Market.US
+        )
+    except Exception:
+        return None
+
+    if bars is None or isinstance(bars, list) or bars.empty:
+        return None
+    if "time" not in bars.columns or "close" not in bars.columns:
+        return None
+
+    newest = bars.sort_values("time", ascending=True).iloc[-1]
+
+    price = _read_optional_float(newest, "close")
+    bar_time_ms = _read_optional_int(newest, "time")
+    if price is None or bar_time_ms is None or price <= 0:
+        return None
+
+    now_ms = datetime.now(timezone.utc).timestamp() * 1000.0
+    return RecentTrade(
+        price=price,
+        bar_time_ms=bar_time_ms,
+        age_seconds=round((now_ms - bar_time_ms) / 1000.0, 1),
+        volume=_read_optional_int(newest, "volume"),
+    )

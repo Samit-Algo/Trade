@@ -42,6 +42,10 @@ from fastapi import APIRouter, Request
 
 from api.service.contract import select_contract
 from api.service.core.audit import build_order_record, write_order_record
+from api.service.market import (
+    MAX_RECENT_TRADE_AGE_SECONDS,
+    fetch_recent_traded_price,
+)
 from api.service.order import (
     BracketError,
     TickError,
@@ -53,6 +57,7 @@ from api.service.order import (
 from ..errors import ApiError
 from ..order_rules import RequestInFlight, build_price_only_quote
 from ..schemas import (
+    PriceSource,
     TradeRequest,
     TradeResponse,
     shape_bracket_prices,
@@ -93,6 +98,7 @@ class TradePlan:
     calculation: object       # BracketCalculation: the three prices
     quote: object             # QuoteSnapshot the library needs
     estimate: object          # CostEstimate: cash required
+    price_source: PriceSource # where entry_price came from
 
 
 # ---------------------------------------------------------------------------
@@ -201,13 +207,85 @@ def find_contract(body: TradeRequest):
             body.option_type,
             body.current_price,
             minimum_days=settings.min_days_to_expiry,
+            expiry_date_text=body.expiry,
         )
 
     # current_price picks the strike, so it belongs in the key -- rounded to
     # the nearest dollar, so a two-cent move keeps the cache while a move to
     # the next strike does not.
-    key = (body.symbol.strip().upper(), body.option_type, round(body.current_price))
+    key = (
+        body.symbol.strip().upper(),
+        body.option_type,
+        round(body.current_price),
+        body.expiry or "auto",
+    )
     return get_cached_contract(key, resolve)
+
+
+def resolve_entry_price(body: TradeRequest, contract) -> tuple[float, PriceSource]:
+    """Use the caller's price, or fetch the last one the contract traded at.
+
+    The fetch is FREE -- one-minute bars need no market data entitlement. What
+    it returns is a LAST TRADE, not a bid or an ask: nobody is promising to
+    sell at it. On a wide spread the real ask sits above it, so a price that
+    fetched cleanly can still fail to fill. That is what LIMIT_BUFFER_TICKS is
+    for, and 1 tick may not be enough on a thin contract.
+
+    Args:
+        body: The request. `entry_price` may be None.
+        contract: The resolved contract, for its identifier.
+
+    Returns:
+        A pair of (price to trade at, where it came from).
+
+    Raises:
+        ApiError: 502 when no price could be fetched, 422 when the newest one
+            is too old to trade on.
+    """
+    if body.entry_price is not None:
+        return body.entry_price, PriceSource(
+            source="caller",
+            price=body.entry_price,
+            age_seconds=None,
+            note="Supplied in the request. Nothing was fetched.",
+        )
+
+    recent = fetch_recent_traded_price(get_quote_client(), contract.identifier)
+
+    if recent is None:
+        raise ApiError(
+            status_code=502,
+            error_code="NO_PRICE_AVAILABLE",
+            message=(
+                f"No traded price could be fetched for {contract.identifier}. "
+                "The contract may never have traded. Send entry_price yourself."
+            ),
+        )
+
+    if not recent.is_fresh:
+        raise ApiError(
+            status_code=422,
+            error_code="PRICE_TOO_STALE",
+            message=(
+                f"The newest trade for {contract.identifier} is "
+                f"{recent.age_seconds:,.0f}s old, past the "
+                f"{MAX_RECENT_TRADE_AGE_SECONDS}s limit. The market is "
+                "probably closed, or this contract is not trading. Send "
+                "entry_price yourself to override."
+            ),
+            detail={"age_seconds": recent.age_seconds, "price": recent.price},
+        )
+
+    return recent.price, PriceSource(
+        source="last_trade",
+        price=recent.price,
+        age_seconds=recent.age_seconds,
+        note=(
+            f"Last traded price, {recent.age_seconds:,.0f}s old, from free "
+            "one-minute bars. NOT a bid or ask -- no spread data exists "
+            "without the usOptionQuote entitlement."
+        ),
+    )
 
 
 def prepare_trade(body: TradeRequest) -> TradePlan:
@@ -231,9 +309,11 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
     contract, expiry_reason, strike_reason = find_contract(body)
     settings = get_settings()
 
+    entry_price, price_source = resolve_entry_price(body, contract)
+
     try:
         calculation = calculate_bracket_from_percentages(
-            entry_price=body.entry_price,
+            entry_price=entry_price,
             take_profit_percent=body.take_profit_percent,
             stop_loss_percent=body.stop_loss_percent,
             tick_size=settings.option_tick_size,
@@ -265,6 +345,7 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
         calculation=calculation,
         quote=quote,
         estimate=estimate,
+        price_source=price_source,
     )
 
 
@@ -311,6 +392,7 @@ def build_response(
         expiry_selection_reason=plan.expiry_reason,
         strike_selection_reason=plan.strike_reason,
         tick=shape_tick(plan.calculation),
+        price_source=plan.price_source,
         prices=shape_bracket_prices(plan.calculation),
         cash_required=plan.estimate.total_cash,
         commission=shape_commission(body.quantity, plan.estimate.multiplier),
