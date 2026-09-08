@@ -516,3 +516,43 @@ class TestTheResponseMatchesFillOutcome:
         assert response.order_id == 44561393351150592
         assert response.parent_filled == 1
         assert len(response.legs_submitted) == 2
+
+
+class TestWorkingOrderRoles:
+    """Tiger reports a side and an order type, never a purpose.
+
+    A position that looks fine in a holdings list can have no stop at all --
+    that happened on 2026-09-08 when DAY legs expired overnight. Reading the
+    purpose off the side and type is what makes that visible.
+    """
+
+    def test_a_sell_stop_is_protection(self):
+        from api.routes.positions import classify_working_order
+
+        assert classify_working_order("SELL", "STP") == "STOP_LOSS"
+
+    def test_a_sell_limit_is_a_target(self):
+        from api.routes.positions import classify_working_order
+
+        assert classify_working_order("SELL", "LMT") == "TAKE_PROFIT"
+
+    def test_a_buy_is_an_entry_that_has_not_filled(self):
+        from api.routes.positions import classify_working_order
+
+        assert classify_working_order("BUY", "LMT") == "ENTRY"
+
+    def test_a_stop_limit_still_counts_as_a_stop(self):
+        from api.routes.positions import classify_working_order
+
+        assert classify_working_order("SELL", "STP_LMT") == "STOP_LOSS"
+
+    def test_it_is_case_insensitive(self):
+        from api.routes.positions import classify_working_order
+
+        assert classify_working_order("sell", "stp") == "STOP_LOSS"
+
+    def test_anything_unrecognised_is_other_not_a_guess(self):
+        from api.routes.positions import classify_working_order
+
+        assert classify_working_order("SELL", "TRAIL") == "OTHER"
+        assert classify_working_order("", "") == "OTHER"

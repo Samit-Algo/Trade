@@ -821,3 +821,51 @@ def shape_submitted_legs(calculation, time_in_force: str) -> list[OrderLegOut]:
             status="SUBMITTED",
         ),
     ]
+
+
+class WorkingOrderOut(BaseModel):
+    """One order still live on the broker's book for a contract."""
+
+    order_id_text: str = Field(
+        description="The id as a STRING. Order ids exceed 2^53, so a "
+        "JavaScript client that reads the number gets a different one."
+    )
+    action: str
+    order_type: str | None = Field(description="LMT, STP, or whatever Tiger calls it.")
+    price: float | None = Field(description="limit_price for a target, aux_price for a stop.")
+    time_in_force: str | None
+    status: str | None
+    role: Literal["ENTRY", "TAKE_PROFIT", "STOP_LOSS", "OTHER"] = Field(
+        description="What this order is for, inferred from its side and type."
+    )
+
+
+class PositionDetailResponse(BaseModel):
+    """One held position, priced live, with whatever is protecting it."""
+
+    identifier: str
+    underlying: str
+    strike: float
+    option_type: str
+    expiry: str
+    days_to_expiry: int
+    quantity: float
+    multiplier: float
+
+    average_cost: float = Field(description="Per share, and it includes commission.")
+    cost_basis: float
+
+    current_price: float | None = Field(
+        description="Last traded price from free one-minute bars. NOT a bid."
+    )
+    price_age_seconds: float | None
+    current_value: float | None
+    unrealised_pnl: float | None
+    unrealised_pnl_percent: float | None
+
+    working_orders: list[WorkingOrderOut]
+    has_stop_loss: bool = Field(
+        description="True when a live SELL stop is resting on this contract."
+    )
+    has_take_profit: bool
+    protection_note: str

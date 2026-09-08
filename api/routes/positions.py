@@ -11,11 +11,22 @@ from api.service.position import (
     list_option_positions,
     value_position,
 )
-from api.service.market import BidSnapshot, QuoteSource
+from tigeropen.common.consts import SecurityType
 
-from ..shared import get_settings, get_trade_client
+from api.service.core.broker import OPEN_ORDERS_LIMITER
+from api.service.market import (
+    BidSnapshot,
+    QuoteSource,
+    fetch_recent_traded_price,
+)
+
+from ..shared import get_quote_client, get_settings, get_trade_client
 from ..errors import ApiError
-from ..schemas import PositionsResponse
+from ..schemas import (
+    PositionDetailResponse,
+    PositionsResponse,
+    WorkingOrderOut,
+)
 from ..schemas import shape_position
 
 router = APIRouter(tags=["positions"])
@@ -125,4 +136,149 @@ def read_positions(
         total_unrealised_pnl=(
             round(total_unrealised, 2) if every_position_valued and rows else None
         ),
+    )
+
+
+def classify_working_order(action: str, order_type: str) -> str:
+    """Say what an order resting on a contract is actually for.
+
+    Tiger reports a side and an order type, not a purpose. A SELL stop on a
+    long position is protection; a SELL limit is a target; a BUY is an entry
+    that has not filled yet.
+
+    Args:
+        action: BUY or SELL.
+        order_type: LMT, STP, STP_LMT and so on.
+
+    Returns:
+        ENTRY, TAKE_PROFIT, STOP_LOSS or OTHER.
+    """
+    side = (action or "").upper()
+    kind = (order_type or "").upper()
+
+    if side == "BUY":
+        return "ENTRY"
+    if side == "SELL" and "STP" in kind:
+        return "STOP_LOSS"
+    if side == "SELL" and "LMT" in kind:
+        return "TAKE_PROFIT"
+    return "OTHER"
+
+
+def fetch_working_orders(identifier: str) -> list[WorkingOrderOut]:
+    """List every order still live on the broker's book for one contract.
+
+    Args:
+        identifier: The full option identifier.
+
+    Returns:
+        The open orders, each labelled with what it is for.
+    """
+    settings = get_settings()
+    OPEN_ORDERS_LIMITER.wait()
+    raw = get_trade_client().get_open_orders(
+        account=settings.account, sec_type=SecurityType.OPT
+    )
+
+    rows = []
+    for order in raw or []:
+        # Tiger renders the contract as "AAPL  260918C00360000/OPT/USD".
+        contract_text = str(getattr(order, "contract", "")).split("/")[0]
+        if contract_text != identifier:
+            continue
+
+        action = str(getattr(order, "action", "") or "")
+        order_type = getattr(order, "order_type", None)
+        rows.append(
+            WorkingOrderOut(
+                # A STRING on purpose. See HANDOVER 3g: these exceed 2^53 and
+                # a JavaScript client silently rounds them.
+                order_id_text=str(getattr(order, "id", "") or ""),
+                action=action,
+                order_type=str(order_type) if order_type else None,
+                price=getattr(order, "limit_price", None)
+                or getattr(order, "aux_price", None),
+                time_in_force=str(getattr(order, "time_in_force", "") or "") or None,
+                status=str(getattr(order, "status", "")).split(".")[-1] or None,
+                role=classify_working_order(action, str(order_type or "")),
+            )
+        )
+    return rows
+
+
+@router.get("/positions/detail", response_model=PositionDetailResponse)
+def read_position_detail(identifier: str) -> PositionDetailResponse:
+    """Price one held position live and report what is protecting it.
+
+    Answers the question the positions list cannot: is there actually a stop
+    resting on this, right now? A bracket whose legs were DAY and expired
+    overnight leaves a position that looks fine in a holdings list and has no
+    protection at all.
+
+    Args:
+        identifier: The full option identifier, e.g. "AAPL  260918C00360000".
+
+    Returns:
+        The position, its live P&L, and every order still working on it.
+
+    Raises:
+        ApiError: 404 when the position is not held.
+    """
+    positions = list_option_positions(get_trade_client())
+    held = next((p for p in positions if p.identifier == identifier), None)
+
+    if held is None:
+        raise ApiError(
+            status_code=404,
+            error_code="POSITION_NOT_HELD",
+            message=f"No open position for {identifier!r}.",
+        )
+
+    recent = fetch_recent_traded_price(get_quote_client(), identifier)
+
+    cost_basis = held.average_cost * held.multiplier * held.quantity
+    current_value = None
+    pnl = None
+    pnl_percent = None
+    if recent is not None:
+        current_value = round(recent.price * held.multiplier * held.quantity, 2)
+        pnl = round(current_value - cost_basis, 2)
+        pnl_percent = round(pnl / cost_basis * 100, 2) if cost_basis else None
+
+    working = fetch_working_orders(identifier)
+    has_stop = any(o.role == "STOP_LOSS" for o in working)
+    has_target = any(o.role == "TAKE_PROFIT" for o in working)
+
+    if has_stop and has_target:
+        note = "Both exits are live on the book."
+    elif has_stop:
+        note = "A stop is live, but there is no take-profit."
+    elif has_target:
+        note = "A take-profit is live, but THERE IS NO STOP LOSS."
+    else:
+        note = (
+            "NOTHING IS PROTECTING THIS POSITION. If its legs were DAY they "
+            "expired at the close -- Tiger reports that as 'Rejected'."
+        )
+
+    return PositionDetailResponse(
+        identifier=held.identifier,
+        underlying=held.underlying,
+        strike=held.strike,
+        option_type=held.put_call,
+        expiry=held.expiry_date_text,
+        days_to_expiry=held.days_to_expiry,
+        quantity=held.quantity,
+        multiplier=held.multiplier,
+        average_cost=held.average_cost,
+        cost_basis=round(cost_basis, 2),
+        current_price=recent.price if recent else None,
+        price_age_seconds=recent.age_seconds if recent else None,
+        current_value=current_value,
+        unrealised_pnl=pnl,
+        unrealised_pnl_percent=pnl_percent,
+        working_orders=working,
+        has_stop_loss=has_stop,
+        has_take_profit=has_target,
+        protection_note=note,
     )

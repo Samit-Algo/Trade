@@ -97,6 +97,14 @@
   table.grid th { color:var(--faint); font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; }
   table.grid td { font-family:var(--mono); }
   .pos { color:var(--good); } .neg { color:var(--bad); }
+  tr.clickable { cursor:pointer; }
+  tr.clickable:hover td { background:var(--sunken); }
+  tr.clickable.on td { background:var(--accent-soft); }
+  .naked { background:var(--bad-soft); color:var(--bad); font-weight:600;
+           padding:10px 12px; border-radius:6px; font-size:13px; margin-bottom:12px; }
+  .safe  { background:var(--good-soft); color:var(--good); font-weight:600;
+           padding:10px 12px; border-radius:6px; font-size:13px; margin-bottom:12px; }
+  .pnlbig { font-family:var(--mono); font-size:26px; font-weight:600; }
 
   .chip { display:inline-block; font-family:var(--mono); font-size:10.5px; font-weight:600;
           letter-spacing:.05em; padding:2px 7px; border-radius:3px; }
@@ -192,7 +200,7 @@
       </form>
 
       <div class="card">
-        <h2>Positions held</h2>
+        <h2>Positions held &mdash; click one</h2>
         <div id="positions"><div class="placeholder">…</div></div>
       </div>
     </div>
@@ -202,6 +210,11 @@
       <div class="card">
         <h2>Result</h2>
         <div id="out"><div class="placeholder">Press Test to see what would happen.</div></div>
+      </div>
+
+      <div class="card" id="detailcard" hidden>
+        <h2><span class="live"></span>Position — updating every 5s</h2>
+        <div id="detailbox"></div>
       </div>
 
       <div class="card" id="livecard" hidden>
@@ -301,7 +314,7 @@ async function loadPositions() {
       d.positions.map(p => {
         const pnl = p.tiger_unrealised_pnl;
         const cls = pnl == null ? "" : (pnl >= 0 ? "pos" : "neg");
-        return `<tr>
+        return `<tr class="clickable" data-id="${p.identifier.replace(/"/g, "&quot;")}">
           <td>${p.underlying} ${p.strike} ${p.option_type[0]}</td>
           <td>${p.quantity}</td>
           <td>${money(p.cost_basis)}</td>
@@ -309,6 +322,73 @@ async function loadPositions() {
           <td>${p.days_to_expiry}${p.expiring_soon ? " ⚠" : ""}</td>
         </tr>`;
       }).join("") + `</table>`;
+
+    box.querySelectorAll("tr.clickable").forEach(row => {
+      row.onclick = () => showPosition(row.dataset.id);
+      if (row.dataset.id === detailId) row.classList.add("on");
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="placeholder">${e.message}</div>`;
+  }
+}
+
+/* ---------- one position, priced live ---------- */
+let detailId = null;
+let detailTimer = null;
+
+function showPosition(identifier) {
+  detailId = identifier;
+  $("detailcard").hidden = false;
+  if (detailTimer) clearInterval(detailTimer);
+  pollDetail();
+  detailTimer = setInterval(pollDetail, 5000);
+  loadPositions();
+}
+
+async function pollDetail() {
+  if (!detailId) return;
+  const box = $("detailbox");
+  try {
+    const r = await fetch(`/positions/detail?identifier=${encodeURIComponent(detailId)}`,
+                          { headers: hdrs() });
+    const d = await r.json();
+    if (!r.ok) {
+      box.innerHTML = `<div class="placeholder">${(d.error || d).message || "failed"}</div>`;
+      clearInterval(detailTimer); detailTimer = null;
+      return;
+    }
+
+    const up = (d.unrealised_pnl ?? 0) >= 0;
+    const guard = d.has_stop_loss
+      ? `<div class="safe">${d.protection_note}</div>`
+      : `<div class="naked">${d.protection_note}</div>`;
+
+    box.innerHTML = guard + `
+      <div style="text-align:center;margin-bottom:14px">
+        <div class="pnlbig ${up ? "pos" : "neg"}">${up ? "+" : ""}${money(d.unrealised_pnl)}</div>
+        <div style="font-size:12px;color:var(--muted)">
+          ${up ? "+" : ""}${d.unrealised_pnl_percent}% &nbsp;unrealised</div>
+      </div>
+      <table>
+        <tr><td>Contract</td><td>${d.identifier}</td></tr>
+        <tr><td>Held</td><td>${d.quantity} x ${d.multiplier}, ${d.days_to_expiry} days left</td></tr>
+        <tr><td>You paid</td><td>${money(d.average_cost)} &nbsp;= $${money(d.cost_basis)}</td></tr>
+        <tr><td>Now</td><td>${d.current_price == null ? "no price"
+            : money(d.current_price) + " &nbsp;(" + Math.round(d.price_age_seconds) + "s old)"}</td></tr>
+        <tr><td>Worth</td><td>${d.current_value == null ? "—" : "$" + money(d.current_value)}</td></tr>
+      </table>
+      <h2 style="margin-top:16px">Orders working on it</h2>
+      ${d.working_orders.length
+        ? `<table class="grid"><tr><th>Role</th><th>Type</th><th>Price</th><th>TIF</th><th>Status</th></tr>` +
+          d.working_orders.map(o => `<tr>
+            <td class="${o.role === "STOP_LOSS" ? "neg" : (o.role === "TAKE_PROFIT" ? "pos" : "")}">${o.role}</td>
+            <td>${o.action} ${o.order_type || ""}</td>
+            <td>${o.price == null ? "—" : money(o.price)}</td>
+            <td>${o.time_in_force || "—"}</td>
+            <td>${statusChip(o.status)}</td></tr>`).join("") + `</table>`
+        : `<div class="placeholder" style="padding:14px 0">No orders on this contract.</div>`}
+      <p class="note">The price is a LAST TRADE from free bars, not a bid.
+         You would sell into the bid, which is lower.</p>`;
   } catch (e) {
     box.innerHTML = `<div class="placeholder">${e.message}</div>`;
   }
@@ -332,7 +412,7 @@ async function loadExpiries() {
 }
 $("symbol").onchange = loadExpiries;
 
-function refreshAll() { loadStatus(); loadPositions(); loadExpiries(); }
+function refreshAll() { loadStatus(); loadPositions(); loadExpiries(); if (detailId) pollDetail(); }
 refreshAll();
 
 /* ---------- the request ---------- */
