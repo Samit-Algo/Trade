@@ -956,6 +956,70 @@ secrets); the order it sends still does.
 
 ---
 
+## 3g. Two bugs a live order found, 2026-09-08
+
+Both were found by placing real orders on the paper account with the market
+open. Neither showed up in 327 offline tests.
+
+### 1. A filled order returned 500
+
+`submit_and_record` read `outcome.filled`. The field is `filled_quantity`.
+
+Order 44561393351150592 was placed, reached Tiger, and FILLED. The caller got
+a 500 and never learned the order id. **The money moved and the reply was
+lost** -- the worst shape this class of bug takes, because the idempotency key
+is then stuck IN_FLIGHT and a retry is refused (correctly), while the caller
+has no id to go and look up.
+
+Why nothing caught it: the `/trade` tests read the route's SOURCE TEXT for
+structure and never once built a response from a real `FillOutcome`. The
+two-step endpoint was unaffected -- it goes through `shape_fill()`.
+
+Two tests added, both failing against the old code. One builds a real
+`FillOutcome` and a real `TradePlan` and calls `build_response`. The other
+regexes every `outcome.X` out of `submit_and_record` and asserts `FillOutcome`
+has `X` -- that one catches the whole class without placing an order.
+
+### 2. JavaScript rounds Tiger's order ids
+
+```
+real order id      44561462560050176
+browser asked for  44561462560050180     -> 500, then 404
+```
+
+**Tiger order ids exceed 2^53**, the largest integer JavaScript holds exactly.
+`44561462560050176` is 4.9x past it. The number survives `JSON.parse`, but
+`String(id)` prints the shortest form that round-trips, which is
+`44561462560050180` -- so the id in the URL is not the id the broker issued.
+
+**Any JavaScript frontend hits this.** The fix in `trade_form.html` is to read
+the response as TEXT and pull the digits out with a regex before anything
+parses them:
+
+```js
+const raw = await r.text();
+const exactOrderId = raw.match(/"order_id"\s*:\s*(\d+)/)[1];   // a string
+const data = JSON.parse(raw);
+```
+
+Python is not affected: its integers are arbitrary precision.
+
+Still open: whether to return `order_id` as a JSON string as well, so a naive
+client cannot get this wrong. That changes the response shape, so it is a
+decision, not a fix.
+
+### 3. And a missing order returned 500
+
+Tiger reports an unknown id as a plain `ApiException` carrying
+`not_found:Order does not exist`. Nothing in `EXCEPTION_MAP` matched the type,
+so it fell through to `INTERNAL_ERROR`. It is now **404 ORDER_NOT_FOUND**,
+matched on the message, and the message names the JavaScript trap because
+that is the likeliest cause.
+
+333 tests pass.
+
+---
+
 ## 4. Environment facts
 
 Not derivable from the repo, because `.env` and `secrets/` are gitignored.

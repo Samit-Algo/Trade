@@ -362,12 +362,12 @@ function renderError(status, data) {
     <details><summary>Full response</summary><pre>${JSON.stringify(data, null, 2)}</pre></details>`;
 }
 
-function renderOk(data) {
+function renderOk(data, exactOrderId) {
   const p = data.prices, real = !data.validate_only;
   const banner = data.duplicate
     ? `<div class="banner b-warn">Duplicate — this repeats an earlier order. Nothing new was placed.</div>`
     : real
-      ? `<div class="banner b-good">ORDER PLACED &nbsp;·&nbsp; id ${data.order_id}</div>`
+      ? `<div class="banner b-good">ORDER PLACED &nbsp;·&nbsp; id ${exactOrderId || data.order_id}</div>`
       : `<div class="banner b-warn">Test only — nothing was bought</div>`;
 
   out.innerHTML = banner + `
@@ -395,12 +395,12 @@ function renderOk(data) {
     </table>
     <details><summary>Full response</summary><pre>${JSON.stringify(data, null, 2)}</pre></details>`;
 
-  if (real && data.order_id) startLive(data.order_id);
+  if (real && exactOrderId) startLive(exactOrderId);
 }
 
 /* ---------- live order tracking ---------- */
 function startLive(orderId) {
-  liveOrderId = orderId;
+  liveOrderId = String(orderId);   // a STRING, never a Number -- see above
   $("livecard").hidden = false;
   if (liveTimer) clearInterval(liveTimer);
   pollLive();
@@ -460,10 +460,16 @@ async function send(validateOnly, button) {
   const started = performance.now();
   try {
     const r = await fetch("/trade", { method: "POST", headers: hdrs(), body: JSON.stringify(body(validateOnly)) });
-    const data = await r.json();
+    // Read the TEXT first. Order ids are bigger than 2^53, so JSON.parse turns
+    // 44561462560050176 into 44561462560050180 -- an id the broker has never
+    // heard of. Pull the digits out as a string before anything parses them.
+    const raw = await r.text();
+    const idMatch = raw.match(/"order_id"\s*:\s*(\d+)/);
+    const exactOrderId = idMatch ? idMatch[1] : null;
+    const data = JSON.parse(raw);
     const ms = Math.round(performance.now() - started);
     if (r.ok) {
-      renderOk(data);
+      renderOk(data, exactOrderId);
       out.insertAdjacentHTML("beforeend", `<p class="note">Round trip: ${ms} ms</p>`);
       if (!validateOnly) { newId(); loadPositions(); }
     } else {

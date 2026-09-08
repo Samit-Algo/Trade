@@ -77,6 +77,22 @@ def classify_exception(error: Exception) -> ApiError:
     """
     message = str(error)
 
+    # An order id the broker has never heard of is a 404, not a server fault.
+    # Tiger reports it as a generic ApiException with not_found in the text,
+    # so the message is what has to be matched. This bites hardest when a
+    # JavaScript client rounds a large order id -- see HANDOVER 3g.
+    if "not_found" in message or "Order does not exist" in message:
+        return ApiError(
+            status_code=404,
+            error_code="ORDER_NOT_FOUND",
+            message=(
+                "The broker has no order with that id. If the id came from "
+                "JavaScript, check it was not rounded: order ids exceed the "
+                "2^53 limit JavaScript can hold exactly."
+            ),
+            detail={"broker_message": message},
+        )
+
     # A Tiger entitlement refusal is not our bug and not the client's mistake.
     # It is a purchase that has not been made, and it deserves saying so
     # rather than being flattened into a generic upstream failure.

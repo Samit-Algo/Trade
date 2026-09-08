@@ -279,3 +279,53 @@ class TestOpenApiSecurityMatchesMiddleware:
 
         assert scheme["in"] == "header"
         assert scheme["name"] == API_KEY_HEADER
+
+
+class TestAMissingOrderIsNotAServerFault:
+    """A 500 came back for an order id the broker had never heard of.
+
+    Tiger reports it as a plain ApiException with not_found in the message,
+    so nothing in EXCEPTION_MAP matched and it fell through to INTERNAL_ERROR.
+    It is a 404: the caller asked for something that does not exist.
+
+    It bit because a JavaScript client rounded the id -- order ids are larger
+    than 2^53, so String(44561462560050176) is "44561462560050180".
+    """
+
+    def make_not_found(self):
+        from tigeropen.common.exceptions import ApiException
+
+        return ApiException(
+            1200,
+            "standard account response error(not_found:Order does not exist)",
+        )
+
+    def test_it_maps_to_404(self):
+        error = classify_exception(self.make_not_found())
+        assert error.status_code == 404
+        assert error.error_code == "ORDER_NOT_FOUND"
+
+    def test_the_message_names_the_javascript_trap(self):
+        """The most likely cause deserves naming, not a generic 'not found'."""
+        error = classify_exception(self.make_not_found())
+        assert "JavaScript" in error.message
+        assert "2^53" in error.message
+
+    def test_the_brokers_own_words_are_kept(self):
+        error = classify_exception(self.make_not_found())
+        assert "not_found" in error.detail["broker_message"]
+
+    def test_a_real_order_id_survives_a_json_round_trip_as_text(self):
+        """The fix the form uses: pull the digits out before anything parses."""
+        import json
+        import re
+
+        raw = json.dumps({"order_id": 44561462560050176, "status": "FILLED"})
+
+        parsed = json.loads(raw)["order_id"]
+        from_text = re.search(r'"order_id"\s*:\s*(\d+)', raw).group(1)
+
+        assert from_text == "44561462560050176"
+        # Python keeps big ints exactly; JavaScript would not. The regex is
+        # what makes the browser agree with the broker.
+        assert str(parsed) == from_text
