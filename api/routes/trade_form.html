@@ -48,6 +48,31 @@
   .cols { display:grid; grid-template-columns:380px 1fr; gap:20px; align-items:start; }
   @media (max-width:900px) { .cols { grid-template-columns:1fr; } }
 
+  .shell { display:grid; grid-template-columns:170px 1fr; gap:20px; align-items:start; }
+  @media (max-width:820px) { .shell { grid-template-columns:1fr; } }
+  .nav { display:flex; flex-direction:column; gap:4px; position:sticky; top:20px; }
+  .nav button {
+    text-align:left; background:none; border:1px solid transparent; color:var(--muted);
+    padding:10px 12px; border-radius:6px; font-weight:500; font-size:14px; width:100%;
+  }
+  .nav button:hover { background:var(--card); }
+  .nav button.on { background:var(--accent-soft); color:var(--accent);
+                   border-color:var(--accent); font-weight:600; }
+  .nav .count { float:right; font-family:var(--mono); font-size:11px; opacity:.7; }
+  .page { display:none; } .page.on { display:block; }
+
+  .tag2 { display:inline-block; font-family:var(--mono); font-size:10px; font-weight:600;
+          letter-spacing:.04em; padding:2px 6px; border-radius:3px; }
+  .t-prof { background:var(--good-soft); color:var(--good); }
+  .t-stop { background:var(--bad-soft);  color:var(--bad); }
+  .t-open { background:var(--warn-soft); color:var(--warn); }
+  .t-none { background:var(--sunken); color:var(--muted); border:1px solid var(--line); }
+  .sum { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:16px; }
+  @media (max-width:700px) { .sum { grid-template-columns:repeat(2,1fr); } }
+  .sumbox { border:1px solid var(--line); border-radius:6px; padding:10px 12px; text-align:center; }
+  .sumbox .n { font-family:var(--mono); font-size:20px; font-weight:600; }
+  .sumbox .l { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); }
+
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:18px; }
   .card + .card { margin-top:16px; }
   .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.09em;
@@ -135,6 +160,15 @@
     <button type="button" class="btn-small refresh" id="refreshall">Refresh</button>
   </div>
 
+  <div class="shell">
+    <nav class="nav">
+      <button type="button" id="nav-trade" class="on" onclick="showPage('trade')">Trade</button>
+      <button type="button" id="nav-history" onclick="showPage('history')">
+        Order history <span class="count" id="histcount"></span></button>
+    </nav>
+
+    <div>
+    <div class="page on" id="page-trade">
   <div class="cols">
     <!-- ================= LEFT ================= -->
     <div>
@@ -242,6 +276,23 @@
         <h2><span class="live"></span>Live order — updating every 3s</h2>
         <div id="livebox"></div>
       </div>
+    </div>
+  </div>
+    </div><!-- /page-trade -->
+
+    <div class="page" id="page-history">
+      <div class="sum" id="histsummary"></div>
+      <div class="cols">
+        <div class="card">
+          <h2>Orders placed &mdash; click one</h2>
+          <div id="histlist"><div class="placeholder">…</div></div>
+        </div>
+        <div class="card">
+          <h2>Order detail</h2>
+          <div id="histdetail"><div class="placeholder">Click an order on the left.</div></div>
+        </div>
+      </div>
+    </div><!-- /page-history -->
     </div>
   </div>
 </div>
@@ -449,8 +500,125 @@ async function loadExpiries() {
 $("symbol").onchange = loadExpiries;
 $("detailrate").onchange = () => { if (detailId) startDetailTimer(); };
 
-function refreshAll() { loadStatus(); loadPositions(); loadExpiries(); if (detailId) pollDetail(); }
+function refreshAll() {
+  loadStatus(); loadPositions(); loadExpiries();
+  if (detailId) pollDetail();
+  if ($("page-history").classList.contains("on")) loadHistory();
+}
 refreshAll();
+
+/* ---------- pages ---------- */
+let historyCache = [];
+
+function showPage(name) {
+  ["trade", "history"].forEach(p => {
+    $("page-" + p).classList.toggle("on", p === name);
+    $("nav-" + p).classList.toggle("on", p === name);
+  });
+  if (name === "history") loadHistory();
+}
+
+function outcomeTag(o) {
+  const map = {
+    TOOK_PROFIT: ["t-prof", "TAKE PROFIT"],
+    STOPPED_OUT: ["t-stop", "STOP LOSS"],
+    STILL_OPEN:  ["t-open", "OPEN"],
+    NOT_FILLED:  ["t-none", "NOT FILLED"],
+    CANCELLED:   ["t-none", "CANCELLED"],
+    EXPIRED:     ["t-none", "EXPIRED"]
+  };
+  const [cls, label] = map[o] || ["t-none", o];
+  return `<span class="tag2 ${cls}">${label}</span>`;
+}
+
+async function loadHistory() {
+  const list = $("histlist");
+  if (!key()) { list.innerHTML = `<div class="placeholder">Enter your API key.</div>`; return; }
+  try {
+    const r = await fetch("/orders/history", { headers: hdrs() });
+    const d = await r.json();
+    if (!r.ok) { list.innerHTML = `<div class="placeholder">${(d.error||d).message}</div>`; return; }
+
+    historyCache = d.orders;
+    $("histcount").textContent = d.orders.length;
+
+    const up = d.total_realised_pnl >= 0;
+    $("histsummary").innerHTML = `
+      <div class="sumbox"><div class="n pos">${d.took_profit}</div><div class="l">Take profit</div></div>
+      <div class="sumbox"><div class="n neg">${d.stopped_out}</div><div class="l">Stopped out</div></div>
+      <div class="sumbox"><div class="n">${d.still_open}</div><div class="l">Still open</div></div>
+      <div class="sumbox"><div class="n ${up ? "pos" : "neg"}">${up ? "+" : ""}${money(d.total_realised_pnl)}</div>
+        <div class="l">Realised P&amp;L</div></div>`;
+
+    list.innerHTML = `<table class="grid">
+      <tr><th>Contract</th><th>Outcome</th><th>P&amp;L</th></tr>` +
+      d.orders.map((o, i) => {
+        const pnlCls = o.realised_pnl == null ? "" : (o.realised_pnl >= 0 ? "pos" : "neg");
+        return `<tr class="clickable" data-i="${i}">
+          <td>${o.underlying} ${o.strike ?? ""} ${(o.option_type || "")[0] || ""}</td>
+          <td>${outcomeTag(o.outcome)}</td>
+          <td class="${pnlCls}">${o.realised_pnl == null ? "—" :
+              (o.realised_pnl >= 0 ? "+" : "") + money(o.realised_pnl)}</td>
+        </tr>`;
+      }).join("") + `</table>`;
+
+    list.querySelectorAll("tr.clickable").forEach(row => {
+      row.onclick = () => {
+        list.querySelectorAll("tr.clickable").forEach(x => x.classList.remove("on"));
+        row.classList.add("on");
+        showOrder(historyCache[parseInt(row.dataset.i, 10)]);
+      };
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="placeholder">${e.message}</div>`;
+  }
+}
+
+function showOrder(o) {
+  const banner = {
+    TOOK_PROFIT: ["b-good", "TAKE PROFIT TRIGGERED"],
+    STOPPED_OUT: ["b-bad",  "STOP LOSS TRIGGERED"],
+    STILL_OPEN:  ["b-warn", "STILL OPEN — neither exit has fired"],
+    NOT_FILLED:  ["b-warn", "NOT FILLED — nothing was bought"],
+    CANCELLED:   ["b-warn", "CANCELLED"],
+    EXPIRED:     ["b-warn", "EXPIRED"]
+  }[o.outcome] || ["b-warn", o.outcome];
+
+  const pnl = o.realised_pnl == null ? "" : `
+    <div style="text-align:center;margin-bottom:14px">
+      <div class="pnlbig ${o.realised_pnl >= 0 ? "pos" : "neg"}">
+        ${o.realised_pnl >= 0 ? "+" : ""}${money(o.realised_pnl)}</div>
+      <div style="font-size:12px;color:var(--muted)">
+        ${o.realised_pnl_percent >= 0 ? "+" : ""}${o.realised_pnl_percent}% realised,
+        before commission</div>
+    </div>`;
+
+  $("histdetail").innerHTML =
+    `<div class="banner ${banner[0]}">${banner[1]}</div>` + pnl + `
+    <table>
+      <tr><td>Contract</td><td>${o.identifier}</td></tr>
+      <tr><td>Placed</td><td>${o.placed_at ? new Date(o.placed_at).toLocaleString() : "—"}</td></tr>
+      <tr><td>Order id</td><td>${o.order_id_text}</td></tr>
+      <tr><td>Bought</td><td>${o.quantity} @ limit ${money(o.limit_price)}${
+          o.fill_price ? ` &nbsp;→ filled <b>${money(o.fill_price)}</b>` : " &nbsp;(not filled)"}</td></tr>
+      ${o.exit_price ? `<tr><td>Sold</td><td><b>${money(o.exit_price)}</b></td></tr>` : ""}
+      <tr><td>Take profit set</td><td>${o.take_profit_price == null ? "—" : money(o.take_profit_price)}</td></tr>
+      <tr><td>Stop loss set</td><td>${o.stop_loss_price == null ? "—" : money(o.stop_loss_price)}</td></tr>
+      <tr><td>Legs live for</td><td>${o.leg_time_in_force || "—"}</td></tr>
+      <tr><td>Broker status</td><td>${statusChip(o.status)}</td></tr>
+    </table>
+    <p class="note">${o.outcome_note}</p>
+    <h2 style="margin-top:16px">Exit legs</h2>
+    ${o.legs.length
+      ? `<table class="grid"><tr><th>Role</th><th>Type</th><th>Price</th><th>TIF</th><th>Status</th></tr>` +
+        o.legs.map(l => `<tr>
+          <td class="${l.role === "STOP_LOSS" ? "neg" : "pos"}">${l.role}</td>
+          <td>${l.action} ${l.order_type || ""}</td>
+          <td>${l.price == null ? "—" : money(l.price)}</td>
+          <td>${l.time_in_force || "—"}</td>
+          <td>${statusChip(l.status)}</td></tr>`).join("") + `</table>`
+      : `<div class="placeholder" style="padding:14px 0">No legs were attached.</div>`}`;
+}
 
 /* ---------- the request ---------- */
 function body(validateOnly) {
@@ -598,7 +766,7 @@ async function send(validateOnly, button) {
     if (r.ok) {
       renderOk(data, exactOrderId);
       out.insertAdjacentHTML("beforeend", `<p class="note">Round trip: ${ms} ms</p>`);
-      if (!validateOnly) { newId(); loadPositions(); }
+      if (!validateOnly) { newId(); loadPositions(); loadHistory(); }
     } else {
       renderError(r.status, data);
     }

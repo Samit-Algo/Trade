@@ -687,3 +687,79 @@ class TestLiveTradingTest:
         live = self.make(0, 500)
         assert live.age_seconds >= 0
         assert live.is_live is True
+
+
+class TestOrderOutcomes:
+    """Tiger never says "the stop fired".
+
+    It reports a status per order. The story is in which LEG filled: a filled
+    LMT is the target, a filled STP is the stop, and the partner shows
+    CANCELLED with the reason "one of these OCA orders is filled".
+    """
+
+    class StubOrder:
+        def __init__(self, **kw):
+            self.status = kw.get("status", "FILLED")
+            self.filled = kw.get("filled", 1)
+            self.order_type = kw.get("order_type")
+            self.avg_fill_price = kw.get("avg_fill_price")
+            self.limit_price = kw.get("limit_price")
+            self.aux_price = kw.get("aux_price")
+
+    def outcome(self, parent, legs):
+        from api.routes.orders import describe_outcome
+
+        return describe_outcome(parent, legs)
+
+    def test_a_filled_stop_leg_means_stopped_out(self):
+        parent = self.StubOrder()
+        legs = [
+            self.StubOrder(order_type="STP", avg_fill_price=6.00),
+            self.StubOrder(order_type="LMT", status="CANCELLED", filled=0),
+        ]
+        code, note, exit_price = self.outcome(parent, legs)
+        assert code == "STOPPED_OUT"
+        assert "STOP LOSS triggered" in note
+        assert exit_price == 6.00
+
+    def test_a_filled_limit_leg_means_took_profit(self):
+        parent = self.StubOrder()
+        legs = [
+            self.StubOrder(order_type="LMT", avg_fill_price=13.76),
+            self.StubOrder(order_type="STP", status="CANCELLED", filled=0),
+        ]
+        code, note, exit_price = self.outcome(parent, legs)
+        assert code == "TOOK_PROFIT"
+        assert "TAKE PROFIT triggered" in note
+        assert exit_price == 13.76
+
+    def test_both_legs_waiting_means_still_open(self):
+        parent = self.StubOrder()
+        legs = [
+            self.StubOrder(order_type="LMT", status="HELD", filled=0),
+            self.StubOrder(order_type="STP", status="HELD", filled=0),
+        ]
+        code, _note, exit_price = self.outcome(parent, legs)
+        assert code == "STILL_OPEN"
+        assert exit_price is None
+
+    def test_an_unfilled_parent_bought_nothing(self):
+        code, note, _ = self.outcome(self.StubOrder(status="HELD", filled=0), [])
+        assert code == "NOT_FILLED"
+        assert "Nothing bought" in note
+
+    def test_a_cancelled_parent_is_not_a_loss(self):
+        code, note, _ = self.outcome(self.StubOrder(status="CANCELLED", filled=0), [])
+        assert code == "CANCELLED"
+        assert "Nothing was bought" in note
+
+    def test_an_expired_parent_is_reported_as_expired(self):
+        code, _note, _ = self.outcome(self.StubOrder(status="EXPIRED", filled=0), [])
+        assert code == "EXPIRED"
+
+    def test_the_two_legs_use_different_price_fields(self):
+        """A stop keeps its price in aux_price, a target in limit_price."""
+        from api.routes.orders import read_leg_price
+
+        assert read_leg_price(self.StubOrder(order_type="STP", aux_price=6.46)) == 6.46
+        assert read_leg_price(self.StubOrder(order_type="LMT", limit_price=10.51)) == 10.51

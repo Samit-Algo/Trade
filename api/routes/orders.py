@@ -12,10 +12,15 @@ calls.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Query, Request
+from tigeropen.common.consts import SecurityType
+
+from api.service.core.broker import ORDERS_LIMITER
 
 from api.service.core.audit import build_order_record, write_order_record
-from api.service.contract import find_option_contract
+from api.service.contract import find_option_contract, parse_identifier
 from api.service.market import DEFAULT_LIQUIDITY_THRESHOLD, fetch_underlying_price_safely
 from api.service.order import (
     BracketLegs,
@@ -42,6 +47,9 @@ from ..shared import (
 )
 from ..errors import ApiError
 from ..schemas import (
+    OrderHistoryResponse,
+    OrderHistoryRow,
+    WorkingOrderOut,
     CancelResponse,
     FillOutcomeOut,
     OrderLegsResponse,
@@ -355,6 +363,131 @@ def submit_order(body: SubmitRequest, request: Request) -> SubmitResponse:
     )
 
 
+# NOTE: this MUST be declared before /orders/{order_id}. FastAPI matches in
+# declaration order, so with the parameterised route first, a request for
+# /orders/history is read as order_id="history" and fails to parse as an int.
+@router.get("/orders/history", response_model=OrderHistoryResponse)
+def read_order_history(limit: int = Query(default=100, ge=1, le=300)):
+    """List every order placed, newest first, saying what became of each.
+
+    One Tiger call. Orders come back flat, with legs carrying a parent_id, so
+    they are regrouped into families here and each family reduced to a single
+    row plus its legs.
+
+    Deliberately NOT the positions list. An order is a thing you did; a
+    position is a thing you hold. A stopped-out order stays in this list
+    forever and appears in no position.
+
+    Args:
+        limit: How many orders to ask Tiger for.
+
+    Returns:
+        The orders, with an outcome and realised P&L on each.
+    """
+    settings = get_settings()
+    ORDERS_LIMITER.wait()
+    raw = get_trade_client().get_orders(
+        account=settings.account, sec_type=SecurityType.OPT, limit=limit
+    )
+
+    legs_by_parent: dict = {}
+    parents = []
+    for order in raw or []:
+        parent_id = getattr(order, "parent_id", None)
+        if parent_id:
+            legs_by_parent.setdefault(parent_id, []).append(order)
+        else:
+            parents.append(order)
+
+    rows = []
+    for parent in parents:
+        legs = legs_by_parent.get(getattr(parent, "id", None), [])
+        outcome, note, exit_price = describe_outcome(parent, legs)
+
+        identifier = str(getattr(parent, "contract", "")).split("/")[0]
+        # parse_identifier returns a 4-tuple, not an object. This is its
+        # first real caller -- it was written in Phase 3 and marked dormant.
+        try:
+            underlying, expiry_text, put_call, strike = parse_identifier(identifier)
+        except Exception:  # noqa: BLE001 - a malformed id must not hide the row
+            underlying = identifier.split()[0] if identifier else "?"
+            expiry_text = put_call = strike = None
+
+        entry = getattr(parent, "avg_fill_price", None)
+        quantity = float(getattr(parent, "quantity", 0) or 0)
+        multiplier = 100.0
+
+        pnl = pnl_percent = None
+        if entry and exit_price:
+            pnl = round((exit_price - entry) * multiplier * quantity, 2)
+            pnl_percent = round((exit_price - entry) / entry * 100, 2)
+
+        target = stop = tif = None
+        for leg in legs:
+            if "STP" in str(getattr(leg, "order_type", "")).upper():
+                stop = read_leg_price(leg)
+            else:
+                target = read_leg_price(leg)
+            tif = tif or str(getattr(leg, "time_in_force", "") or "") or None
+
+        placed_ms = getattr(parent, "order_time", None)
+        rows.append(
+            OrderHistoryRow(
+                order_id_text=str(getattr(parent, "id", "") or ""),
+                placed_at=(
+                    datetime.fromtimestamp(placed_ms / 1000, timezone.utc)
+                    if placed_ms
+                    else None
+                ),
+                identifier=identifier,
+                underlying=underlying,
+                strike=strike,
+                option_type=put_call,
+                expiry=expiry_text,
+                action=str(getattr(parent, "action", "") or ""),
+                quantity=quantity,
+                limit_price=getattr(parent, "limit_price", None),
+                fill_price=entry,
+                status=str(getattr(parent, "status", "")).split(".")[-1],
+                outcome=outcome,
+                outcome_note=note,
+                exit_price=exit_price,
+                realised_pnl=pnl,
+                realised_pnl_percent=pnl_percent,
+                take_profit_price=target,
+                stop_loss_price=stop,
+                leg_time_in_force=tif,
+                legs=[
+                    WorkingOrderOut(
+                        order_id_text=str(getattr(leg, "id", "") or ""),
+                        action=str(getattr(leg, "action", "") or ""),
+                        order_type=str(getattr(leg, "order_type", "") or "") or None,
+                        price=read_leg_price(leg),
+                        time_in_force=str(getattr(leg, "time_in_force", "") or "") or None,
+                        status=str(getattr(leg, "status", "")).split(".")[-1] or None,
+                        role=(
+                            "STOP_LOSS"
+                            if "STP" in str(getattr(leg, "order_type", "")).upper()
+                            else "TAKE_PROFIT"
+                        ),
+                    )
+                    for leg in legs
+                ],
+            )
+        )
+
+    rows.sort(key=lambda r: r.placed_at or datetime.min.replace(tzinfo=timezone.utc),
+              reverse=True)
+
+    return OrderHistoryResponse(
+        orders=rows,
+        took_profit=sum(1 for r in rows if r.outcome == "TOOK_PROFIT"),
+        stopped_out=sum(1 for r in rows if r.outcome == "STOPPED_OUT"),
+        still_open=sum(1 for r in rows if r.outcome == "STILL_OPEN"),
+        total_realised_pnl=round(sum(r.realised_pnl or 0 for r in rows), 2),
+    )
+
+
 @router.get("/orders/{order_id}", response_model=FillOutcomeOut)
 def read_order(order_id: int) -> FillOutcomeOut:
     """Report one order's current state.
@@ -470,3 +603,67 @@ def cancel_one_order(order_id: int, request: Request) -> CancelResponse:
             "an acknowledgement that the request was accepted."
         ),
     )
+
+
+def read_leg_price(order) -> float | None:
+    """Read a leg's price from whichever field it uses.
+
+    The two legs store their price in DIFFERENT fields: a take-profit is a
+    LMT carrying limit_price, a stop-loss is a STP carrying aux_price.
+    Reading the wrong one returns None and looks like a missing price.
+    """
+    return getattr(order, "limit_price", None) or getattr(order, "aux_price", None)
+
+
+def describe_outcome(parent, legs) -> tuple[str, str, float | None]:
+    """Work out what became of one bracketed order.
+
+    Tiger never says "the stop fired". It reports a status per order, and the
+    story is in which LEG filled: a filled LMT is the target, a filled STP is
+    the stop. Its partner shows CANCELLED with the reason "one of these OCA
+    orders is filled".
+
+    Args:
+        parent: The entry order.
+        legs: Its attached legs.
+
+    Returns:
+        A triple of (outcome code, a readable sentence, the exit fill price).
+    """
+    parent_status = str(getattr(parent, "status", "")).split(".")[-1].upper()
+    filled = float(getattr(parent, "filled", 0) or 0)
+
+    if filled <= 0:
+        if "CANCEL" in parent_status:
+            return "CANCELLED", "Cancelled before it filled. Nothing was bought.", None
+        if "EXPIRE" in parent_status or "REJECT" in parent_status:
+            return "EXPIRED", "Expired before it filled. Nothing was bought.", None
+        return "NOT_FILLED", "Still waiting to fill. Nothing bought yet.", None
+
+    for leg in legs:
+        leg_status = str(getattr(leg, "status", "")).split(".")[-1].upper()
+        if "FILLED" not in leg_status or float(getattr(leg, "filled", 0) or 0) <= 0:
+            continue
+
+        exit_price = getattr(leg, "avg_fill_price", None) or read_leg_price(leg)
+        kind = str(getattr(leg, "order_type", "")).upper()
+
+        if "STP" in kind:
+            return (
+                "STOPPED_OUT",
+                f"STOP LOSS triggered. Sold at {exit_price:,.2f}.",
+                exit_price,
+            )
+        return (
+            "TOOK_PROFIT",
+            f"TAKE PROFIT triggered. Sold at {exit_price:,.2f}.",
+            exit_price,
+        )
+
+    if legs:
+        return (
+            "STILL_OPEN",
+            "Filled, and neither exit has triggered. You still hold this.",
+            None,
+        )
+    return "STILL_OPEN", "Filled. No exits are attached to it.", None

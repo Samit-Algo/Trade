@@ -894,3 +894,50 @@ class PositionDetailResponse(BaseModel):
     )
     has_take_profit: bool
     protection_note: str
+
+
+class OrderHistoryRow(BaseModel):
+    """One order you placed, and what became of it."""
+
+    order_id_text: str = Field(
+        description="A STRING. Order ids exceed 2^53 and JavaScript rounds them."
+    )
+    placed_at: datetime | None
+
+    identifier: str
+    underlying: str
+    strike: float | None
+    option_type: str | None
+    expiry: str | None
+
+    action: str
+    quantity: float
+    limit_price: float | None
+    fill_price: float | None = Field(description="What it actually filled at.")
+    status: str
+
+    outcome: Literal[
+        "TOOK_PROFIT", "STOPPED_OUT", "STILL_OPEN",
+        "NOT_FILLED", "CANCELLED", "EXPIRED", "UNKNOWN",
+    ]
+    outcome_note: str = Field(description="One sentence a human can read.")
+    exit_price: float | None = Field(description="What the closing leg filled at.")
+    realised_pnl: float | None = Field(
+        description="Gross of commission, from the two fill prices."
+    )
+    realised_pnl_percent: float | None
+
+    take_profit_price: float | None
+    stop_loss_price: float | None
+    leg_time_in_force: str | None
+    legs: list[WorkingOrderOut]
+
+
+class OrderHistoryResponse(BaseModel):
+    """Every order placed on this account, newest first."""
+
+    orders: list[OrderHistoryRow]
+    took_profit: int
+    stopped_out: int
+    still_open: int
+    total_realised_pnl: float
