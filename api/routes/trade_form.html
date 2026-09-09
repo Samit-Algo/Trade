@@ -45,6 +45,18 @@
   .pill.wait .v{ color:var(--warn); }
   .refresh { margin-left:auto; }
 
+  .daybar { display:flex; flex-wrap:wrap; align-items:center; gap:10px;
+            background:var(--card); border:1px solid var(--line); border-radius:8px;
+            padding:12px 14px; margin-bottom:20px; }
+  .daybar label { margin:0; font-size:12.5px; font-weight:600; color:var(--muted);
+                  text-transform:uppercase; letter-spacing:.06em; }
+  .daybar input[type=date], .daybar select { width:auto; margin:0; padding:7px 9px; }
+  .daybar .verdict { font-size:13px; font-weight:500; }
+  .daybar .verdict.good { color:var(--good); }
+  .daybar .verdict.bad  { color:var(--bad); }
+  .daybar .alts { font-family:var(--mono); font-size:11.5px; color:var(--muted);
+                  flex-basis:100%; }
+
   .cols { display:grid; grid-template-columns:380px 1fr; gap:20px; align-items:start; }
   @media (max-width:900px) { .cols { grid-template-columns:1fr; } }
 
@@ -155,6 +167,14 @@
   <h1>Trade tester</h1>
   <p class="sub">Test freely. Nothing is bought until you press the red button.</p>
 
+  <div class="daybar">
+    <label for="tradingday">Expiry for every trade today</label>
+    <input type="date" id="tradingday">
+    <button type="button" class="btn-small" id="clearday">Clear</button>
+    <span class="verdict" id="dayverdict"></span>
+    <div class="alts" id="dayalts"></div>
+  </div>
+
   <div class="status" id="status">
     <span class="pill"><span class="k">Server</span><span class="v">checking…</span></span>
     <button type="button" class="btn-small refresh" id="refreshall">Refresh</button>
@@ -203,10 +223,6 @@
               <option value="2">2nd OTM</option>
               <option value="3">3rd OTM</option>
             </select>
-          </label>
-          <label>Expiry
-            <span class="hint">blank = soonest monthly at least 3 days out</span>
-            <select id="expiry"><option value="">auto-pick</option></select>
           </label>
           <label>Option price
             <span class="hint">blank = fetch the last traded price, free, seconds old</span>
@@ -481,27 +497,78 @@ async function pollDetail() {
   }
 }
 
-async function loadExpiries() {
-  const sel = $("expiry");
-  const keep = sel.value;
-  if (!key()) return;
-  try {
-    const r = await fetch(`/expirations/${$("symbol").value.trim().toUpperCase()}`,
-                          { headers: hdrs() });
-    if (!r.ok) return;
-    const d = await r.json();
-    sel.innerHTML = `<option value="">auto-pick</option>` +
-      d.expirations.filter(e => !e.expired).map(e =>
-        `<option value="${e.date}">${e.date} — ${e.days_to_expiry}d, ${e.period}</option>`
-      ).join("");
-    sel.value = keep;
-  } catch (e) { /* leave the dropdown as it is */ }
+// The expiry chosen once at the top is used for EVERY trade, whatever the
+// symbol. Weekly expiries do not line up across underlyings -- the same date
+// can exist for TSLA and not for AVGO -- which is what the verdict line is
+// for: say so BEFORE the order is sent, not as a 404 afterwards.
+const expiryCache = {};
+
+function tradingDay() {
+  return $("tradingday").value || "";
 }
-$("symbol").onchange = loadExpiries;
+
+async function expiriesFor(symbol) {
+  if (expiryCache[symbol]) return expiryCache[symbol];
+  const r = await fetch(`/expirations/${encodeURIComponent(symbol)}`, { headers: hdrs() });
+  if (!r.ok) return null;
+  const d = await r.json();
+  expiryCache[symbol] = d.expirations.filter(e => !e.expired);
+  return expiryCache[symbol];
+}
+
+async function checkTradingDay() {
+  const verdict = $("dayverdict"), alts = $("dayalts");
+  const day = tradingDay();
+  const symbol = $("symbol").value.trim().toUpperCase();
+
+  if (!day) {
+    verdict.className = "verdict";
+    verdict.textContent = "not set — each trade picks its own expiry";
+    alts.textContent = "";
+    return;
+  }
+  if (!key() || !symbol) { verdict.textContent = ""; alts.textContent = ""; return; }
+
+  try {
+    const list = await expiriesFor(symbol);
+    if (!list) { verdict.textContent = ""; alts.textContent = ""; return; }
+
+    const hit = list.find(e => e.date === day);
+    if (hit) {
+      verdict.className = "verdict good";
+      verdict.textContent = `available for ${symbol} — ${hit.days_to_expiry}d, ${hit.period}`;
+      alts.textContent = "";
+    } else {
+      verdict.className = "verdict bad";
+      verdict.textContent = `NOT LISTED for ${symbol} — this trade will be refused`;
+      alts.textContent = "nearest listed:  " +
+        list.slice(0, 6).map(e => `${e.date} (${e.days_to_expiry}d)`).join("   ");
+    }
+  } catch (e) {
+    verdict.textContent = "";
+    alts.textContent = "";
+  }
+}
+
+$("tradingday").onchange = () => {
+  try { localStorage.setItem("tigerTradingDay", tradingDay()); } catch (e) {}
+  checkTradingDay();
+};
+$("clearday").onclick = () => {
+  $("tradingday").value = "";
+  try { localStorage.removeItem("tigerTradingDay"); } catch (e) {}
+  checkTradingDay();
+};
+try {
+  const saved = localStorage.getItem("tigerTradingDay");
+  if (saved) $("tradingday").value = saved;
+} catch (e) {}
+
+$("symbol").onchange = checkTradingDay;
 $("detailrate").onchange = () => { if (detailId) startDetailTimer(); };
 
 function refreshAll() {
-  loadStatus(); loadPositions(); loadExpiries();
+  loadStatus(); loadPositions(); checkTradingDay();
   if (detailId) pollDetail();
   if ($("page-history").classList.contains("on")) loadHistory();
 }
@@ -623,7 +690,7 @@ function showOrder(o) {
 /* ---------- the request ---------- */
 function body(validateOnly) {
   const priceBox = $("entry_price").value.trim();
-  const expiryBox = $("expiry").value;
+  const expiryBox = tradingDay();
   return {
     client_order_id: $("client_order_id").value.trim(),
     symbol: $("symbol").value.trim().toUpperCase(),
