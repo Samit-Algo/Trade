@@ -29,6 +29,10 @@ from ..market import list_expirations
 #: one for selection.
 DEFAULT_MIN_DAYS_TO_EXPIRY = 3
 
+#: How many whole strikes out of the money to go by default. 1 is the first
+#: whole strike past the spot price. In-the-money strikes are never chosen.
+DEFAULT_STRIKES_OUT = 1
+
 #: Monthlies carry the volume, and thin contracts are the ones that are hard
 #: to get out of. Preferred, not required: a symbol with no monthly inside the
 #: window still gets a contract rather than an error.
@@ -148,6 +152,7 @@ def select_contract(
     current_price: float,
     minimum_days: int = DEFAULT_MIN_DAYS_TO_EXPIRY,
     expiry_date_text: str | None = None,
+    strikes_out: int = DEFAULT_STRIKES_OUT,
 ):
     """Turn a symbol, a side and a spot price into one verified contract.
 
@@ -168,6 +173,8 @@ def select_contract(
             used as-is and `minimum_days` is not applied -- naming a date is a
             deliberate act, so it is not second-guessed. It is still verified
             against Tiger, which refuses an expired or unlisted one.
+        strikes_out: How many WHOLE strikes out of the money to go. In-the-money
+            strikes are never chosen.
 
     Returns:
         A triple of (OptionContractInfo, why this expiry, why this strike).
@@ -206,7 +213,9 @@ def select_contract(
     compact = to_tiger_expiry_format(expiry.date_text)
 
     strikes = list_strikes_for_expiry(trade_client, normalised, compact, side)
-    strike, strike_reason = find_closest_strike(strikes, current_price, side)
+    strike, strike_reason = find_otm_whole_strike(
+        strikes, current_price, side, strikes_out
+    )
 
     # Phase 3, unchanged. It re-checks the expiry and asks Tiger to confirm the
     # contract. That repeats the expiry lookup, which is the price of having
@@ -215,3 +224,94 @@ def select_contract(
         quote_client, trade_client, normalised, side, strike, expiry.date_text
     )
     return contract, expiry_reason, strike_reason
+
+
+
+def is_whole_strike(strike: float) -> bool:
+    """True when a strike has no fractional part.
+
+    Deliberately not `strike % 5 == 0`. Ladder spacing varies with the price
+    of the underlying -- 2.5 on TSLA, 0.5 on a $40 stock, 1.0 on a $30 one --
+    so a hardcoded 5 would filter every strike off a cheap stock and leave
+    nothing to choose from. Asking for a whole number adapts on its own.
+
+    Args:
+        strike: The strike to test.
+
+    Returns:
+        Whether it is a round number.
+    """
+    return float(strike) == int(strike)
+
+
+def find_otm_whole_strike(
+    available_strikes: list[float],
+    spot_price: float,
+    put_call: str,
+    strikes_out: int = DEFAULT_STRIKES_OUT,
+) -> tuple[float, str]:
+    """Pick the Nth whole-number strike that is out of the money.
+
+    Three filters, in order: whole numbers, out of the money, then the Nth one
+    counting away from the spot price. A strike sitting exactly ON the spot is
+    at the money, not out of it, so it is skipped.
+
+    OUT OF THE MONEY means above the spot for a CALL and below it for a PUT.
+
+    Args:
+        available_strikes: Strikes Tiger lists, ascending.
+        spot_price: The underlying's price.
+        put_call: "CALL" or "PUT".
+        strikes_out: 1 for the first strike out, 2 for the second.
+
+    Returns:
+        A pair of (the strike, a sentence saying which rule chose it).
+
+    Raises:
+        StrikeNotFoundError: If nothing is out of the money at all.
+    """
+    if not available_strikes:
+        raise StrikeNotFoundError(
+            "Tiger listed no strikes for that expiry and side."
+        )
+
+    def out_of_money(strikes):
+        """Strikes past the spot, nearest first."""
+        if put_call == "CALL":
+            return sorted(k for k in strikes if k > spot_price)
+        return sorted((k for k in strikes if k < spot_price), reverse=True)
+
+    wanted = max(1, strikes_out)
+    whole_otm = out_of_money(
+        [k for k in available_strikes if is_whole_strike(k)]
+    )
+
+    if whole_otm:
+        index = min(wanted - 1, len(whole_otm) - 1)
+        chosen = whole_otm[index]
+        if index < wanted - 1:
+            return chosen, (
+                f"wanted strike {wanted} out of the money but only "
+                f"{len(whole_otm)} whole strike(s) exist past "
+                f"{spot_price:,.2f}; took the furthest, {chosen:,.2f}"
+            )
+        return chosen, (
+            f"whole strike {wanted} out of the money for a {put_call}, "
+            f"{chosen:,.2f} against a spot of {spot_price:,.2f}"
+        )
+
+    # No whole strike past the spot. A less round strike beats no trade, but
+    # say so plainly -- half strikes are thinner and the fill will show it.
+    any_otm = out_of_money(available_strikes)
+    if any_otm:
+        chosen = any_otm[min(wanted - 1, len(any_otm) - 1)]
+        return chosen, (
+            f"NO WHOLE strike is out of the money past {spot_price:,.2f}; "
+            f"fell back to {chosen:,.2f}"
+        )
+
+    raise StrikeNotFoundError(
+        f"No strike is out of the money for a {put_call} at "
+        f"{spot_price:,.2f}. The listed strikes run "
+        f"{min(available_strikes):,.2f} to {max(available_strikes):,.2f}."
+    )

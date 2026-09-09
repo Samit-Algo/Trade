@@ -640,6 +640,22 @@ class TradeRequest(BaseModel):
     )
     quantity: int = Field(ge=1, le=1000, description="Contracts. One is 100 shares.")
 
+    strikes_out: int = Field(
+        default=1,
+        ge=1,
+        le=10,
+        description="How many WHOLE strikes out of the money to go. 1 is the "
+        "first whole strike past current_price. In-the-money strikes are "
+        "never chosen.",
+    )
+
+    require_live_trading: bool = Field(
+        default=False,
+        description="Refuse unless the contract has traded during the current "
+        "minute. Turn this on for fast trading: a price carried forward from "
+        "several minutes ago is not something to place an order against.",
+    )
+
     expiry: str | None = Field(
         default=None,
         description="Expiry as YYYY-MM-DD. Leave it out and the backend picks "
@@ -674,7 +690,16 @@ class PriceSource(BaseModel):
     price: float
     age_seconds: float | None = Field(
         default=None,
-        description="How old the fetched price is. Null when the caller sent it.",
+        description="Seconds since the bar's MINUTE BEGAN -- not since the last "
+        "trade. Use is_live for freshness.",
+    )
+    is_live: bool | None = Field(
+        default=None,
+        description="True when the contract traded during the current minute. "
+        "The real freshness test. Null when the caller supplied the price.",
+    )
+    recent_volume: int | None = Field(
+        default=None, description="Contracts traded in the current minute."
     )
     note: str
 

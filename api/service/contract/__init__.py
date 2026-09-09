@@ -20,7 +20,8 @@ from .identifiers import (
     build_identifier, parse_identifier, validate_option_type
 )
 from .selection import (
-    DEFAULT_MIN_DAYS_TO_EXPIRY, choose_expiry, find_closest_strike,
+    DEFAULT_MIN_DAYS_TO_EXPIRY, DEFAULT_STRIKES_OUT, choose_expiry,
+    find_closest_strike, find_otm_whole_strike, is_whole_strike,
     select_contract,
 )
 from .resolve import (
@@ -32,7 +33,8 @@ from .resolve import (
 
 __all__ = [
     "SymbolNotListedError", "select_contract",
-    "DEFAULT_MIN_DAYS_TO_EXPIRY", "choose_expiry", "find_closest_strike",
+    "DEFAULT_MIN_DAYS_TO_EXPIRY", "DEFAULT_STRIKES_OUT", "choose_expiry",
+    "find_closest_strike", "find_otm_whole_strike", "is_whole_strike",
     "ContractError", "ExpiryNotListedError", "ExpiredContractError",
     "StrikeNotFoundError", "VALID_OPTION_TYPES", "to_tiger_expiry_format",
     "from_tiger_expiry_format", "build_identifier", "parse_identifier",

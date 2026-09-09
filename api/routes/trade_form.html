@@ -162,6 +162,14 @@
             </label>
             <label>Contracts<input type="number" step="1" min="1" id="quantity" value="1"></label>
           </div>
+          <label>Strikes out of the money
+            <span class="hint">whole strikes only, never in the money</span>
+            <select id="strikes_out">
+              <option value="1" selected>1st OTM</option>
+              <option value="2">2nd OTM</option>
+              <option value="3">3rd OTM</option>
+            </select>
+          </label>
           <label>Expiry
             <span class="hint">blank = soonest monthly at least 3 days out</span>
             <select id="expiry"><option value="">auto-pick</option></select>
@@ -169,6 +177,11 @@
           <label>Option price
             <span class="hint">blank = fetch the last traded price, free, seconds old</span>
             <input type="number" step="0.01" id="entry_price" placeholder="leave blank to fetch">
+          </label>
+          <label style="font-weight:400;font-size:12.5px">
+            <input type="checkbox" id="require_live_trading" checked
+                   style="width:auto;margin:0 6px 0 0;vertical-align:-1px">
+            Refuse if the contract has not traded this minute
           </label>
         </fieldset>
 
@@ -216,9 +229,9 @@
         <h2 style="display:flex;align-items:center;gap:8px">
           <span class="live"></span>Position &mdash; live
           <select id="detailrate" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
-            <option value="2000">every 2s</option>
+            <option value="2000" selected>every 2s</option>
             <option value="3000">every 3s</option>
-            <option value="5000" selected>every 5s</option>
+            <option value="5000">every 5s</option>
             <option value="10000">every 10s</option>
           </select>
         </h2>
@@ -451,6 +464,8 @@ function body(validateOnly) {
     quantity: parseInt($("quantity").value, 10),
     ...(priceBox === "" ? {} : { entry_price: parseFloat(priceBox) }),
     ...(expiryBox === "" ? {} : { expiry: expiryBox }),
+    strikes_out: parseInt($("strikes_out").value, 10),
+    require_live_trading: $("require_live_trading").checked,
     take_profit_percent: parseFloat($("take_profit_percent").value),
     stop_loss_percent: parseFloat($("stop_loss_percent").value),
     leg_time_in_force: $("leg_time_in_force").value,
@@ -489,7 +504,10 @@ function renderOk(data, exactOrderId) {
       <tr><td>Why this strike</td><td style="font-family:inherit">${data.strike_selection_reason}</td></tr>
       <tr><td>Why this expiry</td><td style="font-family:inherit">${data.expiry_selection_reason}</td></tr>
       <tr><td>Option price from</td><td>${data.price_source.source === "caller"
-          ? "you" : `LAST TRADE, ${Math.round(data.price_source.age_seconds)}s old`}
+          ? "you"
+          : (data.price_source.is_live
+              ? `<span class="pos">TRADING NOW</span> — ${data.price_source.recent_volume} this minute`
+              : `<span class="neg">not trading this minute</span>`)}
           &nbsp;$${money(data.price_source.price)}</td></tr>
       <tr><td>Buffer applied</td><td>+${data.tick.buffer_ticks} tick of ${data.tick.tick_size}</td></tr>
       <tr><td>Cash needed</td><td>$${money(data.cash_required)}</td></tr>

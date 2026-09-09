@@ -556,3 +556,134 @@ class TestWorkingOrderRoles:
 
         assert classify_working_order("SELL", "TRAIL") == "OTHER"
         assert classify_working_order("", "") == "OTHER"
+
+
+class TestOtmWholeStrikeSelection:
+    """Whole strikes only, never in the money, Nth one out.
+
+    Measured on 2026-09-09: whole strikes carried 3.5x the volume of half
+    strikes, and out-of-the-money contracts moved nearly twice the percentage
+    per minute of in-the-money ones.
+    """
+
+    LADDER = [365.0, 367.5, 370.0, 372.5, 375.0, 377.5, 380.0, 382.5, 385.0]
+    SPOT = 371.79
+
+    def pick(self, side, out=1, ladder=None, spot=None):
+        from api.service.contract import find_otm_whole_strike
+
+        return find_otm_whole_strike(
+            ladder if ladder is not None else self.LADDER,
+            self.SPOT if spot is None else spot,
+            side,
+            out,
+        )
+
+    def test_a_call_takes_the_first_whole_strike_above_spot(self):
+        strike, _ = self.pick("CALL", 1)
+        assert strike == 375.0          # not 372.5, which is a half strike
+
+    def test_a_put_takes_the_first_whole_strike_below_spot(self):
+        strike, _ = self.pick("PUT", 1)
+        assert strike == 370.0
+
+    def test_the_second_one_out(self):
+        assert self.pick("CALL", 2)[0] == 380.0
+        assert self.pick("PUT", 2)[0] == 365.0
+
+    def test_half_strikes_are_never_chosen(self):
+        for side in ("CALL", "PUT"):
+            for out in (1, 2, 3):
+                strike, _ = self.pick(side, out)
+                assert strike == int(strike), f"{side} {out} picked {strike}"
+
+    def test_an_in_the_money_strike_is_never_chosen(self):
+        assert self.pick("CALL", 1)[0] > self.SPOT
+        assert self.pick("PUT", 1)[0] < self.SPOT
+
+    def test_a_strike_exactly_on_the_spot_is_at_the_money_not_out(self):
+        strike, _ = self.pick("CALL", 1, ladder=[370.0, 375.0], spot=370.0)
+        assert strike == 375.0
+
+    def test_asking_further_out_than_exists_takes_the_furthest(self):
+        strike, reason = self.pick("CALL", 9)
+        assert strike == 385.0
+        assert "only" in reason
+
+    def test_it_falls_back_when_no_whole_strike_is_out_of_the_money(self):
+        """A thinner strike beats no trade, but the reason has to say so."""
+        strike, reason = self.pick("CALL", 1, ladder=[370.0, 372.5], spot=371.0)
+        assert strike == 372.5
+        assert "NO WHOLE" in reason
+
+    def test_nothing_out_of_the_money_is_refused(self):
+        from api.service.contract import StrikeNotFoundError
+
+        with pytest.raises(StrikeNotFoundError, match="out of the money"):
+            self.pick("CALL", 1, ladder=[300.0, 305.0], spot=400.0)
+
+    def test_the_reason_always_names_the_rule(self):
+        _strike, reason = self.pick("CALL", 1)
+        assert "whole strike 1 out of the money" in reason
+
+
+class TestWholeStrikeTest:
+    """`% 5` would wipe out every strike on a cheap stock."""
+
+    def test_round_numbers_are_whole(self):
+        from api.service.contract import is_whole_strike
+
+        assert is_whole_strike(375.0) is True
+        assert is_whole_strike(41.0) is True
+
+    def test_half_strikes_are_not(self):
+        from api.service.contract import is_whole_strike
+
+        assert is_whole_strike(377.5) is False
+        assert is_whole_strike(40.5) is False
+
+    def test_a_dollar_ladder_keeps_every_strike(self):
+        """On a $30 stock the strikes are 29, 30, 31 -- filtering none."""
+        from api.service.contract import is_whole_strike
+
+        ladder = [29.0, 30.0, 31.0, 32.0]
+        assert [k for k in ladder if is_whole_strike(k)] == ladder
+
+
+class TestLiveTradingTest:
+    """age_seconds counts from the bar's MINUTE START, not the last trade.
+
+    Measured live: a bar labelled 10:06 read at 10:06:58 reported an age of
+    58s while its close moved every two seconds and its volume went 518 ->
+    637. So age cannot answer "is this fresh"; trading-this-minute can.
+    """
+
+    def make(self, minutes_ago, volume):
+        from datetime import datetime, timezone
+
+        from api.service.market import RecentTrade
+
+        now_ms = datetime.now(timezone.utc).timestamp() * 1000.0
+        bar_ms = (int(now_ms // 60000) - minutes_ago) * 60000
+        return RecentTrade(
+            price=5.00,
+            bar_time_ms=bar_ms,
+            age_seconds=(now_ms - bar_ms) / 1000.0,
+            volume=volume,
+        )
+
+    def test_trading_this_minute_is_live(self):
+        assert self.make(0, 500).is_live is True
+
+    def test_a_previous_minute_is_not_live(self):
+        assert self.make(1, 500).is_live is False
+
+    def test_this_minute_with_no_volume_is_not_live(self):
+        """A placeholder bar carries an older trade forward."""
+        assert self.make(0, 0).is_live is False
+
+    def test_a_high_age_can_still_be_live(self):
+        """The whole point: 58 seconds into the current minute is fine."""
+        live = self.make(0, 500)
+        assert live.age_seconds >= 0
+        assert live.is_live is True

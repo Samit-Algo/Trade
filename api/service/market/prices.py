@@ -395,6 +395,32 @@ class RecentTrade:
         """True when the price is recent enough to place an order against."""
         return self.age_seconds <= MAX_RECENT_TRADE_AGE_SECONDS
 
+    @property
+    def traded_this_minute(self) -> bool:
+        """True when the newest bar is the minute we are in now.
+
+        `age_seconds` measures time since the bar's minute BEGAN, not since
+        the last trade. A bar labelled 10:06 read at 10:06:58 has an age of
+        58s while its close is updating every couple of seconds. Measured
+        live: volume went 518 -> 637 across twenty seconds inside one bar.
+
+        So this is the real freshness question, and the one the data can
+        actually answer: did this contract trade during the current minute?
+        """
+        now_ms = datetime.now(timezone.utc).timestamp() * 1000.0
+        return int(self.bar_time_ms // 60000) == int(now_ms // 60000)
+
+    @property
+    def is_live(self) -> bool:
+        """True when the contract is trading right now, not carrying forward.
+
+        Both halves matter. A bar for the current minute with zero volume is
+        a placeholder, and its close is the last trade from some earlier
+        minute -- exactly the thin-contract case where the price sat
+        unchanged for 33 seconds.
+        """
+        return self.traded_this_minute and bool(self.volume)
+
 
 #: Older than this and the price is not worth trading on. Measured live on
 #: 2026-09-08: six AAPL contracts across the ladder all came back 18-19s old

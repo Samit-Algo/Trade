@@ -1020,6 +1020,79 @@ that is the likeliest cause.
 
 ---
 
+## 3h. Strike selection for fast trading (2026-09-09)
+
+Measured on the live TSLA 11-Sep chain, spot 371.79, volume over ten minutes:
+
+| | median volume | median 1-min move |
+|---|---|---|
+| WHOLE strikes (no .5) | **1,067** | |
+| HALF strikes (x.5) | 309 | |
+| IN the money | 1,472 | 5.0% |
+| OUT of the money | 3,634 | **9.7%** |
+
+Whole strikes carried **3.5x** the volume of the half strikes beside them --
+375.0 had 3,538 against 377.5's 774, and it held at every level. Out-of-the-
+money contracts carried 2.5x the volume of in-the-money ones and moved nearly
+double the percentage per minute. The deep ITM strikes were dead: 350 and 355
+showed 0.0% median movement.
+
+More volume means more trades, which means the free one-minute bar updates
+more often. That is the whole reason this matters.
+
+`find_otm_whole_strike()` therefore filters: whole numbers, then out of the
+money, then the Nth one out. A strike sitting exactly ON the spot is at the
+money, not out of it, and is skipped.
+
+**Whole is `strike == int(strike)`, not `strike % 5 == 0`.** Ladder spacing
+follows the price of the underlying -- 2.5 on TSLA, 1.0 on a $30 stock -- so
+a hardcoded 5 would filter out every strike on a cheap name and leave nothing
+to choose from.
+
+`find_closest_strike` is untouched and still used for error messages.
+
+### age_seconds is not freshness, and cannot be made into it
+
+A request came in to refuse any price older than 3 seconds. **One-minute bars
+cannot support that**, and the reason is worth writing down.
+
+`age_seconds` measures time since the bar's MINUTE BEGAN, not since the last
+trade. Measured live on a liquid contract:
+
+```
+wall time   bar minute   AGE    price
+10:06:42      10:06      43s    5.27
+10:06:49      10:06      49s    5.00   MOVED
+10:06:55      10:06      56s    4.95   MOVED
+10:07:00      10:06      60s    5.00   MOVED
+```
+
+The age climbed to 60s while the price updated every two seconds and the
+bar's volume went 518 -> 637. A 3-second limit would have rejected all of it.
+
+The question the data CAN answer is whether the contract traded during the
+current minute. `RecentTrade.is_live` tests two things: the newest bar is the
+current minute, AND its volume is above zero. A current-minute bar with zero
+volume is a placeholder carrying an older trade forward -- exactly the thin-
+contract case where the price sat unchanged for 33 seconds.
+
+`require_live_trading` (default false, on in the form) enforces it and returns
+**422 PRICE_NOT_LIVE**. Every response now reports `is_live` and
+`recent_volume` whether or not it was enforced, so the freshness is visible
+even when it is not being checked.
+
+### What free data supports, measured
+
+| Contract | Update rate | Move |
+|---|---|---|
+| 9-day, thin | unchanged for 33s | 0.6% over 40s |
+| 2-day, 499/5min | changed 15 times in 34s | **7.8% over 34s** |
+
+Scalping at the seconds-to-minutes scale works on liquid contracts and not on
+thin ones. The data was never the limit; contract choice was.
+
+---
+
 ## 4. Environment facts
 
 Not derivable from the repo, because `.env` and `secrets/` are gitignored.

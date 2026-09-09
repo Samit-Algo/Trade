@@ -208,6 +208,7 @@ def find_contract(body: TradeRequest):
             body.current_price,
             minimum_days=settings.min_days_to_expiry,
             expiry_date_text=body.expiry,
+            strikes_out=body.strikes_out,
         )
 
     # current_price picks the strike, so it belongs in the key -- rounded to
@@ -218,6 +219,7 @@ def find_contract(body: TradeRequest):
         body.option_type,
         round(body.current_price),
         body.expiry or "auto",
+        body.strikes_out,
     )
     return get_cached_contract(key, resolve)
 
@@ -247,6 +249,8 @@ def resolve_entry_price(body: TradeRequest, contract) -> tuple[float, PriceSourc
             source="caller",
             price=body.entry_price,
             age_seconds=None,
+            is_live=None,
+            recent_volume=None,
             note="Supplied in the request. Nothing was fetched.",
         )
 
@@ -260,6 +264,26 @@ def resolve_entry_price(body: TradeRequest, contract) -> tuple[float, PriceSourc
                 f"No traded price could be fetched for {contract.identifier}. "
                 "The contract may never have traded. Send entry_price yourself."
             ),
+        )
+
+    # The real freshness test. age_seconds counts from the bar's MINUTE
+    # START, so it climbs to 60 while the price updates every couple of
+    # seconds -- it cannot answer "how old is this trade". Whether the
+    # contract traded during the current minute can.
+    if body.require_live_trading and not recent.is_live:
+        raise ApiError(
+            status_code=422,
+            error_code="PRICE_NOT_LIVE",
+            message=(
+                f"{contract.identifier} has not traded during the current "
+                "minute, so its price is carried forward from earlier. Pick a "
+                "contract with volume, or turn require_live_trading off."
+            ),
+            detail={
+                "traded_this_minute": recent.traded_this_minute,
+                "volume_this_minute": recent.volume,
+                "price": recent.price,
+            },
         )
 
     if not recent.is_fresh:
@@ -280,10 +304,16 @@ def resolve_entry_price(body: TradeRequest, contract) -> tuple[float, PriceSourc
         source="last_trade",
         price=recent.price,
         age_seconds=recent.age_seconds,
+        is_live=recent.is_live,
+        recent_volume=recent.volume,
         note=(
-            f"Last traded price, {recent.age_seconds:,.0f}s old, from free "
-            "one-minute bars. NOT a bid or ask -- no spread data exists "
-            "without the usOptionQuote entitlement."
+            "Last traded price from free one-minute bars. "
+            + (
+                f"Trading NOW -- {recent.volume} contract(s) this minute."
+                if recent.is_live
+                else "NOT trading this minute; this price is carried forward."
+            )
+            + " NOT a bid or ask: no spread data without usOptionQuote."
         ),
     )
 
