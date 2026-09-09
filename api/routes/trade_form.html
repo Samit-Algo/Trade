@@ -27,7 +27,7 @@
   * { box-sizing: border-box; }
   body { margin:0; background:var(--ground); color:var(--ink);
          font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  .wrap { max-width:1180px; margin:0 auto; padding:20px 20px 60px; }
+  .wrap { max-width:none; margin:0; padding:20px 26px 60px; }
   h1 { font-size:21px; margin:0; }
   .sub { color:var(--muted); margin:2px 0 0; font-size:13.5px; }
 
@@ -57,8 +57,13 @@
   .daybar .alts { font-family:var(--mono); font-size:11.5px; color:var(--muted);
                   flex-basis:100%; }
 
-  .cols { display:grid; grid-template-columns:380px 1fr; gap:20px; align-items:start; }
+  .cols { display:grid; grid-template-columns:400px minmax(0,1fr); gap:20px; align-items:start; }
   @media (max-width:900px) { .cols { grid-template-columns:1fr; } }
+  /* Three columns once there is room: form | result | live. */
+  @media (min-width:1500px) {
+    .cols { grid-template-columns:400px minmax(0,1fr) minmax(0,1fr); }
+    .cols > div:first-child { grid-row:1 / span 2; }
+  }
 
   .shell { display:grid; grid-template-columns:170px 1fr; gap:20px; align-items:start; }
   @media (max-width:820px) { .shell { grid-template-columns:1fr; } }
@@ -263,7 +268,12 @@
       </form>
 
       <div class="card">
-        <h2>Positions held &mdash; click one</h2>
+        <h2 style="display:flex;align-items:center;gap:8px">
+          Positions held &mdash; click one
+          <select id="posfilter" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
+            <option value="">all expiries</option>
+          </select>
+        </h2>
         <div id="positions"><div class="placeholder">…</div></div>
       </div>
     </div>
@@ -388,37 +398,78 @@ function refreshBtn() {
 }
 
 /* ---------- positions ---------- */
+// Positions are filtered by EXPIRY, and the choices are built from what is
+// actually held -- offering a date with nothing on it would be noise. The
+// filter defaults to "all", so nothing is ever hidden by accident.
+let positionsCache = [];
+
+function positionExpiries(positions) {
+  return [...new Set(positions.map(p => p.expiry))].sort();
+}
+
+function rebuildPositionFilter(positions) {
+  const sel = $("posfilter");
+  const keep = sel.value;
+  const counts = {};
+  positions.forEach(p => { counts[p.expiry] = (counts[p.expiry] || 0) + 1; });
+
+  sel.innerHTML = `<option value="">all expiries (${positions.length})</option>` +
+    positionExpiries(positions).map(d =>
+      `<option value="${d}">${d} (${counts[d]})</option>`).join("");
+  sel.value = positionExpiries(positions).includes(keep) ? keep : "";
+}
+
+function renderPositions() {
+  const box = $("positions");
+  const want = $("posfilter").value;
+  const rows = want ? positionsCache.filter(p => p.expiry === want) : positionsCache;
+
+  if (!positionsCache.length) {
+    box.innerHTML = `<div class="placeholder">Nothing held.</div>`;
+    return;
+  }
+  if (!rows.length) {
+    box.innerHTML = `<div class="placeholder">Nothing held expiring ${want}.</div>`;
+    return;
+  }
+
+  box.innerHTML = `<table class="grid">
+    <tr><th>Contract</th><th>Expiry</th><th>Qty</th><th>Cost</th><th>P&amp;L</th><th>DTE</th></tr>` +
+    rows.map(p => {
+      const pnl = p.tiger_unrealised_pnl;
+      const cls = pnl == null ? "" : (pnl >= 0 ? "pos" : "neg");
+      return `<tr class="clickable" data-id="${p.identifier.replace(/"/g, "&quot;")}">
+        <td>${p.underlying} ${p.strike} ${p.option_type[0]}</td>
+        <td>${p.expiry}</td>
+        <td>${p.quantity}</td>
+        <td>${money(p.cost_basis)}</td>
+        <td class="${cls}">${pnl == null ? "—" : (pnl >= 0 ? "+" : "") + money(pnl)}</td>
+        <td>${p.days_to_expiry}${p.expiring_soon ? " ⚠" : ""}</td>
+      </tr>`;
+    }).join("") + `</table>`;
+
+  box.querySelectorAll("tr.clickable").forEach(row => {
+    row.onclick = () => showPosition(row.dataset.id);
+    if (row.dataset.id === detailId) row.classList.add("on");
+  });
+}
+
 async function loadPositions() {
   const box = $("positions");
   if (!key()) { box.innerHTML = `<div class="placeholder">Enter your API key.</div>`; return; }
   try {
     const r = await fetch("/positions", { headers: hdrs() });
     const d = await r.json();
-    if (!r.ok) { box.innerHTML = `<div class="placeholder">${d.message || "failed"}</div>`; return; }
-    if (!d.positions.length) { box.innerHTML = `<div class="placeholder">Nothing held.</div>`; return; }
-
-    box.innerHTML = `<table class="grid">
-      <tr><th>Contract</th><th>Qty</th><th>Cost</th><th>P&amp;L</th><th>DTE</th></tr>` +
-      d.positions.map(p => {
-        const pnl = p.tiger_unrealised_pnl;
-        const cls = pnl == null ? "" : (pnl >= 0 ? "pos" : "neg");
-        return `<tr class="clickable" data-id="${p.identifier.replace(/"/g, "&quot;")}">
-          <td>${p.underlying} ${p.strike} ${p.option_type[0]}</td>
-          <td>${p.quantity}</td>
-          <td>${money(p.cost_basis)}</td>
-          <td class="${cls}">${pnl == null ? "—" : (pnl >= 0 ? "+" : "") + money(pnl)}</td>
-          <td>${p.days_to_expiry}${p.expiring_soon ? " ⚠" : ""}</td>
-        </tr>`;
-      }).join("") + `</table>`;
-
-    box.querySelectorAll("tr.clickable").forEach(row => {
-      row.onclick = () => showPosition(row.dataset.id);
-      if (row.dataset.id === detailId) row.classList.add("on");
-    });
+    if (!r.ok) { box.innerHTML = `<div class="placeholder">${(d.error || d).message || "failed"}</div>`; return; }
+    positionsCache = d.positions;
+    rebuildPositionFilter(positionsCache);
+    renderPositions();
   } catch (e) {
     box.innerHTML = `<div class="placeholder">${e.message}</div>`;
   }
 }
+
+$("posfilter").onchange = renderPositions;
 
 /* ---------- one position, priced live ---------- */
 let detailId = null;
