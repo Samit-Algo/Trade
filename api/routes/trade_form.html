@@ -172,153 +172,150 @@
   <h1>Trade tester</h1>
   <p class="sub">Test freely. Nothing is bought until you press the red button.</p>
 
-  <div class="daybar">
-    <label for="tradingday">Expiry for every trade today</label>
-    <input type="date" id="tradingday">
-    <button type="button" class="btn-small" id="clearday">Clear</button>
-    <span class="verdict" id="dayverdict"></span>
-    <div class="alts" id="dayalts"></div>
+  <div class="setup">
+    <div class="setup-row">
+      <label for="apikey">API key</label>
+      <input type="password" id="apikey" placeholder="TIGER_API_KEY from your .env">
+      <label for="tradingday">Expiry for every trade</label>
+      <input type="date" id="tradingday">
+      <button type="button" class="btn-small" id="clearday">Clear</button>
+      <button type="button" class="btn-small" id="refreshall">Refresh</button>
+      <button type="button" class="btn-small themebtn" id="theme">Theme: system</button>
+    </div>
+    <div class="setup-row">
+      <span class="verdict" id="dayverdict"></span>
+      <span class="alts" id="dayalts"></span>
+    </div>
   </div>
 
-  <div class="status" id="status">
-    <span class="pill"><span class="k">Server</span><span class="v">checking…</span></span>
-    <button type="button" class="btn-small refresh" id="refreshall">Refresh</button>
-  </div>
+  <div class="status" id="status"></div>
 
   <div class="shell">
     <nav class="nav">
       <button type="button" id="nav-trade" class="on" onclick="showPage('trade')">Trade</button>
+      <button type="button" id="nav-positions" onclick="showPage('positions')">
+        Positions <span class="count" id="poscount"></span></button>
       <button type="button" id="nav-history" onclick="showPage('history')">
         Order history <span class="count" id="histcount"></span></button>
     </nav>
 
     <div>
     <div class="page on" id="page-trade">
-  <div class="cols">
-    <!-- ================= LEFT ================= -->
-    <div>
-      <form class="card" id="form" autocomplete="off">
-        <fieldset>
-          <legend>Access</legend>
-          <label>API key
-            <span class="hint">TIGER_API_KEY from .env. Saved in this browser only.</span>
-            <input type="password" id="apikey" placeholder="paste your key">
-          </label>
-        </fieldset>
-
-        <fieldset>
-          <legend>What to buy</legend>
-          <div class="row">
-            <label>Symbol<input id="symbol" value="AAPL"></label>
-            <label>Call or put
-              <select id="option_type"><option>CALL</option><option>PUT</option></select>
+      <div class="cols">
+        <form class="card" id="form" autocomplete="off">
+          <fieldset>
+            <legend>What to buy</legend>
+            <div class="row">
+              <label>Symbol<input id="symbol" value="TSLA"></label>
+              <label>Call or put
+                <select id="option_type"><option>CALL</option><option>PUT</option></select>
+              </label>
+            </div>
+            <div class="row">
+              <label>Stock price
+                <span class="hint">picks the strike</span>
+                <input type="number" step="0.01" id="current_price" value="371.79">
+              </label>
+              <label>Contracts<input type="number" step="1" min="1" id="quantity" value="1"></label>
+            </div>
+            <label>Strikes out of the money
+              <span class="hint">whole strikes only, never in the money</span>
+              <select id="strikes_out">
+                <option value="1" selected>1st OTM</option>
+                <option value="2">2nd OTM</option>
+                <option value="3">3rd OTM</option>
+              </select>
             </label>
-          </div>
-          <div class="row">
-            <label>Stock price
-              <span class="hint">picks the strike</span>
-              <input type="number" step="0.01" id="current_price" value="318.40">
+            <label>Option price
+              <span class="hint">blank = fetch the last traded price, free, seconds old</span>
+              <input type="number" step="0.01" id="entry_price" placeholder="leave blank to fetch">
             </label>
-            <label>Contracts<input type="number" step="1" min="1" id="quantity" value="1"></label>
-          </div>
-          <label>Strikes out of the money
-            <span class="hint">whole strikes only, never in the money</span>
-            <select id="strikes_out">
-              <option value="1" selected>1st OTM</option>
-              <option value="2">2nd OTM</option>
-              <option value="3">3rd OTM</option>
-            </select>
-          </label>
-          <label>Option price
-            <span class="hint">blank = fetch the last traded price, free, seconds old</span>
-            <input type="number" step="0.01" id="entry_price" placeholder="leave blank to fetch">
-          </label>
-          <label style="font-weight:400;font-size:12.5px">
-            <input type="checkbox" id="require_live_trading" checked
-                   style="width:auto;margin:0 6px 0 0;vertical-align:-1px">
-            Refuse if the contract has not traded this minute
-          </label>
-        </fieldset>
+            <label style="font-weight:400;font-size:12.5px">
+              <input type="checkbox" id="require_live_trading" checked
+                     style="width:auto;margin:0 6px 0 0;vertical-align:-1px">
+              Refuse if the contract has not traded this minute
+            </label>
+          </fieldset>
 
-        <fieldset>
-          <legend>Exits</legend>
-          <div class="row">
-            <label>Take profit %<input type="number" step="1" id="take_profit_percent" value="20"></label>
-            <label>Stop loss %<input type="number" step="1" id="stop_loss_percent" value="15"></label>
-          </div>
-          <label>Legs live for
-            <select id="leg_time_in_force">
-              <option value="GTC">GTC — survive overnight (safer)</option>
-              <option value="DAY">DAY — die at close</option>
-            </select>
-          </label>
-        </fieldset>
+          <fieldset>
+            <legend>Exits</legend>
+            <div class="row">
+              <label>Take profit %<input type="number" step="1" id="take_profit_percent" value="5"></label>
+              <label>Stop loss %<input type="number" step="1" id="stop_loss_percent" value="5"></label>
+            </div>
+            <label>Legs live for
+              <select id="leg_time_in_force">
+                <option value="GTC">GTC &mdash; survive overnight (safer)</option>
+                <option value="DAY">DAY &mdash; die at close</option>
+              </select>
+            </label>
+            <div class="idrow" style="margin-top:11px">
+              <label>Order ID<input id="client_order_id"></label>
+              <button type="button" class="btn-small" id="newid">New</button>
+            </div>
+          </fieldset>
 
-        <fieldset>
-          <legend>This order</legend>
-          <div class="idrow">
-            <label>Order ID<input id="client_order_id"></label>
-            <button type="button" class="btn-small" id="newid">New</button>
-          </div>
-        </fieldset>
+          <button type="button" class="btn-test" id="test">Test &mdash; buys nothing</button>
+          <button type="button" class="btn-real" id="place">Place the order for real</button>
+          <p class="note" id="realnote"></p>
+        </form>
 
-        <button type="button" class="btn-test" id="test">Test — buys nothing</button>
-        <button type="button" class="btn-real" id="place">Place the order for real</button>
-        <p class="note" id="realnote"></p>
-      </form>
+        <div class="card">
+          <h2>Result</h2>
+          <div id="out"><div class="placeholder">Press Test to see what would happen.</div></div>
+        </div>
 
-      <div class="card">
-        <h2 style="display:flex;align-items:center;gap:8px">
-          Positions held &mdash; click one
-          <select id="posfilter" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
-            <option value="">all expiries</option>
-          </select>
-        </h2>
-        <div id="positions"><div class="placeholder">…</div></div>
+        <div class="card" id="livecard" hidden>
+          <h2><span class="live"></span>Live order &mdash; updating every 3s</h2>
+          <div id="livebox"></div>
+        </div>
       </div>
     </div>
 
-    <!-- ================= RIGHT ================= -->
-    <div>
-      <div class="card">
-        <h2>Result</h2>
-        <div id="out"><div class="placeholder">Press Test to see what would happen.</div></div>
-      </div>
-
-      <div class="card" id="detailcard" hidden>
-        <h2 style="display:flex;align-items:center;gap:8px">
-          <span class="live"></span>Position &mdash; live
-          <select id="detailrate" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
-            <option value="2000" selected>every 2s</option>
-            <option value="3000">every 3s</option>
-            <option value="5000">every 5s</option>
-            <option value="10000">every 10s</option>
-          </select>
-        </h2>
-        <div id="detailbox"></div>
-      </div>
-
-      <div class="card" id="livecard" hidden>
-        <h2><span class="live"></span>Live order — updating every 3s</h2>
-        <div id="livebox"></div>
+    <div class="page" id="page-positions">
+      <div class="cols">
+        <div class="card">
+          <h2 style="display:flex;align-items:center;gap:8px">
+            Held now &mdash; click one
+            <select id="posfilter" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
+              <option value="">all expiries</option>
+            </select>
+          </h2>
+          <div id="positions"><div class="placeholder">&hellip;</div></div>
+        </div>
+        <div class="card" id="detailcard">
+          <h2 style="display:flex;align-items:center;gap:8px">
+            <span class="live"></span>Position &mdash; live
+            <select id="detailrate" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
+              <option value="2000" selected>every 2s</option>
+              <option value="3000">every 3s</option>
+              <option value="5000">every 5s</option>
+              <option value="10000">every 10s</option>
+            </select>
+          </h2>
+          <div id="detailbox"><div class="placeholder">Click a position on the left.</div></div>
+        </div>
       </div>
     </div>
-  </div>
-    </div><!-- /page-trade -->
 
     <div class="page" id="page-history">
       <div class="sum" id="histsummary"></div>
       <div class="cols">
         <div class="card">
-          <h2>Orders placed &mdash; click one</h2>
-          <div id="histlist"><div class="placeholder">…</div></div>
+          <h2 style="display:flex;align-items:center;gap:8px">
+            Orders placed &mdash; click one
+            <select id="histfilter" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
+              <option value="">all</option>
+            </select>
+          </h2>
+          <div id="histlist"><div class="placeholder">&hellip;</div></div>
         </div>
         <div class="card">
           <h2>Order detail</h2>
           <div id="histdetail"><div class="placeholder">Click an order on the left.</div></div>
         </div>
       </div>
-    </div><!-- /page-history -->
+    </div>
     </div>
   </div>
 </div>
@@ -490,7 +487,6 @@ function startDetailTimer() {
 
 function showPosition(identifier) {
   detailId = identifier;
-  $("detailcard").hidden = false;
   pollDetail();
   startDetailTimer();
   loadPositions();
@@ -649,6 +645,76 @@ function outcomeTag(o) {
   return `<span class="tag2 ${cls}">${label}</span>`;
 }
 
+// Two dates matter for an order and they are different questions: which
+// expiry it traded, and which day you placed it. The filter offers both,
+// grouped, built from what is actually in the list.
+let historySummary = null;
+
+function rebuildHistoryFilter(orders) {
+  const sel = $("histfilter");
+  const keep = sel.value;
+  const expiries = {}, placed = {};
+  orders.forEach(o => {
+    if (o.expiry) expiries[o.expiry] = (expiries[o.expiry] || 0) + 1;
+    if (o.placed_at) {
+      const d = new Date(o.placed_at).toISOString().slice(0, 10);
+      placed[d] = (placed[d] || 0) + 1;
+    }
+  });
+
+  const group = (label, counts, prefix) =>
+    Object.keys(counts).length
+      ? `<optgroup label="${label}">` +
+        Object.keys(counts).sort().reverse().map(d =>
+          `<option value="${prefix}${d}">${d} (${counts[d]})</option>`).join("") +
+        `</optgroup>`
+      : "";
+
+  sel.innerHTML = `<option value="">all (${orders.length})</option>` +
+    group("Expiry", expiries, "e:") + group("Placed on", placed, "p:");
+  sel.value = [...sel.options].some(o => o.value === keep) ? keep : "";
+}
+
+function renderHistory() {
+  const list = $("histlist");
+  const want = $("histfilter").value;
+  let rows = historyCache;
+
+  if (want.startsWith("e:")) {
+    rows = rows.filter(o => o.expiry === want.slice(2));
+  } else if (want.startsWith("p:")) {
+    rows = rows.filter(o => o.placed_at &&
+      new Date(o.placed_at).toISOString().slice(0, 10) === want.slice(2));
+  }
+
+  if (!rows.length) {
+    list.innerHTML = `<div class="placeholder">No orders match that filter.</div>`;
+    return;
+  }
+
+  list.innerHTML = `<table class="grid">
+    <tr><th>Contract</th><th>Expiry</th><th>Outcome</th><th>P&amp;L</th></tr>` +
+    rows.map(o => {
+      const i = historyCache.indexOf(o);
+      const cls = o.realised_pnl == null ? "" : (o.realised_pnl >= 0 ? "pos" : "neg");
+      return `<tr class="clickable" data-i="${i}">
+        <td>${o.underlying} ${o.strike ?? ""} ${(o.option_type || "")[0] || ""}</td>
+        <td>${o.expiry || "—"}</td>
+        <td>${outcomeTag(o.outcome)}</td>
+        <td class="${cls}">${o.realised_pnl == null ? "—" :
+            (o.realised_pnl >= 0 ? "+" : "") + money(o.realised_pnl)}</td>
+      </tr>`;
+    }).join("") + `</table>`;
+
+  list.querySelectorAll("tr.clickable").forEach(row => {
+    row.onclick = () => {
+      list.querySelectorAll("tr.clickable").forEach(x => x.classList.remove("on"));
+      row.classList.add("on");
+      showOrder(historyCache[parseInt(row.dataset.i, 10)]);
+    };
+  });
+}
+
 async function loadHistory() {
   const list = $("histlist");
   if (!key()) { list.innerHTML = `<div class="placeholder">Enter your API key.</div>`; return; }
@@ -658,6 +724,7 @@ async function loadHistory() {
     if (!r.ok) { list.innerHTML = `<div class="placeholder">${(d.error||d).message}</div>`; return; }
 
     historyCache = d.orders;
+    historySummary = d;
     $("histcount").textContent = d.orders.length;
 
     const up = d.total_realised_pnl >= 0;
@@ -668,29 +735,14 @@ async function loadHistory() {
       <div class="sumbox"><div class="n ${up ? "pos" : "neg"}">${up ? "+" : ""}${money(d.total_realised_pnl)}</div>
         <div class="l">Realised P&amp;L</div></div>`;
 
-    list.innerHTML = `<table class="grid">
-      <tr><th>Contract</th><th>Outcome</th><th>P&amp;L</th></tr>` +
-      d.orders.map((o, i) => {
-        const pnlCls = o.realised_pnl == null ? "" : (o.realised_pnl >= 0 ? "pos" : "neg");
-        return `<tr class="clickable" data-i="${i}">
-          <td>${o.underlying} ${o.strike ?? ""} ${(o.option_type || "")[0] || ""}</td>
-          <td>${outcomeTag(o.outcome)}</td>
-          <td class="${pnlCls}">${o.realised_pnl == null ? "—" :
-              (o.realised_pnl >= 0 ? "+" : "") + money(o.realised_pnl)}</td>
-        </tr>`;
-      }).join("") + `</table>`;
-
-    list.querySelectorAll("tr.clickable").forEach(row => {
-      row.onclick = () => {
-        list.querySelectorAll("tr.clickable").forEach(x => x.classList.remove("on"));
-        row.classList.add("on");
-        showOrder(historyCache[parseInt(row.dataset.i, 10)]);
-      };
-    });
+    rebuildHistoryFilter(historyCache);
+    renderHistory();
   } catch (e) {
     list.innerHTML = `<div class="placeholder">${e.message}</div>`;
   }
 }
+
+$("histfilter").onchange = renderHistory;
 
 function showOrder(o) {
   const banner = {
