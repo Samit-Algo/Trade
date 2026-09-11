@@ -15,12 +15,11 @@ from ..core.broker import PLACE_ORDER_LIMITER
 from ..core.safety import assert_order_allowed
 from ..market import QuoteSnapshot
 from .bracket import (
-    BracketLegs, build_option_order_with_bracket, print_bracket_preview,
+    BracketLegs, build_option_order_with_bracket,
     validate_bracket_prices,
 )
 from .build import (
     DEFAULT_TIME_IN_FORCE, RULE_WIDTH, build_option_order, format_money,
-    print_order_preview,
 )
 from .cost import CostEstimate, compare_to_available_cash, estimate_cost
 from .status import (
@@ -150,15 +149,6 @@ def _submit_option_order(
     if estimate.is_buy:
         cash_warning = compare_to_available_cash(estimate.total_cash, cash_available)
 
-    print_order_preview(
-        contract=contract,
-        quote=quote,
-        estimate=estimate,
-        underlying_price=underlying_price,
-        liquidity_threshold=liquidity_threshold,
-        max_age_seconds=max_age_seconds,
-        cash_warning=cash_warning,
-    )
 
     # Step 5 -- typed confirmation of the cash amount, not "yes".
     if not confirm_cash_amount(estimate, input_function=input_function):
@@ -351,17 +341,6 @@ def buy_option_with_bracket(
 
     cash_warning = compare_to_available_cash(estimate.total_cash, cash_available)
 
-    # Step 3 -- preview.
-    print_order_preview(
-        contract=contract,
-        quote=quote,
-        estimate=estimate,
-        underlying_price=underlying_price,
-        liquidity_threshold=liquidity_threshold,
-        max_age_seconds=max_age_seconds,
-        cash_warning=cash_warning,
-    )
-    print_bracket_preview(contract, quote, estimate, legs)
 
     # Step 5 -- typed confirmation of the cash amount, not "yes".
     if not confirm_cash_amount(estimate, input_function=input_function):

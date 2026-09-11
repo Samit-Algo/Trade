@@ -97,35 +97,3 @@ def _print_live_banner(masked: str, dry_run: bool) -> None:
     loud(line)
     print()
 
-
-def print_startup_banner(masked_account: str, mode: str, dry_run: bool) -> None:
-    """Print the mandatory startup banner. Every entry point calls this first.
-
-    In LIVE mode the banner is visually loud and the program pauses for a typed
-    confirmation before continuing. A non-interactive stdin is treated as a
-    refusal, so an unattended run can never sail past this prompt.
-    """
-    if mode == "PAPER":
-        _print_paper_banner(masked_account, dry_run)
-        return
-
-    _print_live_banner(masked_account, mode == "LIVE" and dry_run)
-
-    if not sys.stdin.isatty():
-        raise LiveTradingBlocked(
-            "LIVE mode requires an interactive typed confirmation, but stdin is "
-            "not a terminal. Refusing to continue."
-        )
-
-    print(f'To continue, type exactly:  {LIVE_CONFIRMATION_PHRASE}')
-    try:
-        typed = input("> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        raise LiveTradingBlocked("LIVE confirmation aborted. Refusing to continue.") from None
-
-    if typed != LIVE_CONFIRMATION_PHRASE:
-        raise LiveTradingBlocked(
-            "LIVE confirmation phrase did not match. Refusing to continue."
-        )
-    print("Confirmed. Continuing in LIVE mode (orders remain blocked in this build).")
-    print()

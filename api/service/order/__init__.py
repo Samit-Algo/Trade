@@ -21,8 +21,7 @@ from .cost import (
     normalise_limit_price, compare_to_available_cash
 )
 from .build import (
-    RULE_WIDTH, DEFAULT_TIME_IN_FORCE, build_option_order, format_money,
-    print_manual_data_banner, print_order_preview, simulate_order
+    RULE_WIDTH, DEFAULT_TIME_IN_FORCE, build_option_order, format_money
 )
 from .ticks import (
     MEASURED_TICK_SIZE, TICK_SOURCE_NOTE, TickError, apply_buffer, is_on_tick,
@@ -35,14 +34,14 @@ from .bracket import (
     estimate_commission_per_share, estimate_round_trip_commission,
     is_take_profit_a_losing_exit, validate_bracket_prices,
     calculate_intended_risk, build_option_order_with_bracket,
-    print_bracket_preview, get_attached_legs, print_attached_legs
+    get_attached_legs
 )
 from .status import (
     DEFAULT_POLL_ATTEMPTS, DEFAULT_POLL_DELAY_SECONDS, NOTHING_FILLED,
     PARTIALLY_FILLED, FULLY_FILLED, TERMINAL_STATUSES, FillOutcome,
     OrderSubmissionError, normalise_status, is_terminal_status,
     classify_fill, calculate_actual_cash, get_order_status,
-    poll_until_settled, print_fill_outcome, cancel_order
+    poll_until_settled, cancel_order
 )
 from .submit import (
     build_cash_confirmation_phrase, confirm_cash_amount, buy_option,

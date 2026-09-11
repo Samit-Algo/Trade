@@ -299,100 +299,6 @@ def build_option_order_with_bracket(
     return order
 
 
-def print_bracket_preview(
-    contract,
-    quote: QuoteSnapshot,
-    estimate: CostEstimate,
-    legs: BracketLegs,
-) -> None:
-    """Print the bracket-specific block beneath the ordinary order preview.
-
-    Args:
-        contract: The OptionContractInfo.
-        quote: The QuoteSnapshot.
-        estimate: The CostEstimate for the parent.
-        legs: The bracket prices.
-    """
-    entry_price = estimate.price_used
-    quantity = estimate.quantity
-    multiplier = estimate.multiplier
-
-    round_trip_commission = estimate_round_trip_commission(quantity)
-    commission_per_share = estimate_commission_per_share(quantity, multiplier)
-    intended_risk = calculate_intended_risk(
-        entry_price, legs.stop_loss_price, quantity, multiplier
-    )
-
-    profit_at_target = round(
-        (legs.take_profit_price - entry_price) * multiplier * quantity
-        - round_trip_commission,
-        2,
-    )
-
-    print("-" * RULE_WIDTH)
-    print("ATTACHED ORDERS (BRACKET)")
-    print("-" * RULE_WIDTH)
-    print(
-        f"  Entry  LIMIT  : {entry_price:,.2f}   "
-        "buys the contract; the legs are dormant until it fills"
-    )
-    print(
-        f"  Take profit   : {legs.take_profit_price:,.2f}   "
-        "sells if the price rises to here"
-    )
-    print(
-        f"  Stop loss     : {legs.stop_loss_price:,.2f}   "
-        "sells if the price falls to here"
-    )
-    print(f"  Leg time in force : {legs.leg_time_in_force}")
-    print(f"  attach_type sent  : {legs.attach_type}")
-    print("-" * RULE_WIDTH)
-    print(
-        f"  Est. round-trip commission : ${round_trip_commission:,.2f}"
-        f"  (${commission_per_share:.4f}/share)"
-    )
-    print("    ESTIMATE. Fitted to four real orders: $2.985 base plus")
-    print("    $0.035 per contract, each way. The base dominates, so a")
-    print("    small position pays a large percentage.")
-    print("-" * RULE_WIDTH)
-    print(f"  If the stop triggers : lose about ${intended_risk:,.2f}")
-    print(f"  If the target hits   : make about ${profit_at_target:,.2f}")
-    print(
-        f"  CASH AT RISK         : {format_money(estimate.total_cash)}"
-        "   (the whole premium)"
-    )
-    print("    The stop is a trigger, not a promise. On a gap the fill can be")
-    print("    worse than the stop price, or there may be no fill at all, so")
-    print("    the full premium is still what you are risking.")
-    print("-" * RULE_WIDTH)
-
-    if is_take_profit_a_losing_exit(
-        legs.take_profit_price, entry_price, quantity, multiplier
-    ):
-        break_even_exit = entry_price + commission_per_share
-        print("!" * RULE_WIDTH)
-        print("!!  THE TAKE PROFIT IS A LOSING EXIT")
-        print("!" * RULE_WIDTH)
-        print(
-            f"!!  Selling at {legs.take_profit_price:,.2f} after paying "
-            f"{entry_price:,.2f} does not"
-        )
-        print("!!  cover the commission to get back out.")
-        print(
-            f"!!  You need at least {break_even_exit:,.4f} to break even "
-            "(estimated)."
-        )
-        print("!!  A 'take profit' below break-even takes a loss.")
-        print("!" * RULE_WIDTH)
-
-    print("  NOT VALIDATED BY THE BROKER.")
-    print("    Tiger refuses to preview attached orders:")
-    print("    code=1010 'OCA/ATTACHED order preview not supported'.")
-    print("    A plain order can be checked before sending; this cannot.")
-    print("    The checks above are the only pre-submission check there is.")
-    print("-" * RULE_WIDTH)
-
-
 def get_attached_legs(trade_client, parent_order_id: int) -> list:
     """Find the legs attached to a parent order.
 
@@ -452,37 +358,6 @@ def get_attached_legs(trade_client, parent_order_id: int) -> list:
             )
 
     return found
-
-
-def print_attached_legs(legs_found: list, parent_order_id: int) -> None:
-    """Print what was found attached to a parent order.
-
-    Args:
-        legs_found: The result of get_attached_legs.
-        parent_order_id: The parent's ID, for the heading.
-    """
-    print("=" * RULE_WIDTH)
-    print(f"  ATTACHED LEGS ON ORDER {parent_order_id}")
-    print("=" * RULE_WIDTH)
-
-    if not legs_found:
-        print("  None found.")
-        print("")
-        print("  That does not by itself prove the legs were rejected. It may")
-        print("  mean the legs are not exposed through either route tried")
-        print("  (the parent's order_legs, or a child order naming this parent).")
-        print("  Check the Tiger app before concluding anything.")
-        print("=" * RULE_WIDTH)
-        return
-
-    for item in legs_found:
-        print(f"  via {item.pop('source')}")
-        for key, value in item.items():
-            if value is not None:
-                print(f"    {key:<16}= {value}")
-        print("")
-
-    print("=" * RULE_WIDTH)
 
 
 # ---------------------------------------------------------------------------

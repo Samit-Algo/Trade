@@ -274,61 +274,6 @@ def poll_until_settled(
     )
 
 
-def print_fill_outcome(outcome: FillOutcome, estimate: CostEstimate | None = None) -> None:
-    """Print what actually happened, distinguishing all three outcomes.
-
-    Args:
-        outcome: The result of polling.
-        estimate: The original estimate, to compare expectation against reality.
-    """
-    print("=" * RULE_WIDTH)
-    print(f"  {outcome.describe()}")
-    print("=" * RULE_WIDTH)
-    print(f"  Order ID       : {outcome.order_id}")
-    print(f"  Broker status  : {outcome.status}")
-    print(
-        f"  Filled         : {outcome.filled_quantity} of "
-        f"{outcome.requested_quantity}"
-    )
-
-    if outcome.average_fill_price is not None:
-        print(f"  Avg fill price : {outcome.average_fill_price:,.4f}")
-    else:
-        print("  Avg fill price : -")
-
-    if outcome.actual_cash is not None:
-        print(f"  ACTUAL CASH    : {format_money(outcome.actual_cash)}")
-        print("                   (avg fill price x filled x multiplier --")
-        print("                    never from the quantity that was requested)")
-    else:
-        print("  ACTUAL CASH    : $0.00   (nothing filled, so nothing moved)")
-
-    if estimate is not None and outcome.actual_cash is not None:
-        difference = outcome.actual_cash - estimate.total_cash
-        print(
-            f"  vs estimate    : {format_money(estimate.total_cash)} estimated, "
-            f"difference {difference:+,.2f}"
-        )
-
-    if outcome.reason:
-        print(f"  Broker reason  : {outcome.reason}")
-
-    if outcome.outcome == PARTIALLY_FILLED:
-        print("")
-        print(
-            f"  PART OF THIS ORDER FILLED. You hold {outcome.filled_quantity} "
-            f"contract(s), not {outcome.requested_quantity}."
-        )
-
-    if not outcome.reached_terminal_status:
-        print("")
-        print("  STILL WORKING. Polling ran out before the order settled.")
-        print("  This is not success and not failure: the order is live at the")
-        print("  broker and may yet fill. Check it again with:")
-        print(f"    python scripts/05_paper_order.py --status {outcome.order_id}")
-
-    print("=" * RULE_WIDTH)
-
 def cancel_order(
     trade_client,
     order_id: int,
