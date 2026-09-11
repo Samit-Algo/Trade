@@ -21,7 +21,7 @@ from .bracket import (
 from .build import (
     DEFAULT_TIME_IN_FORCE, RULE_WIDTH, build_option_order, format_money,
 )
-from .cost import CostEstimate, compare_to_available_cash, estimate_cost
+from .build import CostEstimate, compare_to_available_cash, estimate_cost
 from .status import (
     DEFAULT_POLL_ATTEMPTS, DEFAULT_POLL_DELAY_SECONDS, FillOutcome,
     OrderSubmissionError, poll_until_settled,

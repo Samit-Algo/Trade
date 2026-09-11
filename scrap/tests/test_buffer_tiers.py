@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from api.service.order.buffer_tiers import (  # noqa: E402
+from api.service.order.pricing_rules import (  # noqa: E402
     DEFAULT_FLOOR_TICKS,
     buffer_dollars_for_premium,
     resolve_buffer_ticks,

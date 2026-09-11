@@ -29,7 +29,7 @@ from api.service.order import BracketError  # noqa: E402
 from api.service.order.bracket import (  # noqa: E402
     calculate_bracket_from_percentages,
 )
-from api.service.order.ticks import (  # noqa: E402
+from api.service.order.pricing_rules import (  # noqa: E402
     MEASURED_TICK_SIZE,
     TickError,
     apply_buffer,

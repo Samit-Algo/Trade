@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from ..core.broker import ORDERS_LIMITER
 from .build import RULE_WIDTH, format_money
-from .cost import CostEstimate
+from .build import CostEstimate
 
 
 #: How many times to ask the broker what happened before giving up.

@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Request
 
 from api.service.contract import select_contract
-from api.service.core.audit import build_order_record, write_order_record
+from api.service.core.safety import build_order_record, write_order_record
 from api.service.market import (
     fetch_spot_price,
     MAX_RECENT_TRADE_AGE_SECONDS,
