@@ -1,28 +1,411 @@
-"""What something last traded at, and how wide the market is.
+"""Market data: what exists, what it last traded at, what it is worth now.
 
-Under manual entry this file supplies the *reference* prices -- the underlying,
-and the last traded close a typed limit is sanity-checked against. The bid and
-ask you actually trade on come from `quotes.py`.
+Four concerns, in dependency order:
+
+    Reading             Tiger dataframes, without crashing on a missing column
+    Calendar            what expiries exist, and the date maths
+    Spot                the UNDERLYING share price, from Yahoo -- this account
+                        has no usStockQuote entitlement, so Tiger is ~15min
+                        stale, which is wide enough to pick a different strike
+    Prices              last traded price, spread, liquidity
+
+quotes.py stays a separate file on purpose: it is THE SEAM, the only place
+allowed to name a concrete provider. Folding it in here would blur the one
+boundary that keeps a market-data entitlement a one-line change.
 """
 
 from __future__ import annotations
 
+import pandas
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-
-import pandas
+from zoneinfo import ZoneInfo
 from tigeropen.common.consts import Market
-
+from ..core.broker import EXPIRATIONS_LIMITER
+import json
+import time
+import urllib.parse
+import urllib.request
 from ..core.broker import (
     DELAYED_STOCK_BRIEFS_LIMITER, OPTION_BARS_LIMITER,
     OPTION_BRIEFS_LIMITER, STOCK_BRIEFS_LIMITER,
 )
-from .calendar import milliseconds_to_date, today_in_market_timezone
-from .read_data import (
 
 
-    MarketDataError, _read_optional_float, _read_optional_int, _read_text
+# --------------------------------------------------------------------------
+# READ_DATA
+# --------------------------------------------------------------------------
+
+class MarketDataError(Exception):
+    """Tiger returned nothing usable for a market data request."""
+
+# ---------------------------------------------------------------------------
+# Reading values out of a pandas DataFrame
+#
+# The SDK returns DataFrames: a table where each row is a record and each
+# column has a name. `for index, row in frame.iterrows()` walks it one row at
+# a time, and `row["volume"]` reads one named column of that row.
+#
+# Two things to watch for, which is why the helpers below exist:
+#   - A column may be missing entirely from a response.
+#   - A cell may hold NaN ("not a number"), pandas' way of writing "no value".
+#     NaN is a float, so it passes an `is None` check and then poisons any
+#     arithmetic it touches. pandas.isna() is the correct test.
+# ---------------------------------------------------------------------------
+
+
+def _read_optional_float(row: pandas.Series, column_name: str) -> float | None:
+    """Read one column of a DataFrame row as a float, or None if unusable.
+
+    Args:
+        row: One row of a DataFrame.
+        column_name: The column to read.
+
+    Returns:
+        The value as a float, or None if the column is absent or empty.
+    """
+    if column_name not in row:
+        return None
+
+    raw_value = row[column_name]
+    if pandas.isna(raw_value):
+        return None
+
+    return float(raw_value)
+
+
+def _read_optional_int(row: pandas.Series, column_name: str) -> int | None:
+    """Read one column of a DataFrame row as an integer, or None if unusable.
+
+    Args:
+        row: One row of a DataFrame.
+        column_name: The column to read.
+
+    Returns:
+        The value as an int, or None if the column is absent or empty.
+    """
+    if column_name not in row:
+        return None
+
+    raw_value = row[column_name]
+    if pandas.isna(raw_value):
+        return None
+
+    return int(raw_value)
+
+
+def _read_text(row: pandas.Series, column_name: str, default: str = "") -> str:
+    """Read one column of a DataFrame row as text.
+
+    Args:
+        row: One row of a DataFrame.
+        column_name: The column to read.
+        default: What to return when the column is absent or empty.
+
+    Returns:
+        The value as a string, or the default.
+    """
+    if column_name not in row:
+        return default
+
+    raw_value = row[column_name]
+    if pandas.isna(raw_value):
+        return default
+
+    return str(raw_value)
+
+
+# --------------------------------------------------------------------------
+# CALENDAR
+# --------------------------------------------------------------------------
+
+#: US options trade on US Eastern time. Days-to-expiry must be counted on the
+#: market's calendar, not on the clock of whoever is running this (IST here).
+MARKET_TIMEZONE = ZoneInfo("US/Eastern")
+
+
+# ---------------------------------------------------------------------------
+# Data shapes
+#
+# The script that prints tables works with these, never with pandas. Keeping
+# pandas inside this module means there is exactly one place to look when a
+# column name changes.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OptionExpiry:
+    """One expiration date that Tiger says exists for an underlying."""
+
+    date_text: str  # "YYYY-MM-DD", exactly as Tiger returned it
+    expiry_date: date
+    timestamp_ms: int
+    period_tag: str  # "m" for monthly, "w" for weekly, "" if not reported
+    days_to_expiry: int
+    option_symbol: str  # Usually the underlying; index options can differ
+
+    @property
+    def period_label(self) -> str:
+        """Return a readable version of the monthly/weekly tag."""
+        if self.period_tag == "m":
+            return "monthly"
+        if self.period_tag == "w":
+            return "weekly"
+        return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Time conversion
+# ---------------------------------------------------------------------------
+
+
+def today_in_market_timezone() -> date:
+    """Return today's date on the US market's clock.
+
+    Returns:
+        The current date in US/Eastern.
+    """
+    now_in_new_york = datetime.now(MARKET_TIMEZONE)
+    return now_in_new_york.date()
+
+
+def milliseconds_to_date(milliseconds: int) -> date:
+    """Convert one of Tiger's millisecond timestamps to a calendar date.
+
+    Args:
+        milliseconds: Milliseconds since 1970-01-01 UTC, as Tiger sends them.
+
+    Returns:
+        The corresponding date in US/Eastern.
+    """
+    # Tiger sends milliseconds; Python's fromtimestamp expects seconds.
+    seconds = milliseconds / 1000
+
+    moment_in_utc = datetime.fromtimestamp(seconds, tz=timezone.utc)
+
+    # Expiry timestamps are midnight US/Eastern. Reading them in any other
+    # zone can land on the previous or next day and shift the whole expiry.
+    moment_in_new_york = moment_in_utc.astimezone(MARKET_TIMEZONE)
+    return moment_in_new_york.date()
+
+
+def parse_expiry_date(date_text: str) -> date:
+    """Turn Tiger's "YYYY-MM-DD" expiry string into a date object.
+
+    Args:
+        date_text: An expiry date string exactly as the API returned it.
+
+    Returns:
+        The parsed date.
+
+    Raises:
+        MarketDataError: If the text is not in the expected format.
+    """
+    try:
+        parsed = datetime.strptime(date_text, "%Y-%m-%d")
+    except ValueError as error:
+        raise MarketDataError(
+            f"Could not read {date_text!r} as an expiry date (expected YYYY-MM-DD)."
+        ) from error
+    return parsed.date()
+
+
+def days_until_expiry(expiry_date: date) -> int:
+    """Count whole days from today to an expiry date.
+
+    Args:
+        expiry_date: The date the option expires.
+
+    Returns:
+        Days remaining. 0 means it expires today; a negative number means the
+        date has already passed.
+    """
+    today = today_in_market_timezone()
+    difference = expiry_date - today
+    return difference.days
+
+
+# ---------------------------------------------------------------------------
+# API calls
+# ---------------------------------------------------------------------------
+
+
+def list_expirations(quote_client, underlying: str) -> list[OptionExpiry]:
+    """List every expiration date Tiger reports for an underlying.
+
+    This is the only source of expiry dates in the project. Nothing anywhere
+    builds a date from a calendar rule, because listed expiries are irregular
+    and a constructed date that does not exist fails only at order time.
+
+    Args:
+        quote_client: A tigeropen QuoteClient.
+        underlying: Underlying symbol, for example "AAPL".
+
+    Returns:
+        Expiries sorted by date, soonest first.
+
+    Raises:
+        MarketDataError: If Tiger returns no expirations for the symbol.
+    """
+    EXPIRATIONS_LIMITER.wait()
+
+    # market is passed explicitly rather than relying on the server default,
+    # so a symbol that could be read as non-US cannot silently change market.
+    expirations_frame = quote_client.get_option_expirations(
+        symbols=[underlying],
+        market=Market.US,
+    )
+
+    if expirations_frame is None or expirations_frame.empty:
+        raise MarketDataError(
+            f"Tiger returned no option expirations for {underlying!r}. "
+            "Check the symbol, and that it has listed options."
+        )
+
+    expiries = []
+    for _index, row in expirations_frame.iterrows():
+        date_text = _read_text(row, "date")
+        if not date_text:
+            continue
+
+        expiry_date = parse_expiry_date(date_text)
+        timestamp_ms = _read_optional_int(row, "timestamp")
+        period_tag = _read_text(row, "period_tag")
+        option_symbol = _read_text(row, "option_symbol", default=underlying)
+        days_remaining = days_until_expiry(expiry_date)
+
+        expiries.append(
+            OptionExpiry(
+                date_text=date_text,
+                expiry_date=expiry_date,
+                timestamp_ms=timestamp_ms if timestamp_ms is not None else 0,
+                period_tag=period_tag,
+                days_to_expiry=days_remaining,
+                option_symbol=option_symbol,
+            )
+        )
+
+    if not expiries:
+        raise MarketDataError(
+            f"Tiger returned expiration rows for {underlying!r} but none had a date."
+        )
+
+    expiries.sort(key=lambda expiry: expiry.expiry_date)
+    return expiries
+
+
+# --------------------------------------------------------------------------
+# SPOT
+# --------------------------------------------------------------------------
+
+#: Yahoo serves the same chart API from two hosts. If one refuses, the other
+#: usually answers, so a single bad host does not look like an outage.
+QUOTE_HOSTS = (
+    "https://query1.finance.yahoo.com",
+    "https://query2.finance.yahoo.com",
 )
+
+#: The endpoint answers with no User-Agent set, but not reliably. A browser
+#: string is what its own web client sends.
+USER_AGENT = "Mozilla/5.0"
+
+#: Short on purpose. This sits in front of a human pressing a button, and a
+#: slow answer is worse than no answer -- they can always type the price.
+REQUEST_TIMEOUT_SECONDS = 6
+
+#: Past this the price is stale enough to say so. Measured live, the feed
+#: returns a stamp 1-3 seconds old during the session; outside trading hours
+#: it holds the last trade, which can be many hours old.
+LIVE_WITHIN_SECONDS = 90
+
+
+@dataclass(frozen=True)
+class SpotPrice:
+    """The underlying's share price, and how much to trust it."""
+
+    symbol: str
+    price: float
+    age_seconds: float
+    source: str = "yahoo"
+
+    @property
+    def is_live(self) -> bool:
+        """True when this is a currently-trading price, not a held close."""
+        return self.age_seconds <= LIVE_WITHIN_SECONDS
+
+
+def _read_chart_meta(host: str, symbol: str) -> dict | None:
+    """Fetch one host's chart metadata for a symbol.
+
+    Args:
+        host: A base URL from QUOTE_HOSTS.
+        symbol: The underlying, e.g. "AAPL".
+
+    Returns:
+        The `meta` block, or None for any failure at all.
+    """
+    url = (
+        f"{host}/v8/finance/chart/{urllib.parse.quote(symbol)}"
+        "?interval=1m&range=1d"
+    )
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+
+    try:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read().decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001 -- every failure is the same failure here
+        return None
+
+    try:
+        result = payload["chart"]["result"][0]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+    meta = result.get("meta")
+    return meta if isinstance(meta, dict) else None
+
+
+def fetch_spot_price(symbol: str) -> SpotPrice | None:
+    """Fetch the underlying's live share price.
+
+    Args:
+        symbol: The underlying, e.g. "AAPL".
+
+    Returns:
+        The price with its age, or None when no host could answer. None is a
+        normal outcome, not an error: the caller types the price instead.
+    """
+    cleaned = symbol.strip().upper()
+    if not cleaned:
+        return None
+
+    for host in QUOTE_HOSTS:
+        meta = _read_chart_meta(host, cleaned)
+        if meta is None:
+            continue
+
+        price = meta.get("regularMarketPrice")
+        stamped_at = meta.get("regularMarketTime")
+
+        # A price without a timestamp cannot be judged for freshness, and an
+        # unjudgeable price is exactly the kind this module exists to avoid.
+        if not isinstance(price, (int, float)) or price <= 0:
+            continue
+        if not isinstance(stamped_at, (int, float)):
+            continue
+
+        return SpotPrice(
+            symbol=cleaned,
+            price=round(float(price), 2),
+            age_seconds=round(max(0.0, time.time() - float(stamped_at)), 1),
+        )
+
+    return None
+
+
+# --------------------------------------------------------------------------
+# PRICES
+# --------------------------------------------------------------------------
 
 #: A row with fewer than this many contracts traded, or this much open interest,
 #: is thin. Thin contracts have wide spreads and can be hard to sell later.

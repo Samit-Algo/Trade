@@ -90,12 +90,12 @@ class StubQuoteClientWithBars:
 
 def install_last_trade(monkeypatch, last_trade):
     """Make fetch_last_traded_close return a fixed value."""
-    # quotes.py imports this from prices.py inside the function, so the patch
-    # has to land on prices.py itself.
-    from api.service.market import prices
+    # quotes.py imports this from data.py inside the function, so the patch
+    # has to land on data.py itself.
+    from api.service.market import data
 
     monkeypatch.setattr(
-        prices, "fetch_last_traded_close", lambda quote_client, identifier: last_trade
+        data, "fetch_last_traded_close", lambda quote_client, identifier: last_trade
     )
 
 

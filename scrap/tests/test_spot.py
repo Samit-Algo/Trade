@@ -22,7 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from api.service.market.spot import (  # noqa: E402
+from api.service.market.data import (  # noqa: E402
     LIVE_WITHIN_SECONDS,
     QUOTE_HOSTS,
     SpotPrice,

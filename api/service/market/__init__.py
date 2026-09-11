@@ -1,8 +1,6 @@
 """Market data: what exists, what it last traded at, what it is worth now.
 
-    read_data.py    Reading Tiger's dataframes without crashing
-    calendar.py  What expiries exist, and the date maths
-    prices.py    Underlying price, last traded price, spread, liquidity
+    data.py      Reading, the calendar, spot, and traded prices
     quotes.py    THE SEAM -- where bid and ask come from
 
 `quotes.py` is the only file allowed to name a concrete provider. Today the
@@ -14,20 +12,17 @@ true only while no other file names either class.
 
 from __future__ import annotations
 
-from .read_data import (
-    MarketDataError
-)
-from .calendar import (
+from .data import (
+    MarketDataError,
     MARKET_TIMEZONE, OptionExpiry, today_in_market_timezone,
     milliseconds_to_date, parse_expiry_date, days_until_expiry,
-    list_expirations
-)
-from .spot import SpotPrice, fetch_spot_price
-from .prices import (
+    list_expirations,
+    SpotPrice, fetch_spot_price,
     MAX_RECENT_TRADE_AGE_SECONDS, RecentTrade, fetch_recent_traded_price,
     DEFAULT_LIQUIDITY_THRESHOLD, UnderlyingPrice, LastTrade, ContractQuote,
     calculate_spread, is_low_liquidity, fetch_underlying_price,
     fetch_contract_quote, fetch_last_traded_close,
+
     fetch_underlying_price_safely
 )
 from .quotes import (
