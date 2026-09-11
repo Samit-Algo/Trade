@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+#: The project root. These tests read source files as text, so the
+#: path is resolved from this rather than repeated at each use.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from api.service.core.safety import (  # noqa: E402
     LiveTradingBlocked,

@@ -2,7 +2,7 @@
 
 Offline and pure. Nothing here builds a client or touches the network.
 
-The tick size these tests use is MEASURED, not assumed -- see HANDOVER.md
+The tick size these tests use is MEASURED, not assumed -- see scrap/HANDOVER.md
 section 3d. The widely quoted "penny under $3.00, nickel at $3.00 and above"
 convention was tested against 32,360 real traded prices and refuted, so the
 band-rule tests that would have existed here do not, on purpose.
@@ -15,7 +15,11 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+#: The project root. These tests read source files as text, so the
+#: path is resolved from this rather than repeated at each use.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from api.service.contract.selection import (  # noqa: E402
     DEFAULT_MIN_DAYS_TO_EXPIRY,

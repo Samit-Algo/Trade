@@ -264,7 +264,7 @@ def read_min_tick(contract) -> float | None:
     # QUIRK: min_tick comes back None from both get_contract and
     # get_derivative_contracts, so there is no API source for the valid price
     # increment. Rather than guess a convention, the limit price is a typed
-    # input in Phase 4 -- see SPEC-ADDENDUM-manual-market-data.md sections 2
+    # input in Phase 4 -- see scrap/SPEC-ADDENDUM-manual-market-data.md sections 2
     # and 9. This function exists so the absence is explicit rather than
     # something a future reader has to rediscover.
     return getattr(contract, "min_tick", None)

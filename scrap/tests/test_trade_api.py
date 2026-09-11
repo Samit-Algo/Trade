@@ -15,7 +15,11 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+#: The project root. These tests read source files as text, so the
+#: path is resolved from this rather than repeated at each use.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from api.order_rules import IdempotencyStore, RequestInFlight  # noqa: E402
 from api.service.contract import (  # noqa: E402
@@ -368,14 +372,14 @@ class TestSafetyIsNotBypassed:
 
     def test_the_route_contains_no_place_order_call_of_its_own(self):
         source = (
-            Path(__file__).resolve().parent.parent / "api/routes/trade.py"
+            PROJECT_ROOT / "api/routes/trade.py"
         ).read_text(encoding="utf-8")
         assert "place_order(" not in source
 
     def test_the_guard_runs_immediately_before_every_place_order(self):
         """The one gate that matters, in the only file that can spend money."""
         source = (
-            Path(__file__).resolve().parent.parent
+            PROJECT_ROOT
             / "api/service/order/submit.py"
         ).read_text(encoding="utf-8")
 
@@ -396,7 +400,7 @@ class TestSafetyIsNotBypassed:
     def test_only_one_function_can_submit(self):
         """buy_option_with_bracket is called from submit_and_record, nowhere else."""
         source = (
-            Path(__file__).resolve().parent.parent / "api/routes/trade.py"
+            PROJECT_ROOT / "api/routes/trade.py"
         ).read_text(encoding="utf-8")
         calls = source.count("buy_option_with_bracket(")
         assert calls == 1, f"expected one call site, found {calls}"
@@ -428,7 +432,7 @@ class TestSafetyIsNotBypassed:
     def test_the_route_has_no_second_per_request_bypass(self):
         """One switch. A per-request flag would be a way around .env."""
         source = (
-            Path(__file__).resolve().parent.parent / "api/routes/trade.py"
+            PROJECT_ROOT / "api/routes/trade.py"
         ).read_text(encoding="utf-8")
         assert "validate_only" not in source
 

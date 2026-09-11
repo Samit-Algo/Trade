@@ -449,7 +449,7 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
     # "penny under $3, nickel above" convention -- that convention was tested
     # against 32,360 real traded prices and refused. It is configurable only
     # so a symbol class that genuinely quotes more coarsely can be handled
-    # without a code change. See HANDOVER.md section 3d before touching it.
+    # without a code change. See scrap/HANDOVER.md section 3d before touching it.
     option_tick_size = _get_float("OPTION_TICK_SIZE", DEFAULT_OPTION_TICK_SIZE)
     limit_buffer_ticks = _get_int("LIMIT_BUFFER_TICKS", 1)
     if limit_buffer_ticks < 0:

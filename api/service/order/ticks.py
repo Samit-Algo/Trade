@@ -5,7 +5,7 @@ Pure arithmetic. Nothing here touches the network.
 WHY THIS FILE EXISTS: Tiger returns `min_tick` as None on every contract call
 this project makes -- see `contract/resolve.py:read_min_tick`. There is no API
 source for the increment, so it was MEASURED instead, from prices that real
-trades actually happened at. See HANDOVER.md section 3d for the evidence.
+trades actually happened at. See scrap/HANDOVER.md section 3d for the evidence.
 
 The measured answer is $0.01 at every price level. That refutes the widely
 quoted "penny under $3.00, nickel at $3.00 and above" convention, which this
@@ -28,7 +28,7 @@ MEASURED_TICK_SIZE = 0.01
 #: something the broker reported. It is not: Tiger returns min_tick as None.
 TICK_SOURCE_NOTE = (
     "measured from 32,360 real traded prices across 6 symbols; Tiger reports "
-    "no min_tick. See HANDOVER.md section 3d."
+    "no min_tick. See scrap/HANDOVER.md section 3d."
 )
 
 #: Prices are compared in whole ticks, so the arithmetic is integer and exact.

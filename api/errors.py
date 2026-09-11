@@ -103,7 +103,7 @@ def classify_exception(error: Exception) -> ApiError:
             message=(
                 "Tiger refused this data for lack of a market data "
                 "entitlement. This is a purchase, not a fault: see "
-                "HANDOVER.md section 2."
+                "scrap/HANDOVER.md section 2."
             ),
             detail={"broker_message": message},
         )

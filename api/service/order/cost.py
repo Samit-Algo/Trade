@@ -15,7 +15,7 @@ None on every contract call, so those rules are not available. Rather than
 invent a convention, normalise_limit_price() snaps only when a tick size is
 genuinely known and otherwise passes the price through untouched, saying so.
 The limit price is typed by the human instead -- see
-SPEC-ADDENDUM-manual-market-data.md sections 2 and 9.
+scrap/SPEC-ADDENDUM-manual-market-data.md sections 2 and 9.
 """
 
 from __future__ import annotations

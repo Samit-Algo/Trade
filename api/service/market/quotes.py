@@ -1,6 +1,6 @@
 """Where bid, ask, volume and open interest come from.
 
-Implements SPEC-ADDENDUM-manual-market-data.md.
+Implements scrap/SPEC-ADDENDUM-manual-market-data.md.
 
 This account cannot fetch option quotes, so they are read off the Tiger app and
 typed in. That is a temporary substitution behind a stable seam: everything
