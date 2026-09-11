@@ -26,7 +26,7 @@ from api.service.contract import (  # noqa: E402
     ExpiryNotListedError,
     StrikeNotFoundError,
 )
-from api.service.contract.selection import (  # noqa: E402
+from api.service.contract import (  # noqa: E402
     choose_expiry,
     find_closest_strike,
 )

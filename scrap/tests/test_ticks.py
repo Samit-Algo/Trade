@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from api.service.contract.selection import (  # noqa: E402
+from api.service.contract import (  # noqa: E402
     DEFAULT_MIN_DAYS_TO_EXPIRY,
 )
 from api.service.core import config  # noqa: E402

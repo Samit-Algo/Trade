@@ -195,12 +195,13 @@ class TestResolveExpiry:
     """The three-outcome rule. This is the requirement from scrap/HANDOVER.md section 6."""
 
     def stub_expirations(self, monkeypatch, expiries):
-        # Patch the module that DOES the lookup, not the package that re-exports
-        # it: resolve.py holds its own reference to the imported name.
-        from api.service.contract import resolve
+        # Patch the name where the lookup HAPPENS: the contract module holds
+        # its own reference to the imported function, so patching the market
+        # module it came from would not be seen here.
+        from api.service import contract
 
         monkeypatch.setattr(
-            resolve, "list_expirations", lambda quote_client, underlying: expiries
+            contract, "list_expirations", lambda quote_client, underlying: expiries
         )
 
     def test_listed_and_current_resolves(self, monkeypatch):
