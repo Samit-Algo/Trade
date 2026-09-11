@@ -143,7 +143,7 @@ def _submit_option_order(
         limit_price=quote.limit_price,
     )
 
-    from .cost import compare_to_available_cash
+    from .build import compare_to_available_cash
 
     cash_warning = None
     if estimate.is_buy:
@@ -316,7 +316,7 @@ def buy_option_with_bracket(
         LiveTradingBlocked: If the safety guard refuses the order.
         OrderSubmissionError: If the human declines, or submission fails.
     """
-    from .cost import compare_to_available_cash
+    from .build import compare_to_available_cash
 
     estimate = estimate_cost(
         contract=contract,
