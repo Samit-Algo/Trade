@@ -7,11 +7,13 @@
     submit.py     THE ONLY FILE THAT CAN SPEND MONEY
 
 Read `submit.py` if you are reviewing safety. Every `place_order` call in the
-project is in it, each between two `assert_order_allowed` gates.
+project is in it, each preceded immediately by `assert_order_allowed`.
 """
 
 from __future__ import annotations
 
+from .buffer_tiers import resolve_buffer_ticks
+from .quantity_tiers import resolve_quantity
 from .cost import (
     BUY, SELL, VALID_ACTIONS, PricingError, CostEstimate, validate_action,
     validate_quantity, choose_price, calculate_total_cash,
@@ -71,4 +73,6 @@ __all__ = [
     "poll_until_settled", "print_fill_outcome", "cancel_order",
     "build_cash_confirmation_phrase", "confirm_cash_amount", "buy_option",
     "sell_option", "buy_option_with_bracket"
+    "resolve_buffer_ticks",
+    "resolve_quantity",
 ]

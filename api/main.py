@@ -35,7 +35,7 @@ from api.service.core.config import ConfigError
 
 from .errors import ApiError, classify_exception
 from .shared import get_settings
-from .routes import account, contracts, health, market, orders, positions, trade, ui
+from .routes import health, market, orders, positions, trade, ui
 
 #: Paths reachable without a key. Deliberately tiny: only the liveness check,
 #: the docs, which describe the API without exposing account data, and the
@@ -85,9 +85,7 @@ def create_app() -> FastAPI:
     register_openapi(app)
 
     app.include_router(health.router)
-    app.include_router(account.router)
     app.include_router(market.router)
-    app.include_router(contracts.router)
     app.include_router(positions.router)
     app.include_router(orders.router)
     app.include_router(trade.router)

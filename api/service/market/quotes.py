@@ -75,7 +75,6 @@ class QuoteSnapshot:
     bid: float
     ask: float
     volume: int | None
-    open_interest: int | None
     limit_price: float | None
     source: QuoteSource
     captured_at: datetime
@@ -396,7 +395,6 @@ class ManualEntryProvider(MarketDataProvider):
         self._confirm_wide_spread(bid, ask)
 
         volume = self._prompt_count("Volume")
-        open_interest = self._prompt_count("Open interest")
         limit_price = self._prompt_limit_price(bid, ask)
 
         ratio = decimal_slip_ratio(ask, last_trade.close if last_trade else None)
@@ -405,7 +403,6 @@ class ManualEntryProvider(MarketDataProvider):
             bid=bid,
             ask=ask,
             volume=volume,
-            open_interest=open_interest,
             limit_price=limit_price,
             source=QuoteSource.MANUAL,
             captured_at=datetime.now(timezone.utc),

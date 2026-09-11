@@ -20,6 +20,9 @@ BASE_ENV = {
     "TIGER_PAPER_ACCOUNT": PAPER,
     "TIGER_ALLOW_LIVE": "false",
     "DRY_RUN": "true",
+    # Required, and deliberately undefaulted in config.py.
+    "TAKE_PROFIT_PERCENT": "20",
+    "STOP_LOSS_PERCENT": "15",
 }
 
 TIGER_VARS = [
@@ -30,6 +33,15 @@ TIGER_VARS = [
     "TIGER_ALLOW_LIVE",
     "TIGER_LICENSE",
     "DRY_RUN",
+    # Phase 11. Cleared between tests like everything else, so a value in the
+    # developer's real environment cannot change an outcome here.
+    "TRADE_QUANTITY",
+    "TAKE_PROFIT_PERCENT",
+    "STOP_LOSS_PERCENT",
+    "TRADE_STRIKES_OUT",
+    "TRADE_EXPIRY_DATE",
+    "LEG_TIME_IN_FORCE",
+    "REQUIRE_LIVE_TRADING",
 ]
 
 
@@ -138,3 +150,94 @@ def test_real_base64_key_with_padding_is_accepted(env, tmp_path):
     real = tmp_path / "real.pem"
     real.write_text("MIICdwIBADANBgkqhkiG9w0BAQEFAASCAmEwggJdAgEAAoGBAI==\n")
     assert env(TIGER_PRIVATE_KEY_PATH=str(real)).private_key_path == real
+
+
+# ---------------------------------------------------------------------------
+# Phase 11 -- the trading decisions that moved out of the request body
+#
+# Every bound here used to be a Pydantic Field on TradeRequest. Moving them to
+# startup is what makes POST /trade a four-input call; these tests are what
+# makes sure the validation came with them.
+# ---------------------------------------------------------------------------
+
+
+def test_phase_11_defaults(env):
+    settings = env()
+    assert settings.trade_quantity == 1
+    assert settings.trade_strikes_out == 1
+    assert settings.trade_expiry_date is None
+    assert settings.leg_time_in_force == "DAY"
+    assert settings.require_live_trading is False
+
+
+def test_the_bracket_percentages_are_read(env):
+    settings = env(TAKE_PROFIT_PERCENT="42.5", STOP_LOSS_PERCENT="7")
+    assert settings.take_profit_percent == 42.5
+    assert settings.stop_loss_percent == 7
+
+
+@pytest.mark.parametrize("name", ["TAKE_PROFIT_PERCENT", "STOP_LOSS_PERCENT"])
+def test_a_missing_bracket_percentage_refuses_to_boot(env, name):
+    """No default, on purpose: a guessed bracket is a guess about real money."""
+    with pytest.raises(ConfigError, match="required"):
+        env(**{name: None})
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("TAKE_PROFIT_PERCENT", "0"),
+        ("TAKE_PROFIT_PERCENT", "-5"),
+        ("TAKE_PROFIT_PERCENT", "1001"),
+        ("STOP_LOSS_PERCENT", "0"),
+        ("STOP_LOSS_PERCENT", "-1"),
+        ("STOP_LOSS_PERCENT", "100"),
+        ("STOP_LOSS_PERCENT", "150"),
+    ],
+)
+def test_out_of_range_percentages_are_rejected(env, name, value):
+    with pytest.raises(ConfigError):
+        env(**{name: value})
+
+
+def test_a_take_profit_of_exactly_1000_is_allowed(env):
+    """The old Field was le=1000, not lt."""
+    assert env(TAKE_PROFIT_PERCENT="1000").take_profit_percent == 1000
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1001"])
+def test_out_of_range_quantity_is_rejected(env, value):
+    with pytest.raises(ConfigError, match="between 1 and 1000"):
+        env(TRADE_QUANTITY=value)
+
+
+@pytest.mark.parametrize("value", ["0", "11"])
+def test_out_of_range_strikes_out_is_rejected(env, value):
+    with pytest.raises(ConfigError, match="between 1 and 10"):
+        env(TRADE_STRIKES_OUT=value)
+
+
+def test_an_explicit_expiry_is_kept(env):
+    assert env(TRADE_EXPIRY_DATE="2026-09-18").trade_expiry_date == "2026-09-18"
+
+
+@pytest.mark.parametrize("value", ["18-09-2026", "2026-13-01", "next friday"])
+def test_a_malformed_expiry_is_rejected(env, value):
+    """Falling back to auto-selection would trade a different contract."""
+    with pytest.raises(ConfigError, match="YYYY-MM-DD"):
+        env(TRADE_EXPIRY_DATE=value)
+
+
+def test_leg_time_in_force_is_case_insensitive(env):
+    assert env(LEG_TIME_IN_FORCE="gtc").leg_time_in_force == "GTC"
+
+
+def test_an_unknown_time_in_force_is_rejected(env):
+    with pytest.raises(ConfigError, match="LEG_TIME_IN_FORCE"):
+        env(LEG_TIME_IN_FORCE="IOC")
+
+
+def test_require_live_trading_parses_strictly(env):
+    assert env(REQUIRE_LIVE_TRADING="true").require_live_trading is True
+    with pytest.raises(ConfigError):
+        env(REQUIRE_LIVE_TRADING="maybe")

@@ -9,7 +9,7 @@ from __future__ import annotations
 from tigeropen.common.util.contract_utils import option_contract
 from tigeropen.common.util.order_utils import limit_order
 
-from ..market import QuoteSnapshot, calculate_spread, is_low_liquidity
+from ..market import QuoteSnapshot, calculate_spread
 from .cost import CostEstimate, compare_to_available_cash, estimate_cost
 
 
@@ -212,18 +212,13 @@ def _describe_spread(quote: QuoteSnapshot) -> str:
 
 
 def _describe_liquidity(quote: QuoteSnapshot, threshold: int) -> str:
-    """Describe volume and open interest, flagging thin contracts."""
+    """Describe today's volume, flagging thin contracts."""
     from ..market import is_low_liquidity
 
     volume_text = f"{quote.volume:,}" if quote.volume is not None else "-"
-    open_interest_text = (
-        f"{quote.open_interest:,}" if quote.open_interest is not None else "-"
-    )
+    flag = "[THIN]" if is_low_liquidity(quote.volume, threshold) else "[OK]"
 
-    thin = is_low_liquidity(quote.volume, quote.open_interest, threshold)
-    flag = "[THIN]" if thin else "[OK]"
-
-    return f"volume {volume_text} | open interest {open_interest_text}   {flag}"
+    return f"volume {volume_text}   {flag}"
 
 
 def _print_iv_reminder() -> None:

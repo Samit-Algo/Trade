@@ -22,6 +22,7 @@ from .calendar import (
     milliseconds_to_date, parse_expiry_date, days_until_expiry,
     list_expirations
 )
+from .spot import SpotPrice, fetch_spot_price
 from .prices import (
     MAX_RECENT_TRADE_AGE_SECONDS, RecentTrade, fetch_recent_traded_price,
     DEFAULT_LIQUIDITY_THRESHOLD, UnderlyingPrice, LastTrade, ContractQuote,
@@ -54,5 +55,6 @@ __all__ = [
     "check_price_is_positive", "check_bid_below_ask",
     "is_spread_suspiciously_wide", "is_limit_outside_spread",
     "decimal_slip_ratio", "is_decimal_slip", "build_override_phrase",
-    "build_market_data_provider"
+    "build_market_data_provider",
+    "SpotPrice", "fetch_spot_price",
 ]

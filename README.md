@@ -217,8 +217,8 @@ rather than a local guess. An expiry that is listed but already past is
 refused as **expired**, not as "not found".
 
 **Phase 4** costs the order and sends nothing. Its own script was removed in
-Phase 9 — `POST /orders/preview` and the preview step inside `05_paper_order.py`
-both do the same thing, and the standalone version had no remaining caller. Quotes are typed by hand from
+Phase 9, and `POST /orders/preview` in Phase 11; the preview step inside
+`05_paper_order.py` is what remains. Quotes are typed by hand from
 the Tiger app behind a `MarketDataProvider` seam, labelled `[MANUAL]`
 everywhere, stale after 60 seconds, and checked against the contract's last
 traded price — a price more than 3x or less than 0.33x that must be retyped
@@ -293,44 +293,49 @@ An HTTP port that can place orders is a different risk from a CLI, so:
 - every request needs a matching `X-API-Key` header, or **401** before routing
 - the service **refuses to start** without `TIGER_API_KEY` set
 - it binds to **127.0.0.1**, not `0.0.0.0`
-- order endpoints return **403** when `DRY_RUN` is true or the account is not
-  PAPER, and every order request is logged with its client IP
+- `POST /trade` places nothing when `DRY_RUN` is true — it returns every price
+  with `order_id: null` — and every order request is logged with its client IP
 
-The three original locks are untouched, and `assert_order_allowed` still runs
-**twice** on every order path inside the library.
+Locks 1 and 2 resolve at startup; `assert_order_allowed` runs immediately
+before `place_order`, the last thing that happens before the wire.
 
-### Orders are two-step
+### There is one way to place an order
 
 ```
-POST /orders/preview  ->  full preview + preview_token + expected_cash
-POST /orders          ->  that token + that exact expected_cash
+POST /trade   { client_order_id, symbol, current_price, option_type }
 ```
 
-The prices are **not resent** when submitting — the validated intent is held
-server-side against the token, so a client cannot preview one price and submit
-another. `expected_cash` is the HTTP equivalent of typing the cash amount at
-the CLI.
+Four fields. Quantity, the take-profit and stop-loss percentages, the expiry,
+the strike distance and the leg time-in-force all come from `.env` and are
+validated at startup — see the Phase 11 block in `.env.example`. `GET
+/trade/settings` reports what is configured, so a client can show it.
 
-**`POST /orders` is safe to retry.** Redeeming a token deletes it, so a client
-that times out and resends gets `TOKEN_INVALID`, never a second order.
+`DRY_RUN` decides whether anything is sent:
 
-### The interactive controls, translated
-
-| CLI | HTTP |
+| `DRY_RUN` | What happens |
 |---|---|
-| five typed values, re-prompt on error | request body fields; **400** naming the failed check |
-| `USE 115.00` override phrase | `confirm_price_override: true`, absent by default, never a query parameter |
-| typed cash confirmation | `preview_token` + exact `expected_cash` |
+| `true` | Every price is worked out and returned; `order_id: null`, `order_status: "NOT_SUBMITTED"` |
+| `false` | The same work, then the bracketed order goes to the broker |
 
-A rejected price returns the full evidence, so a client can show a human what
-the CLI would have printed:
+**`POST /trade` is safe to retry.** The `client_order_id` is claimed *before*
+the order can reach the broker, so a client that times out and resends gets the
+first outcome replayed with `duplicate: true`, never a second position.
 
-```json
-{"error_code": "PRICE_LOOKS_LIKE_DECIMAL_SLIP",
- "detail": {"typed_value": 2.5, "last_close": 0.07,
-            "last_close_age_days": 1, "ratio": 35.7143,
-            "resubmit_with": {"confirm_price_override": true}}}
-```
+### The endpoints
+
+Everything else is read-only.
+
+| Endpoint | What it is for |
+|---|---|
+| `GET /health` | mode, dry-run state, account, whether orders are live |
+| `GET /trade/settings` | the `.env` decisions `POST /trade` will apply |
+| `GET /positions` | what is held, valued at the bid |
+| `GET /positions/detail` | one position, with its working orders |
+| `GET /expirations/{underlying}` | which expiries are listed |
+| `GET /orders/history` | recent orders |
+| `GET /orders/{id}` | one order's fill state |
+| `GET /orders/{id}/legs` | its attached take-profit and stop-loss |
+| `GET /ui` | the hand-testing form |
 
 ### Errors: coarse status, precise code
 
@@ -356,7 +361,7 @@ Phase 7 was added after the spec was finished.
 | 5 | Paper order submission | **done** — one real order filled, see below |
 | 6 | Positions and P&L | **done** — position valued at the bid |
 | 7 | Attached take-profit and stop-loss *(new, outside the spec)* | **done** — brackets filled with DAY and GTC legs |
-| 8 | HTTP API *(new, outside the spec)* | **done** — FastAPI over the same library, four locks, two-step orders |
+| 8 | HTTP API *(new, outside the spec)* | **done** — FastAPI over the same library, four locks |
 
 ### The real paper order
 

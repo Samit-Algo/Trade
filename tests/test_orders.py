@@ -50,7 +50,7 @@ def make_contract():
 
 def make_quote(limit_price=0.30):
     return QuoteSnapshot(
-        bid=0.26, ask=0.30, volume=450, open_interest=2100,
+        bid=0.26, ask=0.30, volume=450,
         limit_price=limit_price, source=QuoteSource.MANUAL,
         captured_at=datetime.now(timezone.utc),
     )

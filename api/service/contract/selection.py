@@ -213,6 +213,7 @@ def select_contract(
     compact = to_tiger_expiry_format(expiry.date_text)
 
     strikes = list_strikes_for_expiry(trade_client, normalised, compact, side)
+
     strike, strike_reason = find_otm_whole_strike(
         strikes, current_price, side, strikes_out
     )

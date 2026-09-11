@@ -3,6 +3,12 @@
 **Status: approved for design, not yet implemented.** Phase 3 implementation is
 a separate approval.
 
+> **SUPERSEDED IN PART (2026-09-10).** Every `open_interest` mention below is
+> historical. The field was removed from the quote snapshot, the typed-entry
+> prompt, the liquidity check and the audit record, along with the strike
+> selector that used it -- see HANDOVER.md section 3j for why. Read those
+> rows as a record of what was specified, not of what the code does.
+
 Extends `../tiger-options-backend-spec.md`. Where this document and the
 original disagree, this one is newer and wins; everything it does not mention
 is unchanged. In particular the three safety locks, the phase-by-phase rule,

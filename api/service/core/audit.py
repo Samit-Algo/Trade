@@ -88,7 +88,6 @@ def build_order_record(
             "typed_bid": quote.bid,
             "typed_ask": quote.ask,
             "typed_volume": quote.volume,
-            "typed_open_interest": quote.open_interest,
             "captured_at": quote.captured_at.isoformat(),
             "age_seconds_at_send": round(quote.age_seconds(now), 1),
         },

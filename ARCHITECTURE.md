@@ -134,14 +134,12 @@ project can lose money by accident, `submit.py` is the file to read.
 | `errors.py` | One table: which exception becomes which HTTP status. |
 | `shared.py` | Builds settings and clients once. Request logging. |
 | `schemas.py` | Every request/response shape, and how to build one. |
-| `order_rules.py` | Quote checks, preview tokens, idempotency keys. |
+| `order_rules.py` | Idempotency keys, and the price-only quote. |
 | `routes/health.py` | `GET /health` |
-| `routes/account.py` | `GET /account` |
 | `routes/market.py` | `GET /expirations/{underlying}` |
-| `routes/contracts.py` | `GET /contracts/resolve` |
-| `routes/positions.py` | `GET /positions` |
-| `routes/orders.py` | preview, submit, status, legs, cancel |
-| `routes/trade.py` | `POST /trade` — one call, one bracketed BUY |
+| `routes/positions.py` | `GET /positions`, `GET /positions/detail` |
+| `routes/orders.py` | history, status, legs — **all read-only** |
+| `routes/trade.py` | `POST /trade` — one call, one bracketed BUY — and `GET /trade/settings` |
 | `routes/ui.py` | `GET /ui` — a hand-testing form for `/trade` |
 
 **`main.py` is the root of the import graph.** It imports everything; nothing
@@ -168,35 +166,33 @@ Five scripts. Each one is the evidence behind a finding in `HANDOVER.md`.
 
 ## Following one request all the way through
 
-Placing an order via HTTP, in order:
+Placing an order via HTTP. There is one way to do it:
 
 ```
-1. POST /orders/preview
-      api/main.py                     checks X-API-Key           ← Lock 0
-      api/routes/orders.py           reads the request
-      service/contract/resolve.py    is this contract real?
-      api/order_rules.py             are these prices sane?
+POST /trade   { client_order_id, symbol, current_price, option_type }
+      api/main.py                    checks X-API-Key            ← Lock 0
+      api/routes/trade.py            claims the client_order_id
+      service/contract/resolve.py    which contract? (cached)
+      service/market/prices.py       last traded price, free bars
+      service/order/ticks.py         snap to the grid, add the buffer
+      service/order/bracket.py       the take-profit and stop-loss
       service/order/cost.py          what does it cost?
-      api/order_rules.py             issues a single-use token
-   → preview + preview_token + expected_cash
-
-2. POST /orders   { preview_token, expected_cash }
-      api/routes/orders.py           403 if DRY_RUN is on   ← Locks 1,2,3
-      api/order_rules.py             token valid? cash matches?
+   ── if DRY_RUN is true, it returns HERE with order_id: null ──
       service/order/submit.py
-            assert_order_allowed()   ← the real gate
             build the order          (service/order/build.py)
-            assert_order_allowed()   ← again, right before the wire
+            assert_order_allowed()   ← the guard, right before the wire
             place_order()            ← the only one in the codebase
-      service/order/status.py     poll until it settles
+      service/order/status.py        one status read, no sleeping
       service/core/audit.py          writes the record
-   → what actually filled
+   → the order, and every number behind it
 ```
 
-**Why the cash figure?** Over HTTP nobody types a confirmation, so echoing the
-exact `expected_cash` back is the equivalent. The prices are *not* resent —
-they are held server-side against the token — so a client cannot preview at one
-price and submit at another.
+**Why no confirmation step?** There used to be one: a two-step
+preview-then-submit with a single-use token, standing in for the cash amount a
+human types at the CLI. It was removed with the rest of the unused surface. What
+replaces it is `DRY_RUN`, which is a deployment-level decision rather than a
+per-request one, plus the `client_order_id` — claimed *before* the order can
+reach the broker, so a retry replays the first outcome instead of buying twice.
 
 **Why `assert_order_allowed` twice?** The first is the gate, before anyone is
 asked to confirm anything. The second sits immediately before the wire, so

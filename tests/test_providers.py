@@ -100,12 +100,12 @@ class TestQuoteSnapshotLabelling:
         """Labelling is structural: an unlabelled quote cannot be built."""
         with pytest.raises(TypeError):
             QuoteSnapshot(  # type: ignore[call-arg]
-                bid=1.0, ask=1.1, volume=1, open_interest=1, limit_price=1.1
+                bid=1.0, ask=1.1, volume=1, limit_price=1.1
             )
 
     def test_manual_quotes_carry_the_manual_tag(self):
         quote = QuoteSnapshot(
-            bid=1.0, ask=1.1, volume=1, open_interest=1, limit_price=1.1,
+            bid=1.0, ask=1.1, volume=1, limit_price=1.1,
             source=QuoteSource.MANUAL, captured_at=datetime.now(timezone.utc),
         )
         assert quote.is_manual is True
@@ -113,7 +113,7 @@ class TestQuoteSnapshotLabelling:
 
     def test_fetched_quotes_are_tagged_differently(self):
         quote = QuoteSnapshot(
-            bid=1.0, ask=1.1, volume=1, open_interest=1, limit_price=1.1,
+            bid=1.0, ask=1.1, volume=1, limit_price=1.1,
             source=QuoteSource.TIGER_API, captured_at=datetime.now(timezone.utc),
         )
         assert quote.is_manual is False
@@ -123,7 +123,7 @@ class TestQuoteSnapshotLabelling:
 class TestStaleness:
     def make_quote(self, captured_at):
         return QuoteSnapshot(
-            bid=1.0, ask=1.1, volume=1, open_interest=1, limit_price=1.1,
+            bid=1.0, ask=1.1, volume=1, limit_price=1.1,
             source=QuoteSource.MANUAL, captured_at=captured_at,
         )
 
@@ -202,7 +202,7 @@ class TestManualEntryFlow:
     def test_a_clean_entry_produces_a_manual_snapshot(self, monkeypatch):
         provider, _scripted, _captured = self.run_entry(
             monkeypatch,
-            answers=["5.00", "5.20", "8900", "41000", "5.20"],
+            answers=["5.00", "5.20", "8900", "5.20"],
             last_trade=LastTrade(close=5.10, trade_date=date(2026, 9, 3), days_old=0),
         )
         quote = provider.get_quote(make_contract())
@@ -210,14 +210,13 @@ class TestManualEntryFlow:
         assert quote.bid == 5.00
         assert quote.ask == 5.20
         assert quote.volume == 8900
-        assert quote.open_interest == 41000
         assert quote.limit_price == 5.20
         assert quote.source is QuoteSource.MANUAL
 
     def test_the_decimal_check_evidence_is_kept_for_the_audit_trail(self, monkeypatch):
         provider, _scripted, _captured = self.run_entry(
             monkeypatch,
-            answers=["5.00", "5.20", "8900", "41000", "5.20"],
+            answers=["5.00", "5.20", "8900", "5.20"],
             last_trade=LastTrade(close=5.10, trade_date=date(2026, 9, 3), days_old=0),
         )
         quote = provider.get_quote(make_contract())
@@ -239,7 +238,7 @@ class TestManualEntryFlow:
     def test_the_exact_phrase_clears_a_decimal_slip(self, monkeypatch):
         provider, _scripted, _captured = self.run_entry(
             monkeypatch,
-            answers=["11.40", "115.00", "USE 115.00", "y", "8900", "41000", "115.00"],
+            answers=["11.40", "115.00", "USE 115.00", "y", "8900", "115.00"],
             last_trade=LastTrade(close=11.50, trade_date=date(2026, 9, 3), days_old=0),
         )
         quote = provider.get_quote(make_contract())
@@ -249,7 +248,7 @@ class TestManualEntryFlow:
         """Silence would imply the check passed."""
         provider, _scripted, captured = self.run_entry(
             monkeypatch,
-            answers=["5.00", "5.20", "8900", "41000", "5.20"],
+            answers=["5.00", "5.20", "8900", "5.20"],
             last_trade=None,
         )
         provider.get_quote(make_contract())
@@ -258,7 +257,7 @@ class TestManualEntryFlow:
     def test_a_bad_price_is_re_prompted_not_fatal(self, monkeypatch):
         provider, _scripted, captured = self.run_entry(
             monkeypatch,
-            answers=["nonsense", "-1", "5.00", "5.20", "8900", "41000", "5.20"],
+            answers=["nonsense", "-1", "5.00", "5.20", "8900", "5.20"],
             last_trade=None,
         )
         quote = provider.get_quote(make_contract())
@@ -268,7 +267,7 @@ class TestManualEntryFlow:
     def test_bid_above_ask_is_re_prompted(self, monkeypatch):
         provider, _scripted, captured = self.run_entry(
             monkeypatch,
-            answers=["5.20", "5.00", "5.30", "8900", "41000", "5.25"],
+            answers=["5.20", "5.00", "5.30", "8900", "5.25"],
             last_trade=None,
         )
         quote = provider.get_quote(make_contract())

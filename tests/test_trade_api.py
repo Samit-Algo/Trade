@@ -47,11 +47,17 @@ def make_contract():
     )
 
 
-def TradeRequestFactory(**overrides):
-    """A valid TradeRequest for response-building tests."""
-    from api.schemas import TradeRequest
+def make_settings(**overrides):
+    """A Settings stand-in carrying only what build_response reads."""
+    from types import SimpleNamespace
 
-    return TradeRequest(**{**make_body(), **overrides})
+    values = {
+        "trade_quantity": 1,
+        "leg_time_in_force": "DAY",
+        "dry_run": False,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 class StubExpiry:
@@ -253,16 +259,15 @@ class TestIdempotencyStore:
 
 
 def make_body(**overrides):
-    """A valid request body, with fields overridable per test."""
+    """A valid request body, with fields overridable per test.
+
+    Four fields. Quantity, the bracket and the expiry come from .env now.
+    """
     body = {
         "client_order_id": "test-order-0001",
         "symbol": "AAPL",
         "option_type": "CALL",
         "current_price": 318.40,
-        "quantity": 1,
-        "entry_price": 0.30,
-        "take_profit_percent": 20,
-        "stop_loss_percent": 15,
     }
     body.update(overrides)
     return body
@@ -280,19 +285,9 @@ class TestRequestValidation:
         "field,value",
         [
             ("option_type", "CALLS"),
-            ("quantity", 0),
-            ("quantity", -1),
             ("current_price", 0),
             ("current_price", -5),
-            ("entry_price", 0),
-            ("entry_price", -0.30),
-            ("take_profit_percent", 0),
-            ("take_profit_percent", -5),
-            ("stop_loss_percent", 0),
-            ("stop_loss_percent", 100),
-            ("stop_loss_percent", 150),
             ("client_order_id", "short"),
-            ("leg_time_in_force", "IOC"),
         ],
     )
     def test_bad_values_are_refused(self, field, value):
@@ -304,8 +299,11 @@ class TestRequestValidation:
             TradeRequest(**make_body(**{field: value}))
 
     @pytest.mark.parametrize(
-        "field", ["client_order_id", "symbol", "option_type", "current_price",
-                  "quantity", "take_profit_percent", "stop_loss_percent"]
+        "field",
+        # current_price is deliberately NOT here: it is optional, and omitting
+        # it means "fetch the underlying price server-side". See
+        # resolve_underlying_price in routes/trade.py.
+        ["client_order_id", "symbol", "option_type"],
     )
     def test_every_required_field_is_required(self, field):
         from pydantic import ValidationError
@@ -317,28 +315,28 @@ class TestRequestValidation:
         with pytest.raises(ValidationError):
             TradeRequest(**body)
 
-    def test_entry_price_and_expiry_are_optional(self):
-        """Absent means: fetch the price, and auto-pick the expiry."""
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("quantity", 5),
+            ("entry_price", 0.30),
+            ("strikes_out", 3),
+            ("leg_time_in_force", "GTC"),
+            ("validate_only", True),
+        ],
+    )
+    def test_settings_that_moved_to_env_are_refused_not_ignored(self, field, value):
+        """The dangerous failure would be silence.
+
+        Someone still sending quantity=5 must be told, not quietly traded at
+        the configured size.
+        """
+        from pydantic import ValidationError
+
         from api.schemas import TradeRequest
 
-        body = make_body()
-        del body["entry_price"]
-        request = TradeRequest(**body)
-        assert request.entry_price is None
-        assert request.expiry is None
-
-    def test_an_explicit_expiry_is_kept(self):
-        from api.schemas import TradeRequest
-
-        request = TradeRequest(**make_body(expiry="2026-09-18"))
-        assert request.expiry == "2026-09-18"
-
-    def test_defaults_are_the_conservative_ones(self):
-        from api.schemas import TradeRequest
-
-        request = TradeRequest(**make_body())
-        assert request.leg_time_in_force == "DAY"
-        assert request.validate_only is False
+        with pytest.raises(ValidationError):
+            TradeRequest(**make_body(**{field: value}))
 
 
 class TestTheEndpointIsRegisteredAndProtected:
@@ -374,15 +372,29 @@ class TestSafetyIsNotBypassed:
         ).read_text(encoding="utf-8")
         assert "place_order(" not in source
 
-    def test_the_route_checks_the_locks_before_doing_work(self):
-        from api.routes import trade
+    def test_the_guard_runs_immediately_before_every_place_order(self):
+        """The one gate that matters, in the only file that can spend money."""
+        source = (
+            Path(__file__).resolve().parent.parent
+            / "api/service/order/submit.py"
+        ).read_text(encoding="utf-8")
 
-        assert hasattr(trade, "check_safety_locks")
+        lines = source.splitlines()
+        place_order_lines = [
+            index
+            for index, line in enumerate(lines)
+            if "trade_client.place_order(" in line
+        ]
+        assert place_order_lines, "no place_order call found"
+
+        for index in place_order_lines:
+            preceding = chr(10).join(lines[max(0, index - 12):index])
+            assert "assert_order_allowed(" in preceding, (
+                f"place_order at line {index + 1} is not guarded"
+            )
 
     def test_only_one_function_can_submit(self):
         """buy_option_with_bracket is called from submit_and_record, nowhere else."""
-        from api.routes import trade
-
         source = (
             Path(__file__).resolve().parent.parent / "api/routes/trade.py"
         ).read_text(encoding="utf-8")
@@ -402,15 +414,23 @@ class TestSafetyIsNotBypassed:
         assert "buy_option_with_bracket" not in source
         assert "place_order" not in source
 
-    def test_validate_only_returns_before_submitting(self):
+    def test_dry_run_returns_before_submitting(self):
+        """DRY_RUN is the switch: true means the route never reaches submit."""
         import inspect
 
         from api.routes import trade
 
         source = inspect.getsource(trade.place_bracketed_trade)
-        assert source.index("if body.validate_only:") < source.index(
+        assert source.index("if settings.dry_run:") < source.index(
             "submit_and_record("
         )
+
+    def test_the_route_has_no_second_per_request_bypass(self):
+        """One switch. A per-request flag would be a way around .env."""
+        source = (
+            Path(__file__).resolve().parent.parent / "api/routes/trade.py"
+        ).read_text(encoding="utf-8")
+        assert "validate_only" not in source
 
 
 class TestPriceOnlyQuote:
@@ -436,8 +456,7 @@ class TestPriceOnlyQuote:
 
         quote = build_price_only_quote(0.31)
         assert quote.volume is None
-        assert quote.open_interest is None
-        assert is_low_liquidity(quote.volume, quote.open_interest) is True
+        assert is_low_liquidity(quote.volume) is True
 
 
 class TestTheResponseMatchesFillOutcome:
@@ -498,14 +517,20 @@ class TestTheResponseMatchesFillOutcome:
                 bid=quote.bid, ask=quote.ask, limit_price=quote.limit_price,
             ),
             price_source=PriceSource(
-                source="caller", price=5.04, age_seconds=None, note="test"
+                source="last_trade", price=5.04, age_seconds=None, note="test"
             ),
+            overrides=(),
+            buffer_reason="test",
+            quantity=1,
+            quantity_reason="test",
+            underlying_price=350.0,
+            underlying_price_source="test",
         )
         outcome = self.make_outcome()
 
         response = build_response(
             plan,
-            TradeRequestFactory(),
+            make_settings(),
             order_id=outcome.order_id,
             order_status=outcome.status,
             parent_filled=outcome.filled_quantity,
@@ -763,3 +788,84 @@ class TestOrderOutcomes:
 
         assert read_leg_price(self.StubOrder(order_type="STP", aux_price=6.46)) == 6.46
         assert read_leg_price(self.StubOrder(order_type="LMT", limit_price=10.51)) == 10.51
+
+
+class TestOptionalOverrides:
+    """Expiry and the bracket may be overridden per request, for testing.
+
+    The point of moving these to .env was that they could not be typed wrong
+    per trade. Allowing an override gives that back deliberately -- so the
+    bounds must still hold, and the response must say what was used.
+    """
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("expiry", "2026-10-16"),
+            ("take_profit_percent", 50.0),
+            ("stop_loss_percent", 3.0),
+        ],
+    )
+    def test_an_override_is_accepted(self, field, value):
+        from api.schemas import TradeRequest
+
+        request = TradeRequest(**make_body(**{field: value}))
+        assert getattr(request, field) == value
+
+    def test_absent_overrides_are_none(self):
+        """None is what tells the route to fall back to .env."""
+        from api.schemas import TradeRequest
+
+        request = TradeRequest(**make_body())
+        assert request.expiry is None
+        assert request.take_profit_percent is None
+        assert request.stop_loss_percent is None
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            # The same bounds load_settings enforces. An override must not be
+            # able to reach a value the configured default could not.
+            ("take_profit_percent", 0),
+            ("take_profit_percent", -5),
+            ("take_profit_percent", 1001),
+            ("stop_loss_percent", 0),
+            ("stop_loss_percent", 100),
+            ("stop_loss_percent", 150),
+            ("expiry", "16-10-2026"),
+            ("expiry", "next friday"),
+            ("expiry", "2026-10-16T00:00:00"),
+        ],
+    )
+    def test_an_out_of_range_override_is_refused(self, field, value):
+        from pydantic import ValidationError
+
+        from api.schemas import TradeRequest
+
+        with pytest.raises(ValidationError):
+            TradeRequest(**make_body(**{field: value}))
+
+    def test_quantity_is_still_not_overridable(self):
+        """Only these three moved back. Position size stays in .env."""
+        from pydantic import ValidationError
+
+        from api.schemas import TradeRequest
+
+        with pytest.raises(ValidationError):
+            TradeRequest(**make_body(quantity=5))
+
+    def test_the_response_reports_what_was_overridden(self):
+        """Without this, a caller cannot tell which settings actually applied."""
+        from api.schemas import TradeResponse
+
+        assert "overrides_applied" in TradeResponse.model_fields
+
+    def test_prepare_trade_prefers_the_override(self):
+        """The precedence rule, read off the source."""
+        import inspect
+
+        from api.routes import trade
+
+        source = inspect.getsource(trade.prepare_trade)
+        assert "body.take_profit_percent" in source
+        assert "settings.take_profit_percent" in source

@@ -23,7 +23,7 @@ from pathlib import Path
 from api.service.core.broker import build_quote_client, build_trade_client
 from api.service.core.config import Settings, load_settings
 
-from .order_rules import IdempotencyStore, PreviewTokenStore
+from .order_rules import IdempotencyStore
 
 # REENTRANT on purpose. get_quote_client() holds this lock and then calls
 # get_settings(), which takes it again on the same thread. A plain Lock
@@ -33,7 +33,6 @@ _lock = threading.RLock()
 _settings: Settings | None = None
 _quote_client = None
 _trade_client = None
-_token_store: PreviewTokenStore | None = None
 _idempotency_store: IdempotencyStore | None = None
 _contract_cache: dict = {}
 
@@ -79,21 +78,6 @@ def get_trade_client():
         if _trade_client is None:
             _trade_client = build_trade_client(get_settings())
         return _trade_client
-
-
-def get_token_store() -> PreviewTokenStore:
-    """Return the shared preview token store.
-
-    Returns:
-        The store, with its TTL taken from settings.
-    """
-    global _token_store
-    with _lock:
-        if _token_store is None:
-            _token_store = PreviewTokenStore(
-                ttl_seconds=get_settings().preview_token_ttl_seconds
-            )
-        return _token_store
 
 
 def get_idempotency_store() -> IdempotencyStore:
@@ -145,19 +129,12 @@ def get_cached_contract(key: tuple, build):
         return built
 
 
-def clear_contract_cache() -> None:
-    """Empty the contract cache. For tests, and for a manual refresh."""
-    with _lock:
-        _contract_cache.clear()
-
-
 def orders_are_enabled(settings: Settings) -> tuple[bool, str]:
-    """Decide whether order endpoints may run at all, and say why not.
+    """Report whether an order would actually be sent, and why not.
 
-    This is a fast, clear refusal in front of the real guard, not a replacement
-    for it. assert_order_allowed still runs twice inside orders.py on every
-    order path; deleting this check would change the error a client sees, not
-    whether an order could be placed.
+    Read by GET /health and shown in the UI so the state is visible before
+    anyone presses anything. It decides nothing: DRY_RUN is what POST /trade
+    branches on, and assert_order_allowed is the guard before the wire.
 
     Args:
         settings: The validated settings.

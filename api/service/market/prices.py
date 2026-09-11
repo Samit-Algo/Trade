@@ -72,7 +72,6 @@ class ContractQuote:
     ask: float | None
     latest_price: float | None
     volume: int | None
-    open_interest: int | None
     historical_volatility: str | None  # NOT implied volatility
     spread: float | None
     spread_percent: float | None
@@ -118,18 +117,16 @@ def calculate_spread(
 
 def is_low_liquidity(
     volume: int | None,
-    open_interest: int | None,
     threshold: int = DEFAULT_LIQUIDITY_THRESHOLD,
 ) -> bool:
     """Decide whether a contract is too thinly traded to be comfortable.
 
-    Volume is how many contracts changed hands today. Open interest is how many
-    are held in total. Low numbers on either mean few people are trading this
-    contract, so the spread will be wide and selling later may be hard.
+    Volume is how many contracts changed hands today. A low number means few
+    people are trading this contract, so the spread will be wide and selling
+    later may be hard.
 
     Args:
         volume: Contracts traded today, or None if not reported.
-        open_interest: Contracts currently held, or None if not reported.
         threshold: The number below which a figure counts as thin.
 
     Returns:
@@ -137,14 +134,10 @@ def is_low_liquidity(
     """
     # A missing figure counts as thin. Absence of evidence is not reassurance
     # when the downside is being stuck in a position you cannot sell.
-    if volume is None or open_interest is None:
+    if volume is None:
         return True
 
-    if volume < threshold:
-        return True
-    if open_interest < threshold:
-        return True
-    return False
+    return volume < threshold
 
 
 def fetch_underlying_price(quote_client, underlying: str) -> UnderlyingPrice:
@@ -293,7 +286,6 @@ def fetch_contract_quote(quote_client, identifier: str) -> ContractQuote:
         ask=ask,
         latest_price=_read_optional_float(row, "latest_price"),
         volume=_read_optional_int(row, "volume"),
-        open_interest=_read_optional_int(row, "open_interest"),
         historical_volatility=historical_volatility,
         spread=spread,
         spread_percent=spread_percent,

@@ -1,9 +1,9 @@
 """THE ONLY FILE THAT CAN SPEND MONEY.
 
-Every call to `place_order` in this project is in this file, and each one sits
-between two `assert_order_allowed` calls: one gate before the human is asked to
-confirm anything, one immediately before the wire so nothing in between could
-have changed the mode.
+Every call to `place_order` in this project is in this file, and each one is
+preceded immediately by `assert_order_allowed`. That guard is the last thing
+that runs before the wire. `settings` is a frozen dataclass, so nothing
+between the guard and the call can change the mode or clear the dry-run flag.
 
 If you are reviewing the safety of this project, read this file. It is the
 whole submission path.
@@ -11,7 +11,7 @@ whole submission path.
 
 from __future__ import annotations
 
-from ..core.broker import CANCEL_ORDER_LIMITER, PLACE_ORDER_LIMITER
+from ..core.broker import PLACE_ORDER_LIMITER
 from ..core.safety import assert_order_allowed
 from ..market import QuoteSnapshot
 from .bracket import (
@@ -102,9 +102,9 @@ def _submit_option_order(
         1. contract already resolved by the caller (Phase 3)
         2. quote already obtained and checked (Phase 4)
         3. print the full preview
-        4. assert_order_allowed(mode, dry_run)
-        5. typed confirmation of the cash amount
-        6. build the order
+        4. typed confirmation of the cash amount
+        5. build the order
+        6. assert_order_allowed(mode, dry_run)  <- THE GUARD
         7. submit
         8. poll for the true outcome
 
@@ -160,10 +160,6 @@ def _submit_option_order(
         cash_warning=cash_warning,
     )
 
-    # Step 4 -- the guard. Before the human is asked anything, so a blocked
-    # order costs no attention.
-    assert_order_allowed(settings.mode, settings.dry_run)
-
     # Step 5 -- typed confirmation of the cash amount, not "yes".
     if not confirm_cash_amount(estimate, input_function=input_function):
         raise OrderSubmissionError("Cash amount not confirmed. Nothing was submitted.")
@@ -177,9 +173,9 @@ def _submit_option_order(
         limit_price=quote.limit_price,
     )
 
-    # Step 4, again, immediately before the submission call. The first check is
-    # the gate; this one guarantees that nothing between the gate and the wire
-    # changed the mode or cleared the dry-run flag.
+    # THE GUARD. The last thing that happens before the wire, and the only
+    # place it needs to happen: settings is a frozen dataclass, so nothing
+    # between here and place_order can change the mode or the dry-run flag.
     assert_order_allowed(settings.mode, settings.dry_run)
 
     # Step 7 -- submit.
@@ -291,16 +287,16 @@ def buy_option_with_bracket(
     """Buy an option with take-profit and stop-loss legs attached.
 
     Runs the same mandatory sequence as Phase 5, with the bracket preview and
-    checks inserted into step 3. There is no path around the locks: this
-    function calls assert_order_allowed twice, exactly as _submit_option_order
-    does, and for the same reasons.
+    checks inserted into step 3. There is no path around the guard: this
+    function calls assert_order_allowed immediately before place_order,
+    exactly as _submit_option_order does, and for the same reason.
 
         1. contract already resolved by the caller (Phase 3)
         2. quote already obtained and checked (Phase 4)
         3. print the full preview, including the bracket block
-        4. assert_order_allowed(mode, dry_run)
-        5. typed confirmation of the cash amount
-        6. build the order, with legs
+        4. typed confirmation of the cash amount
+        5. build the order, with legs
+        6. assert_order_allowed(mode, dry_run)  <- THE GUARD
         7. submit
         8. poll for the true outcome
 
@@ -367,9 +363,6 @@ def buy_option_with_bracket(
     )
     print_bracket_preview(contract, quote, estimate, legs)
 
-    # Step 4 -- the guard, before the human is asked anything.
-    assert_order_allowed(settings.mode, settings.dry_run)
-
     # Step 5 -- typed confirmation of the cash amount, not "yes".
     if not confirm_cash_amount(estimate, input_function=input_function):
         raise OrderSubmissionError("Cash amount not confirmed. Nothing was submitted.")
@@ -386,7 +379,7 @@ def buy_option_with_bracket(
         leg_time_in_force=leg_time_in_force,
     )
 
-    # Step 4, again, immediately before the wire.
+    # THE GUARD -- the last thing before the wire. See the note above.
     assert_order_allowed(settings.mode, settings.dry_run)
 
     # Step 7 -- submit.

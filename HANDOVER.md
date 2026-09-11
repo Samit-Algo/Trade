@@ -382,6 +382,14 @@ sees; it would not change whether an order could be placed.
 
 ### Orders are two-step
 
+> **REMOVED IN PHASE 11.** `POST /orders/preview`, `POST /orders` and
+> `DELETE /orders/{order_id}` were deleted along with the whole preview-token
+> mechanism, because the UI never called them: `POST /trade` is the only way to
+> place an order now. The section is kept because what it records was verified
+> live, and because the reasoning explains why `client_order_id` is claimed
+> before submission rather than after. `/orders` today is read-only: history,
+> one order, and its legs.
+
 ```
 POST /orders/preview   ->  full preview + preview_token + expected_cash
 POST /orders           ->  that token + that exact expected_cash
@@ -510,7 +518,7 @@ specification asked for because an entitlement has not been bought yet.
 | `TIGER_API_KEY` | *(none — service will not start)* | Lock 0. A long random value. |
 | `API_HOST` | `127.0.0.1` | Bind address. Change only with intent. |
 | `API_PORT` | `8000` | |
-| `PREVIEW_TOKEN_TTL_SECONDS` | `60` | Matches the quote staleness limit. |
+| `PREVIEW_TOKEN_TTL_SECONDS` | `60` | Matches the quote staleness limit. *(Renamed `QUOTE_STALE_AFTER_SECONDS` in Phase 11; the old name still works.)* |
 
 ### Verified live, 2026-09-04
 
@@ -523,7 +531,8 @@ carrying its evidence, then accepted with `confirm_price_override`; a 403 under
 That order **did not fill** — it was 03:31 ET and the market was closed — and
 was correctly reported as `NOTHING FILLED` with `settled: false` after 12
 polls, not as a success. It was then cancelled through
-`DELETE /orders/{order_id}`, which returned `CANCELLED`, `0/1 filled`.
+`DELETE /orders/{order_id}`, which returned `CANCELLED`, `0/1 filled`. (That
+endpoint was removed in Phase 11 — cancelling is done in the Tiger app.)
 
 ---
 
@@ -823,9 +832,10 @@ current_price 318.40  ->  AAPL 320 CALL ~ $8.05
 current_price 318.40  ->  AAPL 360 CALL ~ $0.30
 ```
 
-`validate_only: true` remains the way to see the cost before committing, and
-`cash_required` is still in every response. Restoring the ceiling means adding
-one optional field and one comparison -- see commit history for the original.
+`DRY_RUN=true` remains the way to see the cost before committing -- it runs
+every step and returns every price with nothing sent -- and `cash_required` is
+still in every response. Restoring the ceiling means adding one setting and one
+comparison; see commit history for the original.
 
 ### Idempotency
 
@@ -857,7 +867,7 @@ behind a load balancer. Note it before scaling out.
 `buy_option_with_bracket` the CLI does, with both `assert_order_allowed` gates
 and the single `place_order` exactly where they were.
 
-`volume` and `open_interest` are left `None` rather than invented.
+`volume` is left `None` rather than invented.
 `is_low_liquidity` treats missing data as thin, so the gap fails safe.
 
 ### The fourth circular import
@@ -893,10 +903,10 @@ try:
 except Exception:
     release_request_id(...); raise
 
-if body.validate_only:
-    return ... describe_only(plan, body)      # 3. just testing?
+if settings.dry_run:
+    return ... describe_only(plan, settings)          # 3. DRY_RUN on?
 
-return ... submit_and_record(plan, body, request)   # 4. send it
+return ... submit_and_record(plan, body, settings, request)   # 4. send it
 ```
 
 A `TradePlan` dataclass carries the decisions between steps, which retired the
@@ -1093,6 +1103,893 @@ thin ones. The data was never the limit; contract choice was.
 
 ---
 
+## 3f. Four inputs, and the cut (Phase 11)
+
+Two changes, done together on 2026-09-10.
+
+### `POST /trade` takes four fields
+
+```json
+{ "client_order_id": "...", "symbol": "AAPL",
+  "current_price": 318.40, "option_type": "CALL" }
+```
+
+Seven request fields moved into `.env`: `TRADE_QUANTITY`,
+`TAKE_PROFIT_PERCENT`, `STOP_LOSS_PERCENT`, `TRADE_STRIKES_OUT`,
+`TRADE_EXPIRY_DATE`, `LEG_TIME_IN_FORCE`, `REQUIRE_LIVE_TRADING`.
+
+Every bound they carried as a Pydantic `Field` is now enforced in
+`load_settings`, so **a bad value refuses to boot instead of refusing an order
+mid-session**. The two bracket percentages have no defaults on purpose: every
+other setting can fall back safely, a bracket cannot.
+
+`TradeRequest` sets `extra="forbid"`. A caller still sending `quantity: 5` gets
+a 422 rather than being silently traded at the configured size — the silent
+version is the dangerous one.
+
+### `validate_only` is gone; `DRY_RUN` is the switch
+
+| `DRY_RUN` | `POST /trade` |
+|---|---|
+| `true` | works out every price, returns `order_id: null` / `NOT_SUBMITTED` |
+| `false` | the same work, then places the order |
+
+`DRY_RUN=true` used to mean a bare 403 on this path. It now means what
+`validate_only` meant, which is the more useful of the two behaviours and
+leaves exactly one switch to reason about.
+
+### Four guards became two
+
+Removed: `check_safety_locks()` in `routes/trade.py`, and the early
+`assert_order_allowed` in each of the two submit paths. All three re-read the
+same two immutable fields as the guard that survives. **What was deleted is
+duplication, not coverage.** What remains:
+
+1. `resolve_account_mode` at startup — Locks 1 and 2
+2. `assert_order_allowed` immediately before each `place_order` — Lock 3
+
+### The unused surface, deleted
+
+The UI was the only client, so anything it never called went. Five endpoints:
+`POST /orders/preview`, `POST /orders`, `DELETE /orders/{order_id}`,
+`GET /account`, `GET /contracts/resolve`. With them went the entire preview
+token mechanism (`PreviewTokenStore`, `PreviewIntent`, `TokenExpired`,
+`TokenNotFound`, the quote-check and decimal-slip helpers) and 16 schema
+definitions.
+
+| File | Before | After |
+|---|---|---|
+| `api/order_rules.py` | 497 | 170 |
+| `api/schemas.py` | 912 | 632 |
+| `api/routes/orders.py` | 660 | 301 |
+| `api/routes/account.py` | 69 | deleted |
+| `api/routes/contracts.py` | 50 | deleted |
+
+**What this costs.** Cancelling a resting order is now done in the Tiger app —
+there is no API route for it. Placing an order has exactly one path, so there
+is no fallback if `/trade` misbehaves. Both were accepted deliberately.
+
+### `.env` restructured
+
+Regrouped by the decision each setting makes, not by the phase that introduced
+it: (1) credentials, (2) whether orders are real, (3) how the trade is sized,
+(4) how prices are decided, (5) the HTTP server. Every value carries the reason
+it matters and its valid range.
+
+Four settings that had been running on code defaults are now written down
+explicitly -- `OPTION_TICK_SIZE`, `MIN_DAYS_TO_EXPIRY`, `IDEMPOTENCY_TTL_SECONDS`,
+`MARKET_DATA_SOURCE` -- at exactly the values the code was already using. The
+loaded `Settings` were compared field by field before and after: identical.
+
+`PREVIEW_TOKEN_TTL_SECONDS` became `QUOTE_STALE_AFTER_SECONDS`. It never
+described a token -- it is how long a hand-typed bid stays usable when valuing
+a position, and after Phase 11 deleted preview tokens the name pointed at
+nothing. The old name is still read as a fallback, so an existing `.env` keeps
+working.
+
+`.env.example` ships `DRY_RUN=true` and a blank bracket, so a fresh copy
+refuses to boot rather than trading someone else's numbers.
+
+**What is still dormant and was NOT deleted:** `fetch_contract_quote` and
+`simulate_order`. They have no callers, but they are the landing spots for the
+`usOptionQuote` entitlement — see "The three dormant functions" above.
+
+---
+
+## 3g. Trade timing, live (Phase 12)
+
+How long a position is held, from fill to exit, on every screen.
+
+### Tiger already had the data
+
+Every order carries two stamps, and neither had been read before:
+
+| Field | Meaning |
+|---|---|
+| `order_time` | when Tiger accepted the order |
+| `trade_time` | when it actually filled |
+
+So the durations are **computed, not tracked**. Nothing is recorded at trade
+time, there is no new storage, and it works for orders placed long before this
+existed. Verified against 49 filled orders on the paper account.
+
+### The clock starts at the FILL
+
+`held_seconds` is `trade_time` of the exit leg minus `trade_time` of the
+parent -- not from submission. The buy fills in about a second (measured: 0-1s
+on every order in the history), so the two are close, but fill-to-exit is the
+honest measure of how long the position was actually exposed.
+
+`fill_delay_seconds` reports the placed-to-filled gap separately.
+
+### Finding the exit
+
+The exit is whichever leg has status FILLED. The legs are OCA, so only one
+ever can -- when the stop triggers the target is cancelled, and the reverse.
+
+### What the numbers said immediately
+
+Averaged over the existing history: **winners held 2.0 min, losers 1.9 min**.
+Near-identical, which says the take-profit and stop-loss percentages are
+roughly balanced in time. A large gap either way would say one of them is set
+too tight. That comparison is now on the history page as two stat boxes.
+
+### Live panel
+
+Two intervals, deliberately: `liveTimer` fetches every 3s, `liveTicker`
+re-renders every 1s. The clock ticks locally between fetches, so it looks live
+without spending an API call per second. Both stop the moment a leg fills.
+
+The panel prefers the SERVER's `entry_filled_at` over the browser's own
+"when I first saw it filled" stamp -- Tiger's is when the fill really happened.
+
+### One honest limit
+
+`trade_time` is when a leg FILLED, not when it triggered. A stop that triggers
+and fills immediately shows no gap; on a fast-moving contract there could be a
+small one. At the seconds-to-minutes scale this reports, it does not matter.
+
+---
+
+## 3h. Optional per-request overrides (Phase 13)
+
+Three settings may be supplied on the request again, for testing: `expiry`,
+`take_profit_percent`, `stop_loss_percent`. Absent or null means use `.env`.
+
+### This partly reverses Phase 11, on purpose
+
+Phase 11 moved them out of the request so they could not be typed wrong per
+trade. Allowing overrides gives some of that risk back, so two things hold it
+in place:
+
+1. **The bounds are identical** to the ones `load_settings` enforces
+   (TP 0-1000 inclusive, SL above 0 and under 100, expiry `YYYY-MM-DD`). An
+   override cannot reach a value the configured default could not.
+2. **The response says what was used.** `overrides_applied` lists the field
+   names the request overrode, and the UI shows an amber banner naming them.
+   Without it, nothing on screen would distinguish a configured bracket from
+   a typed one.
+
+`quantity`, `strikes_out` and `leg_time_in_force` stay `.env`-only. Position
+size is the one that costs real money if it is wrong.
+
+### The expiry is STICKY; the percentages are not
+
+The expiry sits in the top bar, not in the order form, and is saved to
+`localStorage` under `tigerStickyExpiry`. Set it once and every trade uses it,
+**whatever the symbol**, until it is changed or cleared with "Use .env". It is
+deliberately not reset after a trade -- a reset would make the next order
+silently use a different expiry.
+
+The percentages are per-order and are not persisted, because carrying a
+one-off test bracket into the next trade unnoticed is the worse failure. Their
+placeholders read `.env: 5` and so on, fetched from `GET /trade/settings`, so a
+blank box still shows what it will use.
+
+The read-only `.env` panel that Phase 11 added to the form was removed here --
+it restated values that are now visible as placeholders, and it made the form
+long enough to push the buttons below the fold.
+
+Since one date is reused across symbols, the listing check matters more than
+before: a weekly expiry can exist for TSLA and not for AVGO. The verdict line
+re-checks on every symbol change and says `sticky` or `.env` as the source.
+
+### Precedence, in one line
+
+    request value if not None, else the .env value
+
+Applied in `prepare_trade` for the percentages and in `find_contract` for the
+expiry -- where it also enters the contract cache key, so an overridden expiry
+cannot return a contract cached under the configured one.
+
+---
+
+## 3i. Why there is no websocket price feed (Phase 13)
+
+Asked for: live streaming prices instead of typing `current_price` by hand.
+Answered: not possible on this account, and a websocket would not fix it.
+
+### The SDK does support push
+
+`tigeropen/push/push_client.py` exists and offers `subscribe_quote`,
+`subscribe_option`, `subscribe_tick`, `subscribe_depth_quote` and more. The
+transport is not the obstacle.
+
+### The entitlement is
+
+Checked live with `get_quote_permission()`:
+
+    MARKET DATA PERMISSIONS HELD:  aStockQuoteLv1   (China A-share L1)
+
+    usStockQuote  (live US stock price)   NO
+    usOptionQuote (live US option price)  NO
+
+**A push feed delivers whatever the account is entitled to.** Subscribing
+without `usStockQuote` yields nothing better than the free delayed feed, so
+the socket buys complexity and no freshness. Revisit only if that entitlement
+is bought.
+
+### What the free feed actually gives
+
+`fetch_underlying_price` already falls back to Tiger's delayed feed and marks
+the result `is_delayed`. Measured on 2026-09-10: AAPL 320.36, NVDA 218.21,
+TSLA 365.93, ~200ms each, all **~15 minutes stale**.
+
+### Why 15-minute-old mostly does not matter here
+
+`current_price` chooses the STRIKE and is never used as a price paid. It only
+misleads when the stock has crossed a strike boundary within the delay window.
+The option's own price is a different feed -- free one-minute bars, seconds
+old during the session -- and that one is genuinely fresh.
+
+An auto-fill button was offered and DECLINED: a delayed number refreshing on
+screen reads as live when it is not, and the Tiger app is the only current
+source available. The field stays typed by hand on purpose.
+
+### What was built instead
+
+The symbol became a three-option dropdown (AAPL, NVDA, TSLA) remembered in
+`localStorage` as `tigerSymbol`.
+
+### Then a free LIVE source turned up: Yahoo
+
+The conclusion above is right about Tiger and wrong about the wider question.
+Checked directly, Yahoo's chart API is genuinely live and free:
+
+    319.82  stamped 19:36:20   age 3s
+    319.76  stamped 19:36:32   age 1s
+    319.73  stamped 19:36:37   age 1s     <- price MOVES between polls
+    319.95  stamped 19:36:42   age 1s
+
+Measured against Tiger in the same minute, market open:
+
+| Symbol | Yahoo | Tiger | Gap |
+|---|---|---|---|
+| AAPL | 319.71 | 319.39 | +0.32 |
+| NVDA | 217.90 | 217.80 | +0.10 |
+| **TSLA** | **367.42** | **365.32** | **+2.10** |
+
+$2.10 is more than a strike increment, so Tiger's delay could genuinely select
+the wrong contract. Yahoo's figure was confirmed against Nasdaq's own API
+(319.71) in the same minute -- Tiger is the one that is behind.
+
+`GET /spot/{underlying}` serves it. `service/market/spot.py` tries both Yahoo
+hosts and returns None for EVERY failure rather than raising: the caller
+treats None as "the human types it", and an exception would break a form field
+instead. 23 tests cover the malformed-response cases.
+
+**No Tiger fallback, by choice.** Mixing a live source with a 15-minute one
+behind a single button would make the label the only thing distinguishing
+them. If Yahoo fails, the Fetch button says so and the field is typed by hand,
+exactly as before.
+
+### The risk, stated plainly
+
+This is an UNDOCUMENTED endpoint. It can change shape, rate-limit, or vanish.
+It is a convenience on an editable field, never a dependency -- and it is used
+only for `current_price`, which chooses the strike and is never a price paid.
+The option's own premium still comes from Tiger's free one-minute bars.
+
+The UI clears the freshness label whenever the symbol changes or the price is
+typed over, so a stale "live, 2s old" can never sit under a number it does not
+describe.
+
+### Why the poll is 2s and not faster
+
+Asked for: automatic updates "every ms". Measured first, because the answer
+depends on how often the SOURCE actually changes:
+
+    96 calls in 12 seconds  ->  5 distinct prices
+    a new price roughly every 2.4s
+    91 of 96 calls returned a number that had not changed
+
+The data does not exist at millisecond resolution. Polling every 1ms would
+mean ~1000 requests/second to gain ~0.4 new prices -- a 2500:1 waste ratio on
+an undocumented third-party endpoint, and the fastest possible route to a
+rate-limit or an IP block.
+
+`SPOT_POLL_MS = 2000` catches essentially every update Yahoo publishes.
+Verified over a 30s simulated session: 15/15 requests succeeded, 191ms average
+latency, 8 distinct prices tracked.
+
+### Who wins, the poller or the human
+
+Typing in the price box sets `spotManual` and the poller stops overwriting --
+the Tiger app is the only source that beats this one, and the human is the one
+reading it. A "Resume live" button appears to hand control back. Changing the
+symbol resumes automatically, because a hand-typed price for one stock is
+meaningless for another.
+
+Polling also stops on `visibilitychange` while the tab is hidden and catches
+up when it returns: a background tab hammering a third-party endpoint all day
+is both rude and pointless.
+
+---
+
+## 3j. Strike by open interest: BUILT, THEN REMOVED (Phase 14, reverted)
+
+`SELECT_BY_OPEN_INTEREST` chose the most heavily held of the nearby whole OTM
+strikes instead of counting `TRADE_STRIKES_OUT` positions out. It was removed
+entirely on 2026-09-10 after it silently changed a real trade.
+
+### What it did wrong
+
+A live AAPL order, reproduced exactly:
+
+    spot 319.20, CALL, expiry 2026-09-11 (ONE day out)
+      compared  320 = 22,397 contracts
+                325 = 24,575
+                330 = 34,316   <- chosen
+
+The UI sent 319.20 and the nearest OTM strike is 320. The rule took 330
+because it was busiest. That turned a $239 near-the-money trade into a $28
+long shot, which expired worthless the next day.
+
+### Why the distance cap did not save it
+
+`OPEN_INTEREST_MAX_DISTANCE` was 4% of spot. On AAPL at 319.20 that permits
+anything up to 331.97, so 330 passed. The cap worked as configured -- 4% is
+simply far too wide when expiry is one day away. A strike 3.4% out with six
+days to move is a reasonable trade; the same strike with one day is a coin
+flip, and nothing in the rule knew the difference.
+
+### Why it was not just retuned
+
+The premise was that open interest means liquidity. On a near-dated expiry it
+means something else: the crowded lottery-ticket strike. Making the cap
+depend on days-to-expiry would have worked, but the whole feature buys a
+marginal fill improvement in exchange for the strike no longer being
+predictable from the inputs -- and predictability is worth more here.
+
+### What went with it
+
+`choose_strike_by_open_interest`, `fetch_open_interest`, the three tuning
+constants, the `SELECT_BY_OPEN_INTEREST` setting, and the `open_interest`
+field throughout -- including the CLI's typed quote prompt, the liquidity
+warning that read it, and `typed_open_interest` in the audit record.
+`is_low_liquidity` now judges on volume alone.
+
+**Strike selection is once again purely positional**: `TRADE_STRIKES_OUT`
+whole strikes out of the money, and nothing else. Verified against the case
+above -- it now returns 320.
+
+---
+
+## 3k. Premium-scaled buy buffer (Phase 15, OPTIONAL)
+
+A buffer that scales with the premium instead of a flat `LIMIT_BUFFER_TICKS`.
+Strategy supplied by the user's manager; implemented as a separate, switchable
+module because it is being trialled, not adopted.
+
+### Switching it off
+
+    BUFFER_TIERS_ENABLED=false
+
+`LIMIT_BUFFER_TICKS` then applies to every trade exactly as before -- verified
+in a fresh process, flat 5 ticks at every premium from 0.33 to 7.20. To delete
+it: remove `order/buffer_tiers.py`, its two lines in `order/__init__.py`, the
+two settings in `core/config.py`, and the `resolve_buffer_ticks` call in
+`routes/trade.py`.
+
+### The tiers
+
+| premium | buffer |
+|---|---|
+| < 1.50 | 0.01 *(floored to 0.02, see below)* |
+| 1.50 - 2.50 | 0.02 |
+| 2.50 - 3.50 | 0.03 |
+| 3.50 - 6.00 | 0.05 |
+| > 6.00 | 0.10 |
+
+Boundaries belong to the HIGHER band: 1.50 gets 0.02, not 0.01.
+
+### Why the flat buffer was the wrong shape
+
+5 cents is 3.1% of a $1.60 option and 0.8% of a $6.00 one. The cheap contract
+was carrying four times the relative headroom for no reason.
+
+### Backtested against 55 real filled BUYs
+
+Paper account, 2026-09-09/10. **Every one of the 55 filled BELOW its limit**,
+so the buffer had never once been needed to secure a fill -- it is unclaimed
+insurance, and unused headroom costs nothing because a limit fills at the best
+available price.
+
+| scheme | fills | unused headroom | avg buffer |
+|---|---|---|---|
+| flat 0.01 | 42/55 | $70 | 0.010 |
+| flat 0.05 (before) | 55/55 | $273 | 0.050 |
+| tiers as specified | 52/55 | $190 | 0.034 |
+| **tiers, bottom band 0.02** | **55/55** | $242 | 0.044 |
+| 2% of premium | 54/55 | $329 | 0.060 |
+
+### The three misses, and why the floor exists
+
+All three were short by EXACTLY ONE CENT, and all three sat in the `< 1.50`
+band:
+
+    NVDA 215 PUT   last 0.89 -> limit 0.90, really filled 0.91
+    AAPL 330 CALL  last 0.33 -> limit 0.34, really filled 0.35
+    NFLX 76 PUT    last 1.40 -> limit 1.41, really filled 1.42
+
+A missed limit is **no fill at all**, not a worse fill, so each is a trade that
+would not have happened -- and 21 of the 55 trades (38%) were in that band.
+`BUFFER_TIER_FLOOR_TICKS` defaults to **2** and lifts only the bottom band,
+restoring 55/55. Set it to 1 to run the specification verbatim.
+
+### The response explains itself
+
+`tick.buffer_reason` says which rule produced the buffer, e.g. *"3 tick(s) =
+0.03 for a premium of 2.80, from the premium tiers"*. A buffer that varies per
+trade would otherwise make a surprising limit price untraceable afterwards.
+
+### What this evidence is NOT
+
+The backtest compares each real fill price against a hypothetical limit. It
+cannot prove a tighter limit would not have changed how the market responded.
+55 orders, three symbols, two days, all paper -- directional, not
+statistically strong, and the `> 6.00` band has only 5 samples. Run a session
+in DRY_RUN before trusting it with size.
+
+---
+
+## 3l. QQQ added, and how it differs (Phase 15)
+
+QQQ joined the symbol dropdown (AAPL, NVDA, TSLA, QQQ). It resolves, prices
+and brackets correctly with no code change, but it does not behave like the
+other three and that is worth knowing before trading it.
+
+### Strikes are $1 apart, not $5
+
+Verified live on 2026-09-10:
+
+| symbol | spot | strike 1 OTM | gap | gap as % |
+|---|---|---|---|---|
+| **QQQ** | 711.12 | **712.0** | **0.88** | **0.12%** |
+| AAPL | 323.36 | 325.0 | 1.64 | 0.51% |
+| NVDA | 218.18 | 220.0 | 1.82 | 0.83% |
+| TSLA | 366.37 | 370.0 | 3.63 | 0.99% |
+
+`TRADE_STRIKES_OUT=1` therefore means something much closer to the money on
+QQQ than on the others -- roughly a fifth as far, proportionally. That is a
+different trade, not a worse one, but the same setting no longer describes the
+same distance across symbols. Raise `TRADE_STRIKES_OUT` for QQQ if the
+intention was "a similar distance out".
+
+This is also why `OPEN_INTEREST_MAX_DISTANCE` was never a safe cap in strikes
+rather than percent -- see section 3j, and the same trap applies here.
+
+### Premiums land in the top buffer tier
+
+QQQ at 711 puts a near-the-money option around 8.39, which is above the 6.00
+band, so the buffer is 0.10 -- the widest tier. Confirmed end to end:
+
+    QQQ CALL  strike 712  last 8.39 -> buy limit 8.49  (10 ticks = 0.10)
+
+### A placeholder-bar trap seen while testing
+
+The QQQ CALL and PUT both returned a premium of exactly 8.39, which looked
+like a bug. It was not: both bars reported `volume 0`, meaning neither
+contract had traded that minute and both were carrying an older price
+forward. Two untraded contracts happening to hold the same stale number.
+
+`REQUIRE_LIVE_TRADING=true` refuses exactly this, verified:
+
+    422 PRICE_NOT_LIVE
+    detail: traded_this_minute=True, volume_this_minute=0, price=8.39
+
+Note `traded_this_minute` being True while volume is 0 -- that is precisely
+why `is_live` requires BOTH, and why volume alone is the real signal.
+
+---
+
+## 3m. TradingView direction webhook (Phase 16, OPTIONAL)
+
+An external signal source decides CALL or PUT. Nothing else moved.
+
+### Switching it off
+
+    TRADINGVIEW_WEBHOOK_SECRET=
+
+Every request is then refused with 503 and the rest of the system is
+unaffected -- verified: the UI still serves and POST /trade still works. To
+delete it: remove `routes/webhook.py`, `pine/`, the webhook import and
+include_router line in `main.py`, the two models in `schemas.py`, the four
+`webhook_*` settings, the .env block, and the two test files.
+
+### What TradingView decides, and what it does not
+
+Direction. That is the whole contract. `tests/test_webhook.py` asserts the
+payload cannot carry a strike, expiry, quantity, premium or limit price
+(`extra="forbid"`), and that `webhook.py` contains no call to
+`select_contract`, `calculate_bracket`, `find_otm` or `apply_buffer`. The
+route calls `prepare_trade` -- the SAME function the UI calls.
+
+**The spot price is fetched here, not read from the signal.** TradingView's
+close comes from its own feed and picks the strike; a number this service did
+not verify must not choose the contract. `fetch_spot_price` is used instead.
+
+`score` and `mode` are accepted for the log only. Gating on a number supplied
+by the caller would defeat the point of validating the caller.
+
+### TWO independent execution locks
+
+`DRY_RUN=false` lets the UI trade. A webhook additionally needs
+`WEBHOOK_EXECUTE=true`. Both default to refusing, and the route requires
+`settings.webhook_execute and not settings.dry_run`. An external source
+earning execution rights is a separate decision from letting yourself click a
+button.
+
+### Authentication: the secret is in the BODY
+
+**TradingView cannot send custom headers.** The `X-API-Key` middleware would
+reject every webhook with 401, so `/webhook/tradingview` is listed in
+`SELF_AUTHENTICATING_PATHS`: it skips that middleware and compares its own
+secret with `compare_digest`. It is NOT unauthenticated -- no secret
+configured means 503, a wrong secret means 401.
+
+`TRADINGVIEW_WEBHOOK_SECRET` is deliberately separate from `TIGER_API_KEY`.
+A value pasted into a TradingView input should never be the broker key.
+
+`tests/test_api.py` was extended: the OpenAPI/middleware agreement test now
+knows about the third category, and a new test asserts any addition to
+`SELF_AUTHENTICATING_PATHS` enforces its own secret.
+
+### The guards, all verified live
+
+| check | result |
+|---|---|
+| wrong secret | 401 WEBHOOK_UNAUTHORIZED |
+| bad direction | 422 |
+| extra field (strike) | 422 |
+| unlisted symbol | 200 REJECTED |
+| stale signal (600s) | 200 REJECTED |
+| same bar resent | 200 DUPLICATE |
+| secret unset | 503 |
+
+Refusals return **200 with an action of REJECTED** on purpose: TradingView
+retries a non-2xx, and retrying a permanently-invalid signal is only noise.
+Faults that are genuinely retryable still raise.
+
+A position already open in the symbol blocks a new signal, and an unreadable
+position list **fails closed** -- not knowing is not a reason to stack.
+
+### Idempotency is keyed on the bar
+
+`client_order_id = tv-{symbol}-{direction}-{bar_time}`. The same bar cannot
+trade twice however many times TradingView delivers the alert. Verified.
+
+### Pine: two files, kept in sync by a test
+
+`direction_analyzer.pine` (indicator) fires the alerts and draws the
+diagnostics table. `direction_strategy.pine` (strategy) backtests the same
+conditions. Pine has no worthwhile import for one shared block, so the
+conditions are duplicated -- and `tests/test_pine_sync.py` compares all 20
+shared expressions text-for-text. Backtesting one strategy while trading
+another is the bug it prevents.
+
+### Repainting: CONFIRMED is the default
+
+Signals evaluate on `barstate.isconfirmed`, so they fire at 1m bar close and
+history equals live behaviour. REALTIME mode is an input, off by default, and
+the file states plainly that it repaints.
+
+Every `request.security` call reads `[1]` with `lookahead_off` -- the live HTF
+bar would repaint even in confirmed mode, which is the subtler version of the
+same trap. A test enforces both on every call.
+
+### Why not 5-second bars
+
+TradingView rate-limits alerts (~15 per 3 minutes). Once-per-close on a 5s
+chart is up to 12/minute, so alerts would be dropped SILENTLY. The backend's
+own path costs ~1.5s anyway (webhook, spot fetch, order, ~1s fill), so
+sub-second signalling buys nothing. 1m main with 15s confirmation via
+`request.security` is the honest ceiling.
+
+### A Pine syntax trap that bit on the first paste
+
+`bullScore` and the alert payload were written with lines ending in a bare
+`+`, Python-style. TradingView refused to compile:
+
+    Syntax error at input 'end of line without line continuation'
+
+**Pine continues a line ONLY inside brackets.** A trailing operator at bracket
+depth zero is an error; the same operator inside an open `(` is fine. Fixed by
+wrapping each score sum in its own parentheses, and by rebuilding the payload
+with `str.format(...)` -- whose own brackets provide the continuation, and
+which reads better than a chain of concatenations anyway.
+
+`str.format` needs `{{` and `}}` for the literal JSON braces, like .NET.
+
+`tests/test_pine_sync.py::TestPineSyntaxTraps` now catches this class of error
+without TradingView: it tracks bracket depth line by line, checks the
+parentheses balance, renders the payload and asserts the result both parses as
+JSON and validates against `TradingViewSignal`. Verified by reintroducing the
+bug -- the test failed and named line 179.
+
+### str.format cannot emit literal JSON braces
+
+The first fix used `str.format` with `{{` / `}}`, on the assumption that Pine
+escapes braces the way .NET and Python do. It does not:
+
+    Error on bar 455: can't parse argument number: {"source":"tradingview"
+
+Pine reads `{` as the start of an argument index, sees `"source"...` and
+fails. There is no documented escape for a literal brace in `str.format`.
+
+The payload is therefore built by **plain concatenation**, with the braces as
+their own string constants and the whole chain wrapped in parentheses so the
+lines may legally continue:
+
+    f_payload(string direction, int score) =>
+        (
+          "{" +
+          '"source":"tradingview"' +
+          ',"symbol":"'    + syminfo.ticker + '"' +
+          ...
+          "}"
+        )
+
+`test_str_format_is_not_used_for_the_payload` keeps it that way.
+
+The payload test no longer regex-joins a template. It extracts the balanced
+expression, binds each Pine variable to a quoted stand-in and **evaluates the
+concatenation**, so it verifies the string TradingView will actually send.
+(The binding is word-boundary anchored: a plain replace of `direction` also
+matched the substring inside the literal `'"direction":"'`, which produced
+`""CALL"":"CALL"` -- caught by the JSON parse.)
+
+### Pine v5 -> v6
+
+TradingView also warned `PINE_VERSION_OUTDATED`. Every function used here --
+`ta.*`, `math.*`, `str.tostring`, `request.security`, `ta.dmi`'s tuple return,
+`var`/`:=`, `=>` declarations -- is unchanged between v5 and v6, so the bump
+was a one-line change to `//@version=6` in both files. `math.ceil` returns a
+float in both; it is compared numerically against an int score, so no type
+issue either way.
+
+### Premium plan confirmed: fastTF now defaults to 15S
+
+The account does have seconds timeframes, so `fastTF` defaults to `"15S"` and
+offers `1S 5S 10S 15S 30S 1 3 5` as an options list. `htfTF` stays at `"5"` --
+the context timeframe has no reason to need Premium, and a test enforces that.
+The options list must always include at least one non-seconds value so
+RE10063 is recoverable from the settings dialog alone.
+
+### The chart timeframe is the thing to be careful with, not fastTF
+
+`fastTF` is read through `request.security` and **produces no extra alerts**.
+The CHART timeframe sets the alert rate, because alerts fire once per bar
+close:
+
+| chart tf | alerts/min | outcome |
+|---|---|---|
+| 1S | 60 | **dropped silently** |
+| 5S | 12 | **dropped silently** |
+| 10S | 6 | **dropped silently** |
+| 15S | 4 | ok |
+| 1m | 1 | the intended setup |
+
+TradingView's sustained limit is roughly 15 per 3 minutes (~5/min) and it
+discards the excess **without reporting anything**. Signals would simply never
+arrive, with no error on the chart, in the alert log, or at the backend.
+
+So the script computes `alertsPerMin = 60 / chartSeconds`, and when the chart
+is under 15s it draws an orange on-chart label saying so and shows the rate in
+the diagnostics table. **It warns rather than refuses** -- the choice is the
+user's, but it will not be silent. There is also nothing to gain: the backend
+path was measured at ~1.5s end to end, so a one-second signalling edge is
+consumed by execution.
+
+`TestAlertRateProtection` covers the arithmetic and the presence of the
+warning, and asserts the script does NOT call `runtime.error` -- warning, not
+blocking, is the intended behaviour.
+
+### Pine has no multi-line string literals
+
+Written twice by accident: a real newline inside a string literal instead of
+`
+`. Pine reports an unterminated string. `TestNoUnterminatedStrings` now
+counts quotes per line (ignoring escaped ones) and checks the warning label
+uses escaped newlines -- verified by reintroducing a raw newline, which failed
+both tests.
+
+### Verified end to end after both fixes
+
+    Pine sends: {"source":"tradingview","symbol":"QQQ","direction":"CALL",
+                 "bar_time":1789057231035,"score":8,"mode":"confirmed",...}
+    backend  -> 200 EVALUATED
+                QQQ 260918C00710000 strike 710.0 exp 2026-09-18
+                limit 9.19 tp 9.65 sl 8.73 -> NOT_SUBMITTED
+
+The same payload sent for TSLA returned REJECTED, correctly: a TSLA position
+was already open from earlier testing, which is the open-position guard doing
+its job rather than a failure.
+
+### Seconds timeframes need Premium (RE10063)
+
+The first paste onto a chart produced:
+
+    Runtime error: RE10063
+    This script uses seconds-based timeframes, which are only available to
+    users with Premium and higher-tier plans.
+
+A subscription limit, not a bug -- and there is no workaround, because BELOW
+ONE MINUTE EVERY TRADINGVIEW TIMEFRAME IS SECONDS-BASED. On a lower plan,
+sub-minute confirmation is unavailable rather than merely awkward.
+
+`fastTF` now defaults to `"1"`. Two things follow, and the second one matters:
+
+1. `fastActive = timeframe.in_seconds(fastTF) < timeframe.in_seconds(timeframe.period)`
+   gates the 7th condition. Without it, `fastTF` equal to the chart timeframe
+   would compare a series against itself and hand out a free point on every
+   bar.
+
+2. **The threshold is rescaled to the reachable maximum.** Dropping the
+   1-point condition leaves a max of 9, so a configured 7 would have become
+   7-of-9 -- a LOWER bar than the 7-of-10 that was asked for. `maxScore` and
+   `threshold = math.ceil(scoreThreshold * maxScore / 10)` fix that: 7-of-10
+   (70%) becomes 7-of-9 (78%), slightly stricter. Proven arithmetically for
+   every threshold 1-10 in `test_rescaling_never_makes_a_signal_easier`.
+
+Setting `fastTF` to `"15S"` after upgrading re-enables it with no code change.
+
+`TestTradingViewPlanCompatibility` guards all of it, including that no default
+timeframe is seconds-based -- verified by reintroducing `15S`, which failed
+the test.
+
+### Signal logging
+
+`logs/webhook_signals.log` records every signal including refused ones -- a
+rejected signal never becomes an order, so it would otherwise leave no trace,
+and "which signals did we ignore, and why" is the first question when tuning
+the analyzer.
+
+    EVALUATED TSLA CALL spot=365.83 strike=370.0 exp=2026-09-18
+      premium=7.35 limit=7.45 qty=1 cash=745.0 tp=7.83 sl=7.07
+      -- NOT SENT, WEBHOOK_EXECUTE is false
+
+### What the backtest can and cannot tell you
+
+The strategy trades the UNDERLYING. It answers "was the direction right?" and
+nothing about premium, spread, fill, IV, decay or the ~$6 flat commission. Its
+exits are an ATR/bar-count proxy, NOT your percentage bracket. Actual option
+performance comes from the paper log above, never from the backtest.
+
+---
+
+## 3n. Analyzer v2 -- bugs found in review (Phase 17)
+
+A line-by-line review of v1 found three high-severity bugs, two logic
+weaknesses and several small items. All were reproduced before being fixed.
+
+### Bug 1 (HIGH): history and live read different HTF bars
+
+v1 used `expr[1]` with `lookahead_off` and a comment claiming that prevented
+repainting. **The comment was wrong.**
+
+    lookahead_off + [1]   history: HTF bar only visible after it closes, THEN
+                                   [1] steps back again  -> ~10 min old on 5m
+                          live   : the last closed bar   -> ~5 min old
+                          => non-repainting, but MISALIGNED
+
+    lookahead_on  + [1]   both    : the previous CLOSED bar
+                          => TradingView's documented idiom, ALIGNED
+
+`lookahead_on` **alone** is lookahead bias. The `[1]` is what makes it safe;
+`lookahead_on` is what makes history and live agree. Judging live behaviour
+against history computed from different data invalidates every backtest, which
+is why this was the most serious of the three.
+
+### Bug 2 (HIGH): the cooldown consumed the setup it blocked
+
+`lastState := state` ran on every confirmed bar, including bars where the
+cooldown had **refused** the signal -- marking that direction "already seen".
+When the cooldown expired the setup was no longer a transition and could never
+fire. Simulated:
+
+    CALL at bar 100, PUT arrives bar 102 and holds 20 bars
+      v1 fired: [(100, CALL)]                  <- the PUT never fires at all
+      v2 fired: [(100, CALL), (115, PUT)]      <- fires when the cooldown ends
+
+`lastFired` now records only what ACTUALLY FIRED, and resets to 0 when the
+state returns to NO TRADE. Verified that the other three behaviours are
+unchanged: a CALL held 20 bars still fires once, NO TRADE -> CALL still
+re-arms, and rapid flip-flopping is still throttled.
+
+### Bug 3 (HIGH): realtime mode could send an unretractable alert
+
+Pine rolls `var` state back on every live tick, keeping only the final one. An
+alert fired mid-bar is already **at the backend**; if the condition then fails
+before the close, the chart shows no signal and the cooldown does not know an
+alert was sent.
+
+**Realtime mode is removed rather than patched.** `varip` would fix the
+rolled-back cooldown, but not the real order placed for a signal that never
+existed in history. The execution path costs ~1.5s regardless, so the speed
+bought was never worth an order with no chart record.
+
+### Bug 4 (MEDIUM): volume scored for BOTH directions
+
+`volOk` added 1 point to bull AND bear. Worse than a free point -- it pushed
+both scores toward the conflict gate (`both >= 4`):
+
+    mixed bar   without volume: 3/3 -> no conflict
+                with volume   : 4/4 -> CONFLICT, signal BLOCKED
+
+So a shared point could manufacture a conflict that blocked a valid signal.
+Now `volOkBull` requires `close > open` and `volOkBear` requires `close < open`.
+
+### Bug 5 (MEDIUM): one fact counted twice
+
+`retestBull` required `close > emaSlow`, which `posBull` already scores. A
+7/10 was partly the same fact counted twice. The `emaSlow` term is removed
+from the retest arm only -- the breakout arm (`brokeUp`) is genuinely
+independent and stays.
+
+### Small items
+
+`f_row`'s parameter was named `label`, shadowing a built-in Pine TYPE. It
+compiled, but any later `label.new()` inside that function would break.
+Renamed `rowLabel`.
+
+The payload now carries **`bar_close_time`** alongside `bar_time`. `bar_time`
+is the bar's OPEN, so a 60-second bar measured from it always looks a minute
+stale -- which would reject every live signal on a tight limit.
+`check_freshness` uses `bar_close_time or bar_time`, so an older payload still
+works.
+
+Docs now say **https://** for the webhook URL: the secret travels in the body.
+
+The diagnostics table reads `[1]` on every value. v1 showed DIRECTION from the
+closed bar while the condition rows described the bar still forming, so the
+table could contradict itself mid-minute. A chart-timeframe row warns when the
+chart is not 1m -- a warning, not a hard error, so experimenting on 2m/3m
+stays possible.
+
+### Not adopted: the trading-hours filter
+
+Offered and declined. The backend already refuses prices older than 5 minutes
+and `REQUIRE_LIVE_TRADING` catches contracts that have not traded this minute,
+so a pre-market signal fails at the option-price step rather than becoming an
+order.
+
+### The reviewer's honest note, which stands
+
+The chop filter was tuned on **two** losing trades. That is far too few to
+learn from. And a stock-direction backtest is not an options backtest: a CALL
+can be right on direction and still lose to time decay and the spread. Log
+every signal, including the NO TRADE reasons, for weeks before real money.
+
+### Guards added
+
+`TestTheReviewFindings` covers each finding, reading CODE ONLY -- the headers
+deliberately name the mistakes they fixed, so a raw-text search would fail on
+its own explanation. Verified by reverting `lookahead_on` and the directional
+volume: each reverted bug failed exactly its own test.
+
+---
+
 ## 4. Environment facts
 
 Not derivable from the repo, because `.env` and `secrets/` are gitignored.
@@ -1105,7 +2002,7 @@ Not derivable from the repo, because `.env` and `secrets/` are gitignored.
 | Market data source | `MARKET_DATA_SOURCE=manual` |
 | API key | `TIGER_API_KEY` is set in `.env`. Without it the HTTP service refuses to start. Not in git. |
 | API bind | `API_HOST=127.0.0.1`, `API_PORT=8000` |
-| Preview token TTL | `PREVIEW_TOKEN_TTL_SECONDS=60`, matching the quote staleness limit |
+| Quote staleness | `QUOTE_STALE_AFTER_SECONDS=60`. Renamed in Phase 11 from `PREVIEW_TOKEN_TTL_SECONDS`, which never described a token; the old name is still read as a fallback. |
 | Locks | `TIGER_ALLOW_LIVE=false`, `DRY_RUN=true` |
 | Virtualenv | `vnv/`, not `.venv`. `vnv\Scripts\activate`. |
 | Python | 3.11.9, `tigeropen` 3.7.1 |
@@ -1330,9 +2227,21 @@ therefore has three outcomes, not two — see §7.
 | 2 — Live opt-in | `TIGER_ALLOW_LIVE` must be `true` for any other account | `false` |
 | 3 — Dry run | `DRY_RUN` must be `false` for an order to be sent | `true` |
 
-`assert_order_allowed` is called **twice** in the order path: once as the gate
-before the human is asked anything, and again immediately before `place_order`,
-so nothing between the gate and the wire can have changed the mode.
+`assert_order_allowed` is called **once per submission path**, immediately
+before `place_order`. `settings` is a frozen dataclass, so nothing between the
+guard and the wire can change the mode or clear the dry-run flag.
+
+> **Phase 11 reduced the guard count from four to two.** The route-level
+> `check_safety_locks()` and the early `assert_order_allowed` in each submit
+> path were removed: both re-read the same two immutable fields the remaining
+> guard reads. What was deleted was duplication, not coverage. The two that do
+> real work are `resolve_account_mode` at startup (Locks 1 and 2) and the
+> pre-wire `assert_order_allowed` (Lock 3).
+
+On the `/trade` path, Lock 3 no longer produces a 403. `DRY_RUN=true` now runs
+every step and returns every price with `order_id: null` and
+`order_status: "NOT_SUBMITTED"` -- the behaviour the retired `validate_only`
+flag used to provide. `/orders` still refuses with a 403.
 
 All four verified live. Lock 0 refuses a request with no key and one with a
 wrong key; Lock 1 refuses a non-paper account ID; Lock 3 blocked the real
@@ -1356,12 +2265,11 @@ the wrong number. The anchored patterns below count only what executes.
 grep -rn 'trade_client\.place_order(' --include='*.py' api scripts
 #    expect 2 hits, both in api/service/order/submit.py
 
-# 2. assert_order_allowed is CALLED four times: twice on the plain path and
-#    twice on the bracketed one. Once as the gate before the human is asked
-#    anything, once immediately before the wire. Three means a guard was
-#    dropped from one of the two paths.
+# 2. assert_order_allowed is CALLED twice: once on the plain path and once
+#    on the bracketed one, each immediately before its place_order. One means
+#    a guard was dropped from one of the two paths.
 grep -c '^[[:space:]]*assert_order_allowed(' api/service/order/submit.py
-#    expect 4
+#    expect 2
 grep -rl '^[[:space:]]*assert_order_allowed(' --include='*.py' api scripts
 #    expect api/service/order/submit.py, and nothing else
 

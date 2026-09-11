@@ -443,6 +443,11 @@ def get_attached_legs(trade_client, parent_order_id: int) -> list:
                     "aux_price": getattr(candidate, "aux_price", None),
                     "time_in_force": getattr(candidate, "time_in_force", None),
                     "status": normalise_status(getattr(candidate, "status", None)),
+                    # What the leg actually sold at. A stop becomes a MARKET
+                    # order once triggered, so this can differ from aux_price
+                    # -- and that difference is the realised slippage.
+                    "avg_fill_price": getattr(candidate, "avg_fill_price", None),
+                    "filled": getattr(candidate, "filled", None),
                 }
             )
 

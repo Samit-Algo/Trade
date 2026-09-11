@@ -13,7 +13,7 @@ from api.service.position import (
 )
 from tigeropen.common.consts import SecurityType
 
-from api.service.core.broker import OPEN_ORDERS_LIMITER
+from api.service.core.broker import OPEN_ORDERS_LIMITER, ORDERS_LIMITER
 from api.service.market import (
     BidSnapshot,
     QuoteSource,
@@ -115,7 +115,7 @@ def read_positions(
                 captured_at=datetime.now(timezone.utc),
             )
             valuation = value_position(
-                position, snapshot, settings.preview_token_ttl_seconds
+                position, snapshot, settings.quote_stale_after_seconds
             )
             total_current_value += valuation.current_value
             total_unrealised += valuation.unrealised_pnl
@@ -206,6 +206,47 @@ def fetch_working_orders(identifier: str) -> list[WorkingOrderOut]:
     return rows
 
 
+def find_entry_fill_time(identifier: str) -> datetime | None:
+    """Find when the BUY that opened this position filled.
+
+    The hold clock starts at the fill, not at submission, so this reads
+    Tiger's `trade_time` off the most recent filled BUY for the contract.
+    Open orders do not carry it -- the parent has already filled and left
+    the open-orders list -- so this looks at the order history instead.
+
+    Args:
+        identifier: The full option identifier.
+
+    Returns:
+        When the entry filled, or None when it cannot be determined.
+    """
+    settings = get_settings()
+    ORDERS_LIMITER.wait()
+    try:
+        raw = get_trade_client().get_orders(
+            account=settings.account, sec_type=SecurityType.OPT, limit=100
+        )
+    except Exception:  # noqa: BLE001 -- a missing clock must not hide a position
+        return None
+
+    newest = None
+    for order in raw or []:
+        contract_text = str(getattr(order, "contract", "")).split("/")[0]
+        if contract_text != identifier:
+            continue
+        if str(getattr(order, "action", "")).upper() != "BUY":
+            continue
+        if "FILLED" not in str(getattr(order, "status", "")).upper():
+            continue
+        filled_ms = getattr(order, "trade_time", None)
+        if filled_ms and (newest is None or filled_ms > newest):
+            newest = filled_ms
+
+    if newest is None:
+        return None
+    return datetime.fromtimestamp(newest / 1000, timezone.utc)
+
+
 @router.get("/positions/detail", response_model=PositionDetailResponse)
 def read_position_detail(identifier: str) -> PositionDetailResponse:
     """Price one held position live and report what is protecting it.
@@ -261,6 +302,35 @@ def read_position_detail(identifier: str) -> PositionDetailResponse:
             "expired at the close -- Tiger reports that as 'Rejected'."
         )
 
+    # When did this position open, and how far is it from each exit?
+    entry_filled_at = find_entry_fill_time(identifier)
+    held_seconds = (
+        round((datetime.now(timezone.utc) - entry_filled_at).total_seconds(), 1)
+        if entry_filled_at
+        else None
+    )
+
+    take_profit_price = next(
+        (o.price for o in working if o.role == "TAKE_PROFIT" and o.price), None
+    )
+    stop_loss_price = next(
+        (o.price for o in working if o.role == "STOP_LOSS" and o.price), None
+    )
+
+    # Distance from the CURRENT price, so it answers "how close am I now?".
+    # Positive means the price still has to travel; the stop figure is the
+    # cushion left before it triggers.
+    percent_to_take_profit = percent_to_stop_loss = None
+    if recent is not None and recent.price:
+        if take_profit_price:
+            percent_to_take_profit = round(
+                (take_profit_price - recent.price) / recent.price * 100, 2
+            )
+        if stop_loss_price:
+            percent_to_stop_loss = round(
+                (recent.price - stop_loss_price) / recent.price * 100, 2
+            )
+
     return PositionDetailResponse(
         identifier=held.identifier,
         underlying=held.underlying,
@@ -278,6 +348,12 @@ def read_position_detail(identifier: str) -> PositionDetailResponse:
         unrealised_pnl=pnl,
         unrealised_pnl_percent=pnl_percent,
         working_orders=working,
+        entry_filled_at=entry_filled_at,
+        held_seconds=held_seconds,
+        take_profit_price=take_profit_price,
+        stop_loss_price=stop_loss_price,
+        percent_to_take_profit=percent_to_take_profit,
+        percent_to_stop_loss=percent_to_stop_loss,
         has_stop_loss=has_stop,
         has_take_profit=has_target,
         protection_note=note,

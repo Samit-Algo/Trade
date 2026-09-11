@@ -84,20 +84,16 @@ class TestCalculateSpread:
 
 class TestIsLowLiquidity:
     def test_liquid_row_is_not_flagged(self):
-        assert is_low_liquidity(volume=8900, open_interest=41000) is False
+        assert is_low_liquidity(volume=8900) is False
 
     def test_low_volume_is_flagged(self):
-        assert is_low_liquidity(volume=2, open_interest=41000) is True
-
-    def test_low_open_interest_is_flagged(self):
-        assert is_low_liquidity(volume=8900, open_interest=1) is True
+        assert is_low_liquidity(volume=2) is True
 
     def test_missing_data_is_treated_as_thin(self):
-        assert is_low_liquidity(volume=None, open_interest=500) is True
-        assert is_low_liquidity(volume=500, open_interest=None) is True
+        assert is_low_liquidity(volume=None) is True
 
     def test_threshold_is_configurable(self):
-        assert is_low_liquidity(50, 50, threshold=10) is False
-        assert is_low_liquidity(50, 50, threshold=100) is True
+        assert is_low_liquidity(50, threshold=10) is False
+        assert is_low_liquidity(50, threshold=100) is True
 
 
