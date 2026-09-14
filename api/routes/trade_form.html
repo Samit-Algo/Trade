@@ -51,13 +51,24 @@
   .daybar label { margin:0; font-size:12.5px; font-weight:600; color:var(--muted);
                   text-transform:uppercase; letter-spacing:.06em; }
   .daybar input[type=date], .daybar select { width:auto; margin:0; padding:7px 9px; }
-  #quicksell { margin:0 0 14px; }
-  .qs-head { font-size:12px; color:var(--muted); margin-bottom:7px; }
-  .qs-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
-  .qs-btn { display:flex; flex-direction:column; align-items:center; gap:1px;
-            min-width:64px; padding:6px 9px; line-height:1.2; }
-  .qs-btn:disabled { opacity:.4; cursor:not-allowed; }
-  .qs-at { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  /* Selling is the irreversible half, so these read like the real-order
+     button rather than the quiet secondary ones beside them. */
+  #quicksell { margin:0 0 16px; padding:12px; border-radius:8px;
+               background:var(--bad-soft); border:1px solid var(--bad); }
+  .qs-head { font-size:13px; font-weight:700; color:var(--bad);
+             margin-bottom:3px; letter-spacing:.02em; }
+  .qs-sub { font-size:12px; color:var(--muted); margin-bottom:9px; }
+  .qs-row { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:8px; }
+  .qs-btn { display:flex; flex-direction:column; align-items:center; gap:2px;
+            min-width:74px; padding:9px 11px; line-height:1.25;
+            background:var(--bad); color:#fff; border-color:var(--bad);
+            font-weight:700; font-size:13px; }
+  .qs-btn:hover:not(:disabled) { filter:brightness(1.12); }
+  .qs-btn:disabled { background:var(--sunken); color:var(--muted);
+                     border-color:var(--line); opacity:.75; font-weight:500; }
+  .qs-at { font-size:11.5px; font-weight:600; opacity:.92;
+           font-variant-numeric:tabular-nums; }
+  .qs-note { font-size:11.5px; color:var(--muted); }
   .daybar .verdict { font-size:13px; font-weight:500; }
   .daybar .verdict.good { color:var(--good); }
   .daybar .verdict.bad  { color:var(--bad); }
@@ -1004,8 +1015,10 @@ async function renderQuickSell(o) {
   const held = o.quantity || 0;
 
   box.innerHTML = `
-    <div class="qs-head">SELL NOW — ${held} contract(s), worth
-      <strong>${money(premium)}</strong> each</div>
+    <div class="qs-head">SELL THIS POSITION NOW</div>
+    <div class="qs-sub">${held} contract(s), worth
+      <strong>${money(premium)}</strong> each right now.
+      Each button sells ALL ${held} at the price shown.</div>
     <div class="qs-row">` +
     quickSellSteps.map(step => {
       // Snapped down here too, so the button shows the price that will
@@ -1026,11 +1039,12 @@ async function renderQuickSell(o) {
                   ? "Too cheap for this step — it would price at or below zero"
                   : `Sell ${held} at ${money(limit)}, ${money(step)} below the
                      ${money(premium)} it is worth now`}">
-        −${money(step)}<span class="qs-at">${dead ? "—" : money(limit)}</span>
+        ${dead ? "—" : "SELL " + money(limit)}
+        <span class="qs-at">${dead ? "too cheap" : money(step) + " below"}</span>
       </button>`;
     }).join("") + `</div>
-    <div class="livesub">These price BELOW the market so they fill at once.
-      You receive the fill price, which may differ.</div>`;
+    <div class="qs-note">These price BELOW the market on purpose, so they fill
+      at once. You receive the fill price, which may differ.</div>`;
 
   box.querySelectorAll(".qs-btn").forEach(btn => {
     btn.onclick = () => quickSell(btn, o);
