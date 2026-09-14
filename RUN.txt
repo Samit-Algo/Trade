@@ -1,0 +1,219 @@
+===============================================================================
+  TIGER OPTIONS BACKEND -- HOW TO RUN IT
+===============================================================================
+
+An HTTP service that places bracketed option orders through Tiger Brokers.
+It binds to 127.0.0.1 by default: only this machine can reach it.
+
+READ THE SAFETY SECTION BEFORE THE FIRST REAL RUN. This service can spend
+money, and two lines of .env decide whether it does.
+
+
+-------------------------------------------------------------------------------
+ 1. ONE-TIME SETUP
+-------------------------------------------------------------------------------
+
+Requires Python 3.11 or newer (built and tested on 3.11.9).
+
+  cd C:\Users\manoj\Desktop\myslef\tiger-options-backend
+
+  python -m venv vnv
+  vnv\Scripts\activate
+  pip install -r requirements.txt
+
+Then create your .env:
+
+  copy .env.example .env
+
+.env.example ships with every field documented and every credential BLANK.
+Fill in these five or the server refuses to start:
+
+  TIGER_ID                 your Tiger developer ID
+  TIGER_ACCOUNT            the account to trade
+  TIGER_PAPER_ACCOUNT      the paper account ID -- see SAFETY below
+  TIGER_LICENSE            as issued by Tiger
+  TIGER_API_KEY            a long random string YOU choose; callers send it
+                           as the X-API-Key header on every request
+
+Put your Tiger private key at secrets/tiger_private_key.pem. It must be raw
+base64 with NO header lines -- no "-----BEGIN PRIVATE KEY-----". If Tiger gave
+you a .properties file, copy the value after private_key_pk8= into the .pem.
+
+.env and secrets/ are gitignored. They must never be committed.
+
+
+-------------------------------------------------------------------------------
+ 2. STARTING THE SERVER
+-------------------------------------------------------------------------------
+
+  vnv\Scripts\activate
+  python -m api.main
+
+It prints a banner first -- account, mode, dry-run state, and the address it
+bound to. READ IT. That banner is the last thing between you and a real order:
+
+  ============================================================
+    TIGER OPTIONS BACKEND - HTTP API
+    Account : ****6574
+    Mode    : PAPER
+    Dry run : FALSE
+    Binding : http://127.0.0.1:8000
+  ============================================================
+
+Stop it with Ctrl+C.
+
+Alternative, if you want auto-reload while editing code:
+
+  uvicorn "api.main:create_app" --factory --port 8000 --reload
+
+Note the --factory flag. There is no module-level `app` object: the app is
+built by create_app(), which validates settings first and REFUSES TO START if
+something is wrong. `uvicorn api.main:app` will not work.
+
+--reload picks up CODE changes only. A change to .env needs a full restart,
+because settings are read once at startup and cached.
+
+
+-------------------------------------------------------------------------------
+ 3. SAFETY -- THE FIVE LOCKS
+-------------------------------------------------------------------------------
+
+An order is only sent if ALL of these allow it.
+
+  1. ACCOUNT MATCH       TIGER_ACCOUNT and TIGER_PAPER_ACCOUNT must be
+                         character-for-character identical to resolve to PAPER
+                         mode. This is the only thing separating a paper order
+                         from a real one.
+
+  2. LIVE OPT-IN         REQUIRE_LIVE_TRADING must be explicitly set.
+
+  3. DRY_RUN             true  = every price is worked out for real, nothing
+                                 is sent. Start here.
+                         false = orders reach the broker.
+
+  4. API KEY             every route but /health refuses a request without a
+                         matching X-API-Key header.
+
+  5. MAX_TRADE_CASH      an order needing more cash than this is refused with
+                         TRADE_TOO_EXPENSIVE. Currently 800.
+
+Plus one guard that is not about permission: ONE TRADE PER SYMBOL. While a
+symbol has a position OR an unfilled order on the book, a second order for
+that symbol is refused with SYMBOL_ALREADY_OPEN -- regardless of CALL or PUT.
+
+FIRST RUN: set DRY_RUN=true. Place a trade, read the response, confirm the
+strike and cash are what you expected. Only then set it to false.
+
+
+-------------------------------------------------------------------------------
+ 4. CHECKING IT WORKS
+-------------------------------------------------------------------------------
+
+Health needs no key:
+
+  curl http://127.0.0.1:8000/health
+
+Everything else does. Replace YOUR_KEY with TIGER_API_KEY from .env:
+
+  curl -H "X-API-Key: YOUR_KEY" http://127.0.0.1:8000/positions
+  curl -H "X-API-Key: YOUR_KEY" http://127.0.0.1:8000/spot/NVDA
+  curl -H "X-API-Key: YOUR_KEY" http://127.0.0.1:8000/trade/settings
+
+Or open the hand-testing form in a browser:
+
+  http://127.0.0.1:8000/ui
+
+The form is served BY the API so it is same-origin -- which is why no CORS
+permission has to be opened up on a service that can place orders.
+
+
+-------------------------------------------------------------------------------
+ 5. PLACING A TRADE
+-------------------------------------------------------------------------------
+
+  curl -X POST http://127.0.0.1:8000/trade ^
+    -H "Content-Type: application/json" ^
+    -H "X-API-Key: YOUR_KEY" ^
+    -d "{\"client_order_id\":\"my-unique-id-1\",\"symbol\":\"NVDA\",\"option_type\":\"CALL\"}"
+
+Three fields are required:
+
+  client_order_id   8-64 chars, UNIQUE per intended trade. Resending the same
+                    value replays the first result instead of buying twice.
+  symbol            e.g. NVDA
+  option_type       CALL or PUT
+
+current_price is OPTIONAL. Omit it and the underlying price is fetched
+server-side from Yahoo (~0.3s slower). Send it if you already have a price on
+screen. Either way the response says which source was used.
+
+Everything else -- quantity, bracket percentages, expiry, how far out of the
+money -- comes from .env. See GET /trade/settings for what is in force.
+
+
+-------------------------------------------------------------------------------
+ 6. RUNNING THE TESTS
+-------------------------------------------------------------------------------
+
+  vnv\Scripts\activate
+  pytest scrap/tests
+
+431 tests. They need no network and no Tiger credentials.
+
+Note they do NOT cover function-level imports that only execute when an order
+is actually placed. A live paper order is the real check.
+
+
+-------------------------------------------------------------------------------
+ 7. WHERE THINGS ARE
+-------------------------------------------------------------------------------
+
+  api/                     the service
+    main.py                app construction, the API-key middleware
+    routes/                one file per endpoint group
+    schemas.py             request and response models
+    service/core/          config, broker clients, the locks, the audit log
+    service/market/        prices, the calendar; quotes.py is the provider seam
+    service/order/         pricing rules, cost, brackets, submission
+    service/contract.py    which exact contract are we talking about
+    service/position.py    what is held, and what it is worth
+
+  scrap/                   everything not needed to run the service
+    HANDOVER.md            the project bible -- measured evidence for the
+                           decisions, and the traps found the hard way
+    ARCHITECTURE.md        how the pieces fit
+    tests/                 the test suite
+    scripts/               standalone diagnostics
+    callOrderAPI.user.js   Tampermonkey userscript for TradingView
+
+  secrets/                 your private key. Gitignored.
+  logs/                    request and order audit logs. Gitignored.
+
+
+-------------------------------------------------------------------------------
+ 8. COMMON PROBLEMS
+-------------------------------------------------------------------------------
+
+  "TIGER_API_KEY is not set, so this service will not start."
+      An endpoint that can place orders must not be reachable without a key.
+      Add a long random value to .env.
+
+  401 UNAUTHORIZED
+      Missing or wrong X-API-Key header.
+
+  409 SYMBOL_ALREADY_OPEN
+      That symbol already has a position or a live order. Close it, or trade
+      a different symbol. Bracket legs count as live orders.
+
+  422 TRADE_TOO_EXPENSIVE
+      Over MAX_TRADE_CASH. Nothing was sent.
+
+  502 SPOT_PRICE_UNAVAILABLE
+      No current_price was sent and Yahoo could not be reached. Send
+      current_price explicitly.
+
+  A change to .env did nothing
+      Settings load once at startup. Restart the server -- --reload is not
+      enough.
+
+===============================================================================
