@@ -529,6 +529,8 @@ class TestTheResponseMatchesFillOutcome:
             quantity_reason="test",
             underlying_price=350.0,
             underlying_price_source="test",
+            take_profit_source="test",
+            stop_loss_source="test",
         )
         outcome = self.make_outcome()
 

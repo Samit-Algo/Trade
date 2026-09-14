@@ -100,6 +100,15 @@ class Settings:
     #: Cents below the live premium offered as one-click sell prices. Empty
     #: disables the buttons.
     quick_sell_steps: tuple[float, ...]
+
+    #: The symbols offered for trading. The /ui dropdown and the TradingView
+    #: userscript both read this, so it is the only place to add one.
+    trade_symbols: tuple[str, ...]
+
+    #: Per-symbol bracket percentages, by symbol. A symbol absent from either
+    #: mapping uses take_profit_percent / stop_loss_percent above.
+    symbol_take_profit: dict
+    symbol_stop_loss: dict
     trade_expiry_date: str | None  # YYYY-MM-DD, or None to auto-select
     leg_time_in_force: str       # DAY or GTC
     require_live_trading: bool   # refuse a price not traded this minute
@@ -123,6 +132,9 @@ def _get(name: str, default: str = "") -> str:
     """
     return os.environ.get(name, default).strip()
 
+
+#: The symbols offered for trading, when TRADE_SYMBOLS is not set.
+TRADE_SYMBOLS_DEFAULT: tuple[str, ...] = ("TSLA", "AAPL", "QQQ")
 
 #: Offered as one-click sell prices, in dollars below the live premium.
 QUICK_SELL_STEPS_DEFAULT: tuple[float, ...] = (0.01, 0.02, 0.03, 0.05, 0.10)
@@ -243,6 +255,97 @@ def _get_required_percent(name: str, *, maximum: float, inclusive: bool) -> floa
             f"{name} must be greater than 0 and {limit} (got {value:g})."
         )
     return value
+
+
+def _get_symbol_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Read the tradable symbols, e.g. "TSLA, AAPL, QQQ".
+
+    Upper-cased and de-duplicated, order preserved: the /ui dropdown lists
+    them in the order written here.
+
+    Args:
+        name: The environment variable.
+        default: Used when the variable is absent.
+
+    Returns:
+        The symbols.
+
+    Raises:
+        ConfigError: When the variable is set but holds nothing usable. An
+            empty list would leave nothing to trade, which is a typo rather
+            than an intention -- leave the variable out to take the default.
+    """
+    raw = _get(name)
+    if raw == "":
+        return default
+
+    seen, symbols = set(), []
+    for piece in raw.split(","):
+        symbol = piece.strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        symbols.append(symbol)
+
+    if not symbols:
+        raise ConfigError(
+            f"{name} is set but holds no symbols. Leave it out to take the "
+            "default rather than setting it to nothing."
+        )
+
+    return tuple(symbols)
+
+
+def _get_symbol_percentages(
+    suffix: str, symbols: tuple[str, ...], *, maximum: float, inclusive: bool
+) -> dict:
+    """Read the per-symbol bracket percentages, e.g. NVDA_TAKE_PROFIT_PERCENT.
+
+    Driven BY the symbol list: only `<SYMBOL><suffix>` for a symbol in
+    TRADE_SYMBOLS is read. A variable for a symbol not on that list is
+    therefore inert -- it sits in .env doing nothing rather than erroring.
+
+    Absent means "use the global default", so every one of these is optional
+    and they are independent: a symbol may override its take-profit and leave
+    its stop-loss alone.
+
+    Args:
+        suffix: The variable suffix, e.g. "_TAKE_PROFIT_PERCENT".
+        symbols: The symbols to look for.
+        maximum: The upper bound, the same one the global is held to.
+        inclusive: Whether `maximum` itself is allowed.
+
+    Returns:
+        A mapping of symbol to percentage, holding only those actually set.
+
+    Raises:
+        ConfigError: If a value is present but not a number, or out of range.
+            The bounds match the global's, so a per-symbol override cannot
+            reach a value the default could not.
+    """
+    percentages = {}
+
+    for symbol in symbols:
+        name = f"{symbol}{suffix}"
+        raw = _get(name)
+        if raw == "":
+            continue
+
+        try:
+            value = float(raw)
+        except ValueError as error:
+            raise ConfigError(f"{name} must be a number (got {raw!r}).") from error
+
+        too_high = value > maximum if inclusive else value >= maximum
+        if value <= 0 or too_high:
+            limit = f"<= {maximum:g}" if inclusive else f"< {maximum:g}"
+            raise ConfigError(
+                f"{name} must be greater than 0 and {limit} (got {value:g})."
+            )
+
+        percentages[symbol] = value
+
+    return percentages
 
 
 def _get_quick_sell_steps(name: str, default: tuple[float, ...]) -> tuple[float, ...]:
@@ -566,6 +669,16 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         "QUICK_SELL_STEPS", QUICK_SELL_STEPS_DEFAULT
     )
 
+    # The symbols offered for trading, and any per-symbol bracket overrides.
+    # The overrides are looked up BY this list, so it decides what is read.
+    trade_symbols = _get_symbol_list("TRADE_SYMBOLS", TRADE_SYMBOLS_DEFAULT)
+    symbol_take_profit = _get_symbol_percentages(
+        "_TAKE_PROFIT_PERCENT", trade_symbols, maximum=1000, inclusive=True
+    )
+    symbol_stop_loss = _get_symbol_percentages(
+        "_STOP_LOSS_PERCENT", trade_symbols, maximum=100, inclusive=False
+    )
+
     # A band whose top premium times its quantity exceeds MAX_TRADE_CASH would
     # propose orders the cap then refuses -- the table promising a size it
     # cannot deliver. Caught at startup, because discovering it mid-session
@@ -639,6 +752,9 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         quantity_tiers=quantity_tiers,
         quantity_tier_top=quantity_tier_top,
         quick_sell_steps=quick_sell_steps,
+        trade_symbols=trade_symbols,
+        symbol_take_profit=symbol_take_profit,
+        symbol_stop_loss=symbol_stop_loss,
         trade_expiry_date=trade_expiry_date,
         leg_time_in_force=leg_time_in_force,
         require_live_trading=require_live_trading,

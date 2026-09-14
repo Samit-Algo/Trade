@@ -10,6 +10,30 @@ const TIGER_API_KEY = "PASTE_YOUR_KEY";
 
 const API = "http://127.0.0.1:8000";
 
+// Filled from GET /trade/settings on load. Empty until that answers, so a
+// click before then reports no symbol rather than trading the wrong one.
+var knownSymbols = [];
+
+function loadSymbols() {
+  GM_xmlhttpRequest({
+    method: "GET",
+    url: API + "/trade/settings",
+    headers: { "X-API-Key": TIGER_API_KEY },
+    onload: function (r) {
+      try {
+        var s = JSON.parse(r.responseText);
+        knownSymbols = s.trade_symbols || [];
+        console.log("Tradable symbols:", knownSymbols.join(", "));
+      } catch (e) {
+        console.error("Could not read /trade/settings:", r.status, r.responseText);
+      }
+    },
+    onerror: function (e) {
+      console.error("Could not reach the backend for the symbol list.", e);
+    },
+  });
+}
+
 // One helper so the key and the JSON handling are written once.
 function call(method, path, body, onDone) {
   GM_xmlhttpRequest({
@@ -35,15 +59,18 @@ function call(method, path, body, onDone) {
 function callOrderAPI(type){
   var symbolTxt = $($(".chart-container")[1]).text();
 
-  // First match wins. Add a symbol to this list to trade it.
+  // First match wins. The list comes from TRADE_SYMBOLS in .env, fetched
+  // once on load -- it used to be hardcoded here AND in the /ui dropdown,
+  // and the two had already drifted apart.
   var symbol = "";
-  var known = ["TSLA", "QQQ", "NVDA"];
-  for (var i = 0; i < known.length; i++) {
-    if (symbolTxt.indexOf(known[i]) > -1) { symbol = known[i]; break; }
+  for (var i = 0; i < knownSymbols.length; i++) {
+    if (symbolTxt.indexOf(knownSymbols[i]) > -1) { symbol = knownSymbols[i]; break; }
   }
 
   if (!symbol) {
-    console.error("No known symbol found on the chart -- nothing sent.");
+    console.error(knownSymbols.length
+      ? "No tradable symbol on this chart. TRADE_SYMBOLS holds: " + knownSymbols.join(", ")
+      : "The symbol list has not loaded yet -- is the backend running?");
     return;
   }
 
@@ -82,3 +109,5 @@ function callOrderAPI(type){
 // Exported to the page's real window so the console can reach it -- the
 // script itself runs in Tampermonkey's separate sandbox.
 unsafeWindow.callOrderAPI = callOrderAPI;
+
+loadSymbols();

@@ -122,6 +122,8 @@ class TradePlan:
     quantity_reason: str      # why that many
     underlying_price: float   # what chose the strike
     underlying_price_source: str  # supplied, or fetched
+    take_profit_source: str   # request, symbol, or default
+    stop_loss_source: str
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +360,41 @@ def resolve_entry_price(contract, settings) -> tuple[float, PriceSource]:
     )
 
 
+def resolve_bracket_percent(
+    *, supplied, symbol: str, per_symbol: dict, default: float, name: str
+) -> tuple[float, str]:
+    """Return the bracket percentage to use, and say where it came from.
+
+    Three levels, highest first:
+
+        1. supplied on the request  -- this trade only
+        2. the symbol's own setting -- e.g. TSLA_TAKE_PROFIT_PERCENT
+        3. the global default       -- TAKE_PROFIT_PERCENT
+
+    Args:
+        supplied: The request's value, or None.
+        symbol: The underlying being traded.
+        per_symbol: The configured per-symbol mapping.
+        default: The global default.
+        name: What this is, for the reason string.
+
+    Returns:
+        The percentage, and a sentence naming its source.
+    """
+    if supplied is not None:
+        return supplied, f"{supplied:g}% {name}, supplied on the request"
+
+    wanted = symbol.strip().upper()
+    if wanted in per_symbol:
+        value = per_symbol[wanted]
+        return value, (
+            f"{value:g}% {name}, from {wanted}_"
+            f"{name.upper().replace(' ', '_')}_PERCENT"
+        )
+
+    return default, f"{default:g}% {name}, the configured default"
+
+
 def prepare_trade(body: TradeRequest) -> TradePlan:
     """Resolve the contract and work out all three prices.
 
@@ -384,16 +421,23 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
     )
     entry_price, price_source = resolve_entry_price(contract, settings)
 
-    # A supplied percentage wins over the configured one, for this trade only.
-    take_profit_percent = (
-        body.take_profit_percent
-        if body.take_profit_percent is not None
-        else settings.take_profit_percent
+    # Three levels, highest wins: what the request supplied, then this
+    # symbol's own setting, then the global default. The source is carried
+    # into the response -- a bracket that is not the one you expected should
+    # be traceable to the line of .env that set it.
+    take_profit_percent, take_profit_source = resolve_bracket_percent(
+        supplied=body.take_profit_percent,
+        symbol=contract.underlying,
+        per_symbol=settings.symbol_take_profit,
+        default=settings.take_profit_percent,
+        name="take profit",
     )
-    stop_loss_percent = (
-        body.stop_loss_percent
-        if body.stop_loss_percent is not None
-        else settings.stop_loss_percent
+    stop_loss_percent, stop_loss_source = resolve_bracket_percent(
+        supplied=body.stop_loss_percent,
+        symbol=contract.underlying,
+        per_symbol=settings.symbol_stop_loss,
+        default=settings.stop_loss_percent,
+        name="stop loss",
     )
 
     # OPTIONAL: scale the buy buffer to the premium instead of using a flat
@@ -472,6 +516,8 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
         quantity_reason=quantity_reason,
         underlying_price=underlying_price,
         underlying_price_source=underlying_price_source,
+        take_profit_source=take_profit_source,
+        stop_loss_source=stop_loss_source,
     )
 
 
@@ -520,6 +566,8 @@ def build_response(
         strike_selection_reason=plan.strike_reason,
         underlying_price=plan.underlying_price,
         underlying_price_source=plan.underlying_price_source,
+        take_profit_source=plan.take_profit_source,
+        stop_loss_source=plan.stop_loss_source,
         tick=shape_tick(plan.calculation, plan.buffer_reason),
         price_source=plan.price_source,
         prices=shape_bracket_prices(plan.calculation),
@@ -666,6 +714,9 @@ def read_trade_settings() -> dict:
         ],
         "quantity_tier_top": settings.quantity_tier_top,
         "quick_sell_steps": list(settings.quick_sell_steps),
+        "trade_symbols": list(settings.trade_symbols),
+        "symbol_take_profit": settings.symbol_take_profit,
+        "symbol_stop_loss": settings.symbol_stop_loss,
     }
 
 

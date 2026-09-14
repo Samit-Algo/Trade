@@ -581,6 +581,13 @@ class TradeResponse(BaseModel):
         description="Where that price came from -- supplied by the caller, or "
         "fetched server-side when current_price was omitted."
     )
+    take_profit_source: str = Field(
+        description="Which of the three levels set the take-profit: the "
+        "request, this symbol's own .env setting, or the global default."
+    )
+    stop_loss_source: str = Field(
+        description="The same, for the stop loss."
+    )
 
     tick: TickDetail
     price_source: PriceSource

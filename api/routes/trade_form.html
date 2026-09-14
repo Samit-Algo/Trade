@@ -259,12 +259,10 @@
           <legend>What to buy</legend>
           <div class="row">
             <label>Symbol
-              <select id="symbol">
-                <option>AAPL</option>
-                <option>NVDA</option>
-                <option>TSLA</option>
-                <option>QQQ</option>
-              </select>
+              <!-- Filled from TRADE_SYMBOLS via GET /trade/settings, so the
+                   list lives in one place rather than here and in the
+                   userscript, where the two had already drifted apart. -->
+              <select id="symbol"></select>
             </label>
             <label>Call or put
               <select id="option_type"><option>CALL</option><option>PUT</option></select>
@@ -1222,6 +1220,16 @@ async function loadTradeSettings() {
     // The one-click sell prices. Configured server-side so the buttons cannot
     // drift from what QUICK_SELL_STEPS says.
     quickSellSteps = Array.isArray(s.quick_sell_steps) ? s.quick_sell_steps : [];
+
+    // The tradable symbols. Keeps whatever was already picked if it is still
+    // on the list, so a reload does not silently change the symbol.
+    if (Array.isArray(s.trade_symbols) && s.trade_symbols.length) {
+      const picker = $("symbol");
+      const chosen = picker.value;
+      picker.innerHTML = s.trade_symbols
+        .map(sym => `<option>${sym}</option>`).join("");
+      if (s.trade_symbols.includes(chosen)) picker.value = chosen;
+    }
     $("ov_take_profit").placeholder = `.env: ${s.take_profit_percent}`;
     $("ov_stop_loss").placeholder = `.env: ${s.stop_loss_percent}`;
     checkTradingDay();
