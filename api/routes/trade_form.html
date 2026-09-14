@@ -837,13 +837,29 @@ let historySummary = null;
 
 // Filtered on the day the order was PLACED. "What did I do today" and "what
 // expires today" are different questions, and only the first one is asked
-// here. toLocaleDateString, not toISOString: the date input is in the
-// browser's timezone, and UTC would put an evening trade on the wrong day.
-function localDay(iso) {
-  const d = new Date(iso);
-  return [d.getFullYear(),
-          String(d.getMonth() + 1).padStart(2, "0"),
-          String(d.getDate()).padStart(2, "0")].join("-");
+// here.
+//
+// THE MARKET'S DAY, NOT THE BROWSER'S. This used to convert to the viewer's
+// own timezone, which is correct only for a viewer sitting in New York. From
+// UTC+5:30, every US afternoon trade -- anything after 18:30 UTC, which is
+// 14:30 in New York and most of the session -- landed on the NEXT calendar
+// day, so picking today found nothing and the orders looked lost.
+//
+// A trading session is a market-day concept. US/Eastern is what the server
+// uses for the same reason (see MARKET_TIMEZONE), and it is what the broker's
+// own statements show.
+const MARKET_TIMEZONE = "America/New_York";
+
+function marketDay(iso) {
+  // en-CA gives YYYY-MM-DD, which is what <input type="date"> holds.
+  return new Date(iso).toLocaleDateString("en-CA", {
+    timeZone: MARKET_TIMEZONE,
+  });
+}
+
+// Today, in the market's timezone -- for defaulting and for labelling.
+function marketToday() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: MARKET_TIMEZONE });
 }
 
 /* Average time held, for one outcome. Winners held far longer than losers
@@ -860,7 +876,7 @@ function renderHistory() {
   const list = $("histlist");
   const day = $("histday").value || "";
   const rows = day
-    ? historyCache.filter(o => o.placed_at && localDay(o.placed_at) === day)
+    ? historyCache.filter(o => o.placed_at && marketDay(o.placed_at) === day)
     : historyCache;
 
   // Totals follow the filter. A day's P&L is the point of picking a day.
