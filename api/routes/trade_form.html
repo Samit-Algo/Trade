@@ -51,6 +51,13 @@
   .daybar label { margin:0; font-size:12.5px; font-weight:600; color:var(--muted);
                   text-transform:uppercase; letter-spacing:.06em; }
   .daybar input[type=date], .daybar select { width:auto; margin:0; padding:7px 9px; }
+  #quicksell { margin:0 0 14px; }
+  .qs-head { font-size:12px; color:var(--muted); margin-bottom:7px; }
+  .qs-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
+  .qs-btn { display:flex; flex-direction:column; align-items:center; gap:1px;
+            min-width:64px; padding:6px 9px; line-height:1.2; }
+  .qs-btn:disabled { opacity:.4; cursor:not-allowed; }
+  .qs-at { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .daybar .verdict { font-size:13px; font-weight:500; }
   .daybar .verdict.good { color:var(--good); }
   .daybar .verdict.bad  { color:var(--bad); }
@@ -821,6 +828,7 @@ function outcomeTag(o) {
   const map = {
     TOOK_PROFIT: ["t-prof", "TAKE PROFIT"],
     STOPPED_OUT: ["t-stop", "STOP LOSS"],
+    CLOSED_MANUALLY: ["t-stop", "CLOSED BY HAND"],
     STILL_OPEN:  ["t-open", "OPEN"],
     NOT_FILLED:  ["t-none", "NOT FILLED"],
     CANCELLED:   ["t-none", "CANCELLED"],
@@ -951,10 +959,145 @@ async function loadHistory() {
 $("histday").onchange = renderHistory;
 $("histdayclear").onclick = () => { $("histday").value = ""; renderHistory(); };
 
+/* ---------- quick sell ----------------------------------------------- */
+/* Five one-click prices for a position still open, each a fixed number of
+   CENTS BELOW what the option is worth right now. They price below the
+   market on purpose: the point is to be out, not to rest on the book.
+
+   The premium is read live from GET /positions/detail, not from the entry
+   fill -- an option bought at 0.06 and now worth 0.02 must not offer to sell
+   at 0.05, which would never fill. If the position is gone the endpoint says
+   so, and that is the right answer too: there is nothing to sell. */
+
+let quickSellSteps = [];   // filled from GET /trade/settings
+
+async function renderQuickSell(o) {
+  const box = $("quicksell");
+  if (!box) return;
+
+  if (o.outcome !== "STILL_OPEN" || !quickSellSteps.length) {
+    box.innerHTML = "";
+    return;
+  }
+
+  box.innerHTML = `<div class="livesub">Checking what it is worth now…</div>`;
+
+  let premium = null;
+  try {
+    const r = await fetch(
+      `/positions/detail?identifier=${encodeURIComponent(o.identifier)}`,
+      { headers: hdrs() });
+    if (r.ok) {
+      premium = (await r.json()).current_price;
+    } else if (r.status === 404) {
+      box.innerHTML = `<div class="livesub">This position is no longer held —
+        nothing to sell. The history may be a moment behind.</div>`;
+      return;
+    }
+  } catch (e) { /* fall through to the no-price message */ }
+
+  if (premium == null) {
+    box.innerHTML = `<div class="livesub">No live price for this contract, so
+      these buttons cannot be priced. Sell from the broker app, or use the
+      Trade page.</div>`;
+    return;
+  }
+
+  const held = o.quantity || 0;
+
+  box.innerHTML = `
+    <div class="qs-head">SELL NOW — ${held} contract(s), worth
+      <strong>${money(premium)}</strong> each</div>
+    <div class="qs-row">` +
+    quickSellSteps.map(step => {
+      // Snapped down here too, so the button shows the price that will
+      // actually be sent rather than one the server then moves.
+      //
+      // Rounded to whole cents BEFORE subtracting: 0.06 - 0.02 is
+      // 0.039999999999999994 in binary, which floors to 0.03 and makes the
+      // -0.02 and -0.03 buttons offer the same price.
+      const cents = Math.round(premium * 100) - Math.round(step * 100);
+      const limit = cents / 100;
+      const dead  = limit <= 0;
+      return `<button type="button" class="btn-small qs-btn"
+                ${dead ? "disabled" : ""}
+                data-limit="${limit.toFixed(2)}"
+                data-id="${encodeURIComponent(o.identifier)}"
+                data-qty="${held}"
+                title="${dead
+                  ? "Too cheap for this step — it would price at or below zero"
+                  : `Sell ${held} at ${money(limit)}, ${money(step)} below the
+                     ${money(premium)} it is worth now`}">
+        −${money(step)}<span class="qs-at">${dead ? "—" : money(limit)}</span>
+      </button>`;
+    }).join("") + `</div>
+    <div class="livesub">These price BELOW the market so they fill at once.
+      You receive the fill price, which may differ.</div>`;
+
+  box.querySelectorAll(".qs-btn").forEach(btn => {
+    btn.onclick = () => quickSell(btn, o);
+  });
+}
+
+async function quickSell(btn, o) {
+  const limit = parseFloat(btn.dataset.limit);
+  const qty   = parseInt(btn.dataset.qty, 10);
+
+  if (!confirm(
+      `Sell ${qty} contract(s) of
+${o.identifier}
+
+` +
+      `at ${money(limit)} each — about ${money(limit * qty * 100)} total.
+
+` +
+      `This is below the market, so it should fill immediately.`)) {
+    return;
+  }
+
+  const row = $("quicksell");
+  row.querySelectorAll(".qs-btn").forEach(b => b.disabled = true);
+  const verdict = document.createElement("div");
+  verdict.className = "livesub";
+  verdict.textContent = "Selling…";
+  row.appendChild(verdict);
+
+  try {
+    const r = await fetch("/positions/close", {
+      method: "POST",
+      headers: hdrs(),
+      body: JSON.stringify({ identifier: o.identifier, limit_price: limit })
+    });
+    const d = await r.json();
+
+    if (!r.ok) {
+      verdict.className = "verdict bad";
+      verdict.textContent = `${d.error_code || r.status}: ${d.message || "failed"}`;
+      row.querySelectorAll(".qs-btn").forEach(b => b.disabled = false);
+      return;
+    }
+
+    verdict.className = "verdict";
+    verdict.textContent =
+      `${d.order_status} — ${d.filled_quantity} of ${d.quantity_closed} filled` +
+      (d.average_fill_price != null ? ` at ${money(d.average_fill_price)}` : "");
+
+    // The position and the history have both changed.
+    await loadHistory();
+    if (typeof loadPositions === "function") loadPositions();
+  } catch (e) {
+    verdict.className = "verdict bad";
+    verdict.textContent = "Request failed: " + e.message;
+    row.querySelectorAll(".qs-btn").forEach(b => b.disabled = false);
+  }
+}
+
+
 function showOrder(o) {
   const banner = {
     TOOK_PROFIT: ["b-good", "TAKE PROFIT TRIGGERED"],
     STOPPED_OUT: ["b-bad",  "STOP LOSS TRIGGERED"],
+    CLOSED_MANUALLY: ["b-bad", "CLOSED BY HAND — not by either exit leg"],
     STILL_OPEN:  ["b-warn", "STILL OPEN — neither exit has fired"],
     NOT_FILLED:  ["b-warn", "NOT FILLED — nothing was bought"],
     CANCELLED:   ["b-warn", "CANCELLED"],
@@ -971,7 +1114,8 @@ function showOrder(o) {
     </div>`;
 
   $("histdetail").innerHTML =
-    `<div class="banner ${banner[0]}">${banner[1]}</div>` + pnl + `
+    `<div class="banner ${banner[0]}">${banner[1]}</div>` + pnl +
+    `<div id="quicksell"></div>` + `
     <table>
       <tr><td>Contract</td><td>${o.identifier}</td></tr>
       <tr><td>Strike / expiry</td><td><span class="strike strike-lg">${o.strike ?? "—"}</span>
@@ -1005,6 +1149,9 @@ function showOrder(o) {
           <td>${l.time_in_force || "—"}</td>
           <td>${statusChip(l.status)}</td></tr>`).join("") + `</table>`
       : `<div class="placeholder" style="padding:14px 0">No legs were attached.</div>`}`;
+
+  // Priced from a live fetch, so the buttons land a moment after the panel.
+  renderQuickSell(o);
 }
 
 /* ---------- the request ---------- */
@@ -1072,6 +1219,9 @@ async function loadTradeSettings() {
     if (!r.ok) return;
     const s = await r.json();
     configuredExpiry = s.expiry_date || null;
+    // The one-click sell prices. Configured server-side so the buttons cannot
+    // drift from what QUICK_SELL_STEPS says.
+    quickSellSteps = Array.isArray(s.quick_sell_steps) ? s.quick_sell_steps : [];
     $("ov_take_profit").placeholder = `.env: ${s.take_profit_percent}`;
     $("ov_stop_loss").placeholder = `.env: ${s.stop_loss_percent}`;
     checkTradingDay();
