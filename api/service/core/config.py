@@ -96,6 +96,10 @@ class Settings:
     quantity_tiers_enabled: bool
     quantity_tiers: tuple[tuple[float, int], ...]
     quantity_tier_top: int
+
+    #: Cents below the live premium offered as one-click sell prices. Empty
+    #: disables the buttons.
+    quick_sell_steps: tuple[float, ...]
     trade_expiry_date: str | None  # YYYY-MM-DD, or None to auto-select
     leg_time_in_force: str       # DAY or GTC
     require_live_trading: bool   # refuse a price not traded this minute
@@ -119,6 +123,9 @@ def _get(name: str, default: str = "") -> str:
     """
     return os.environ.get(name, default).strip()
 
+
+#: Offered as one-click sell prices, in dollars below the live premium.
+QUICK_SELL_STEPS_DEFAULT: tuple[float, ...] = (0.01, 0.02, 0.03, 0.05, 0.10)
 
 #: Shares per option contract. Used to check the quantity bands against the
 #: cash cap at startup; the real multiplier comes from the contract itself.
@@ -236,6 +243,54 @@ def _get_required_percent(name: str, *, maximum: float, inclusive: bool) -> floa
             f"{name} must be greater than 0 and {limit} (got {value:g})."
         )
     return value
+
+
+def _get_quick_sell_steps(name: str, default: tuple[float, ...]) -> tuple[float, ...]:
+    """Read the one-click sell steps, in dollars below the live premium.
+
+    Written as a comma-separated list, e.g. "0.01, 0.02, 0.03, 0.05, 0.10".
+    Each is SUBTRACTED from the premium to give a sell limit, so 0.01 against
+    a 0.50 premium offers 0.49. They are sorted so the buttons read smallest
+    to largest whatever order they were typed in.
+
+    Args:
+        name: The environment variable.
+        default: Used when the variable is absent.
+
+    Returns:
+        The steps, ascending. Empty when explicitly set to nothing, which
+        turns the buttons off.
+
+    Raises:
+        ConfigError: When a value is not a positive number. A zero step would
+            offer to sell AT the premium, which is not a quick exit, and a
+            negative one would price ABOVE it.
+    """
+    raw = _get(name)
+    if raw == "":
+        return default
+
+    steps = []
+    for piece in raw.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            step = float(piece)
+        except ValueError as error:
+            raise ConfigError(
+                f"{name} value {piece!r} is not a number. Write the steps as "
+                "dollars below the premium, e.g. 0.01, 0.02, 0.05."
+            ) from error
+        if step <= 0:
+            raise ConfigError(
+                f"{name} value {piece!r} must be greater than zero. Each step "
+                "is subtracted from the premium to price a SELL; zero would "
+                "offer the premium itself and a negative would price above it."
+            )
+        steps.append(step)
+
+    return tuple(sorted(steps))
 
 
 def _get_quantity_tiers(
@@ -506,6 +561,11 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         "QUANTITY_TIER_TOP", 1, minimum=1, maximum=100
     )
 
+    # One-click sell prices, as dollars below the live premium.
+    quick_sell_steps = _get_quick_sell_steps(
+        "QUICK_SELL_STEPS", QUICK_SELL_STEPS_DEFAULT
+    )
+
     # A band whose top premium times its quantity exceeds MAX_TRADE_CASH would
     # propose orders the cap then refuses -- the table promising a size it
     # cannot deliver. Caught at startup, because discovering it mid-session
@@ -578,6 +638,7 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         quantity_tiers_enabled=quantity_tiers_enabled,
         quantity_tiers=quantity_tiers,
         quantity_tier_top=quantity_tier_top,
+        quick_sell_steps=quick_sell_steps,
         trade_expiry_date=trade_expiry_date,
         leg_time_in_force=leg_time_in_force,
         require_live_trading=require_live_trading,

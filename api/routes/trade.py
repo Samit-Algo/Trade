@@ -665,6 +665,7 @@ def read_trade_settings() -> dict:
             for bound, quantity in settings.quantity_tiers
         ],
         "quantity_tier_top": settings.quantity_tier_top,
+        "quick_sell_steps": list(settings.quick_sell_steps),
     }
 
 
