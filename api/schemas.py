@@ -65,6 +65,62 @@ class ExpiryOut(BaseModel):
     )
 
 
+class ClosePositionRequest(BaseModel):
+    """Which held position to sell, and at what price.
+
+    The price is REQUIRED and there is deliberately no default. This account
+    cannot fetch an option bid, so nothing here knows what the contract is
+    worth; a market order on a thin option is how a position gets closed at a
+    price nobody intended. The caller reads the bid off their broker screen.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    identifier: str = Field(
+        min_length=1,
+        max_length=32,
+        description="The full option identifier, exactly as GET /positions "
+        "reports it, e.g. 'NVDA  260914C00215000'.",
+    )
+    limit_price: float = Field(
+        gt=0,
+        description="The SELL limit, per share. Read it off the broker's bid.",
+    )
+    quantity: int | None = Field(
+        default=None,
+        gt=0,
+        description="Contracts to close. Omit to close the whole position. "
+        "More than is held is refused rather than sold short.",
+    )
+
+
+class ClosePositionResponse(BaseModel):
+    """What the sell order did, and what is left."""
+
+    identifier: str
+    underlying: str
+    strike: float
+    option_type: str
+    expiry: str
+    quantity_closed: int
+    quantity_remaining: int = Field(
+        description="Contracts still held after this order. Non-zero when a "
+        "partial close was asked for, or when the order did not fully fill."
+    )
+    limit_price: float
+    order_id_text: str | None = Field(
+        description="A STRING: these exceed 2^53 and a JavaScript client "
+        "silently rounds them."
+    )
+    order_status: str
+    filled_quantity: float
+    average_fill_price: float | None
+    cash_received: float = Field(
+        description="What the sale would receive at the limit price. The "
+        "actual proceeds follow the fill price, not this."
+    )
+
+
 class SpotPriceResponse(BaseModel):
     """The underlying's share price, and how fresh it is.
 
