@@ -77,17 +77,33 @@ def read_order_history(limit: int = Query(default=100, ge=1, le=300)):
 
     legs_by_parent: dict = {}
     parents = []
+    manual_sells: dict = {}
+
     for order in raw or []:
         parent_id = getattr(order, "parent_id", None)
         if parent_id:
             legs_by_parent.setdefault(parent_id, []).append(order)
-        else:
-            parents.append(order)
+            continue
+
+        # A standalone SELL is a manual close -- POST /positions/close sends
+        # one, and so does selling by hand in the broker app. It has no
+        # parent_id, so without this it would be listed as its OWN entry: a
+        # "bought at" row showing the price it was SOLD at. It belongs to the
+        # BUY it closes, which is matched by contract below.
+        action = str(getattr(order, "action", "") or "").upper()
+        if action == "SELL":
+            contract_text = str(getattr(order, "contract", "")).split("/")[0]
+            manual_sells.setdefault(contract_text, []).append(order)
+            continue
+
+        parents.append(order)
 
     rows = []
     for parent in parents:
         legs = legs_by_parent.get(getattr(parent, "id", None), [])
-        outcome, note, exit_price = describe_outcome(parent, legs)
+        identifier_for_match = str(getattr(parent, "contract", "")).split("/")[0]
+        closes = manual_sells.get(identifier_for_match, [])
+        outcome, note, exit_price = describe_outcome(parent, legs, closes)
 
         identifier = str(getattr(parent, "contract", "")).split("/")[0]
         # parse_identifier returns a 4-tuple, not an object. This is its
@@ -196,6 +212,7 @@ def read_order_history(limit: int = Query(default=100, ge=1, le=300)):
         orders=rows,
         took_profit=sum(1 for r in rows if r.outcome == "TOOK_PROFIT"),
         stopped_out=sum(1 for r in rows if r.outcome == "STOPPED_OUT"),
+        closed_manually=sum(1 for r in rows if r.outcome == "CLOSED_MANUALLY"),
         still_open=sum(1 for r in rows if r.outcome == "STILL_OPEN"),
         total_realised_pnl=round(sum(r.realised_pnl or 0 for r in rows), 2),
     )
@@ -289,7 +306,7 @@ def read_leg_price(order) -> float | None:
     return getattr(order, "limit_price", None) or getattr(order, "aux_price", None)
 
 
-def describe_outcome(parent, legs) -> tuple[str, str, float | None]:
+def describe_outcome(parent, legs, closes=()) -> tuple[str, str, float | None]:
     """Work out what became of one bracketed order.
 
     Tiger never says "the stop fired". It reports a status per order, and the
@@ -297,9 +314,16 @@ def describe_outcome(parent, legs) -> tuple[str, str, float | None]:
     the stop. Its partner shows CANCELLED with the reason "one of these OCA
     orders is filled".
 
+    A position can also leave by a route the bracket knows nothing about: a
+    manual SELL, from POST /positions/close or from the broker app. Those
+    carry no parent_id and no leg role, so they are passed in separately --
+    without them a closed position reads as STILL_OPEN forever, which is what
+    happens when the legs expire unfilled and the close is done by hand.
+
     Args:
         parent: The entry order.
         legs: Its attached legs.
+        closes: Standalone SELL orders on the same contract.
 
     Returns:
         A triple of (outcome code, a readable sentence, the exit fill price).
@@ -334,7 +358,35 @@ def describe_outcome(parent, legs) -> tuple[str, str, float | None]:
             exit_price,
         )
 
+    # No leg fired. Was it closed by hand instead?
+    for close in closes:
+        close_status = str(getattr(close, "status", "")).split(".")[-1].upper()
+        close_filled = float(getattr(close, "filled", 0) or 0)
+        if "FILLED" not in close_status or close_filled <= 0:
+            continue
+
+        exit_price = getattr(close, "avg_fill_price", None) or read_leg_price(close)
+        if exit_price is None:
+            continue
+
+        return (
+            "CLOSED_MANUALLY",
+            f"Closed by hand at {exit_price:,.2f}, not by either exit leg.",
+            exit_price,
+        )
+
     if legs:
+        expired = [
+            leg for leg in legs
+            if "EXPIRE" in str(getattr(leg, "status", "")).upper()
+        ]
+        if len(expired) == len(legs) and legs:
+            return (
+                "STILL_OPEN",
+                "Filled. Both exit legs EXPIRED unfilled -- DAY orders are "
+                "cancelled at the session close, so this is unprotected.",
+                None,
+            )
         return (
             "STILL_OPEN",
             "Filled, and neither exit has triggered. You still hold this.",

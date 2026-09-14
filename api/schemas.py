@@ -765,7 +765,7 @@ class OrderHistoryRow(BaseModel):
     status: str
 
     outcome: Literal[
-        "TOOK_PROFIT", "STOPPED_OUT", "STILL_OPEN",
+        "TOOK_PROFIT", "STOPPED_OUT", "CLOSED_MANUALLY", "STILL_OPEN",
         "NOT_FILLED", "CANCELLED", "EXPIRED", "UNKNOWN",
     ]
     outcome_note: str = Field(description="One sentence a human can read.")
@@ -809,5 +809,10 @@ class OrderHistoryResponse(BaseModel):
     orders: list[OrderHistoryRow]
     took_profit: int
     stopped_out: int
+    closed_manually: int = Field(
+        default=0,
+        description="Closed by a standalone SELL rather than by either exit "
+        "leg -- POST /positions/close, or a sale in the broker app.",
+    )
     still_open: int
     total_realised_pnl: float
