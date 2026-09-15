@@ -102,7 +102,14 @@ def read_order_history(limit: int = Query(default=100, ge=1, le=300)):
     for parent in parents:
         legs = legs_by_parent.get(getattr(parent, "id", None), [])
         identifier_for_match = str(getattr(parent, "contract", "")).split("/")[0]
-        closes = manual_sells.get(identifier_for_match, [])
+        # AFTER this entry filled, not merely on the same contract. The same
+        # strike and expiry is bought and sold repeatedly in a session, so
+        # matching on the contract alone hands an old sell to a new BUY and
+        # reports a position that is still open as closed by hand.
+        closes = [
+            sell for sell in manual_sells.get(identifier_for_match, [])
+            if closed_after(parent, sell)
+        ]
         outcome, note, exit_price = describe_outcome(parent, legs, closes)
 
         identifier = str(getattr(parent, "contract", "")).split("/")[0]
@@ -304,6 +311,35 @@ def read_leg_price(order) -> float | None:
     Reading the wrong one returns None and looks like a missing price.
     """
     return getattr(order, "limit_price", None) or getattr(order, "aux_price", None)
+
+
+def closed_after(parent, sell) -> bool:
+    """Could this SELL have closed this BUY?
+
+    Only if it was placed after the BUY FILLED. Tiger stamps trade_time on a
+    fill and order_time on submission, and a sell placed before the entry
+    filled belongs to an earlier position in the same contract -- which is
+    routine, since the same strike is traded repeatedly in a session.
+
+    Without this check a BUY at 14:45 is matched to a SELL at 14:39 and the
+    open position reads as CLOSED BY HAND.
+
+    Args:
+        parent: The entry order.
+        sell: A standalone SELL on the same contract.
+
+    Returns:
+        True when the sell came after the entry filled. When either timestamp
+        is missing, False -- an unknown ordering is not evidence of a close,
+        and STILL_OPEN is the safer answer for a position that may be held.
+    """
+    entry_filled = getattr(parent, "trade_time", None) or getattr(parent, "order_time", None)
+    sell_placed = getattr(sell, "order_time", None) or getattr(sell, "trade_time", None)
+
+    if not entry_filled or not sell_placed:
+        return False
+
+    return sell_placed >= entry_filled
 
 
 def describe_outcome(parent, legs, closes=()) -> tuple[str, str, float | None]:

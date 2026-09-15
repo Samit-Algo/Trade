@@ -258,3 +258,58 @@ class TestBuiltOrderShape:
         assert order.order_type == "LMT"
         assert order.limit_price == 0.30
         assert order.quantity == 1
+
+
+class TestAManualSellBelongsToTheRightBuy:
+    """The same strike is bought and sold repeatedly in a session.
+
+    Matching a standalone SELL to a BUY on contract alone hands an OLD sell to
+    a NEW entry, and an open position reads as CLOSED BY HAND. Seen live: a BUY
+    at 14:45 matched to a SELL at 14:39, six minutes before it existed.
+    """
+
+    def stub(self, order_time=None, trade_time=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(order_time=order_time, trade_time=trade_time)
+
+    def test_a_sell_after_the_entry_filled_counts(self):
+        from api.routes.orders import closed_after
+
+        entry = self.stub(order_time=1000, trade_time=1000)
+        sell = self.stub(order_time=2000)
+
+        assert closed_after(entry, sell)
+
+    def test_a_sell_before_the_entry_filled_does_not(self):
+        """It closed an EARLIER position in the same contract."""
+        from api.routes.orders import closed_after
+
+        entry = self.stub(order_time=2000, trade_time=2000)
+        sell = self.stub(order_time=1000)
+
+        assert not closed_after(entry, sell)
+
+    def test_a_sell_at_the_same_instant_counts(self):
+        from api.routes.orders import closed_after
+
+        entry = self.stub(trade_time=1000)
+        sell = self.stub(order_time=1000)
+
+        assert closed_after(entry, sell)
+
+    def test_the_fill_time_is_preferred_over_submission(self):
+        """The position exists from the FILL, not from when it was asked for."""
+        from api.routes.orders import closed_after
+
+        entry = self.stub(order_time=1000, trade_time=3000)
+        sell = self.stub(order_time=2000)
+
+        assert not closed_after(entry, sell)
+
+    def test_a_missing_timestamp_is_not_evidence_of_a_close(self):
+        """STILL_OPEN is the safer answer for a position that may be held."""
+        from api.routes.orders import closed_after
+
+        assert not closed_after(self.stub(), self.stub(order_time=2000))
+        assert not closed_after(self.stub(trade_time=1000), self.stub())
