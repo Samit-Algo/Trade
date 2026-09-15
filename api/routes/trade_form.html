@@ -32,7 +32,7 @@
   .sub { color:var(--muted); margin:2px 0 0; font-size:13.5px; }
 
   /* ---------- status strip ---------- */
-  .status { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 20px; align-items:center; }
+  .status { display:flex; flex-wrap:wrap; gap:8px; margin:0; align-items:center; }
   .pill { display:flex; align-items:baseline; gap:7px; padding:7px 12px; border-radius:20px;
           border:1px solid var(--line); background:var(--card); font-size:12.5px; white-space:nowrap; }
   .pill .k { color:var(--faint); text-transform:uppercase; letter-spacing:.06em; font-size:10.5px; font-weight:600; }
@@ -45,30 +45,66 @@
   .pill.wait .v{ color:var(--warn); }
   .refresh { margin-left:auto; }
 
+  /* Expiry on the left, the symbol table on the right. They are both "what
+     every trade will use", so they belong on one line rather than stacked. */
+  .topgrid { display:grid; grid-template-columns:minmax(300px, 1fr) minmax(360px, 1.15fr);
+             gap:14px; align-items:start; margin-bottom:20px; }
+  .topleft { display:flex; flex-direction:column; gap:12px; }
+  @media (max-width: 980px) { .topgrid { grid-template-columns:1fr; } }
+
   .daybar { display:flex; flex-wrap:wrap; align-items:center; gap:10px;
             background:var(--card); border:1px solid var(--line); border-radius:8px;
-            padding:12px 14px; margin-bottom:20px; }
+            padding:12px 14px; margin:0; align-content:flex-start; }
   .daybar label { margin:0; font-size:12.5px; font-weight:600; color:var(--muted);
                   text-transform:uppercase; letter-spacing:.06em; }
   .daybar input[type=date], .daybar select { width:auto; margin:0; padding:7px 9px; }
+  .symbar { background:var(--card); border:1px solid var(--line); border-radius:8px;
+            padding:12px 14px; margin:0; }
+  .symbar-head { display:flex; gap:12px; align-items:baseline; flex-wrap:wrap;
+                 margin-bottom:9px; font-size:12px; font-weight:700;
+                 letter-spacing:.04em; color:var(--muted); }
+  /* One grid so every row lines up under the headers: name, toggle, TP, SL,
+     then what it resolves to. */
+  .symgrid { display:grid; grid-template-columns:52px 96px 74px 74px 1fr;
+             gap:6px 10px; align-items:center; }
+  .symhead { display:grid; grid-template-columns:52px 96px 74px 74px 1fr;
+             gap:6px 10px; font-size:10.5px; font-weight:700; color:var(--muted);
+             letter-spacing:.05em; padding-bottom:5px; }
+  .symrow { display:contents; }
+  .symrow > * { padding:5px 0; border-top:1px solid var(--line); }
+  .symname { font-weight:700; font-size:14px; }
+  .symrow input[type=number] { width:100%; margin:0; padding:5px 7px; font-size:12.5px; }
+  .symrow .eff { font-size:11px; color:var(--muted); line-height:1.35; }
+  .symrow.off .symname, .symrow.off .eff { opacity:.45; }
+  .symtoggle { width:100%; }
+  .symtoggle { width:auto; padding:5px 11px; font-size:12px; font-weight:600;
+               min-width:82px; }
+  .symtoggle.on  { background:var(--good-soft); color:var(--good); border-color:var(--good); }
+  .symtoggle.off { background:var(--bad-soft);  color:var(--bad);  border-color:var(--bad); }
   /* Selling is the irreversible half, so these read like the real-order
      button rather than the quiet secondary ones beside them. */
-  #quicksell { margin:0 0 16px; padding:12px; border-radius:8px;
-               background:var(--bad-soft); border:1px solid var(--bad); }
-  .qs-head { font-size:13px; font-weight:700; color:var(--bad);
-             margin-bottom:3px; letter-spacing:.02em; }
+  /* Sits in the page, not on a coloured slab: the BUTTONS carry the warning,
+     the same way the DISABLED badge does. A tinted panel shouts before the
+     reader has decided to do anything. */
+  #quicksell { margin:0 0 16px; padding:0; }
+  .qs-head { font-size:10.5px; font-weight:700; color:var(--muted);
+             text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px;
+             display:flex; align-items:center; gap:10px; }
+  .qs-refresh { margin-left:auto; padding:3px 8px; font-size:10.5px;
+                font-weight:600; text-transform:none; letter-spacing:0; }
   .qs-sub { font-size:12px; color:var(--muted); margin-bottom:9px; }
-  .qs-row { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:8px; }
-  .qs-btn { display:flex; flex-direction:column; align-items:center; gap:2px;
-            min-width:74px; padding:9px 11px; line-height:1.25;
-            background:var(--bad); color:#fff; border-color:var(--bad);
-            font-weight:700; font-size:13px; }
-  .qs-btn:hover:not(:disabled) { filter:brightness(1.12); }
-  .qs-btn:disabled { background:var(--sunken); color:var(--muted);
-                     border-color:var(--line); opacity:.75; font-weight:500; }
-  .qs-at { font-size:11.5px; font-weight:600; opacity:.92;
+  .qs-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:7px; }
+  .qs-btn { display:flex; flex-direction:column; align-items:center; gap:1px;
+            min-width:86px; padding:7px 10px; line-height:1.3;
+            background:var(--bad-soft); color:var(--bad); border-color:var(--bad);
+            font-weight:700; font-size:12.5px; }
+  .qs-btn:hover:not(:disabled) { background:var(--bad); color:#fff; }
+  .qs-btn:disabled { background:transparent; color:var(--faint);
+                     border-color:var(--line); font-weight:500; }
+  .qs-at { font-size:10.5px; font-weight:500; opacity:.8;
            font-variant-numeric:tabular-nums; }
-  .qs-note { font-size:11.5px; color:var(--muted); }
+  .qs-note { font-size:11px; color:var(--faint); }
+  .qs-age { color:var(--faint); font-size:11px; }
   .daybar .verdict { font-size:13px; font-weight:500; }
   .daybar .verdict.good { color:var(--good); }
   .daybar .verdict.bad  { color:var(--bad); }
@@ -103,11 +139,34 @@
   .t-stop { background:var(--bad-soft);  color:var(--bad); }
   .t-open { background:var(--warn-soft); color:var(--warn); }
   .t-none { background:var(--sunken); color:var(--muted); border:1px solid var(--line); }
-  .sum { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:16px; }
-  @media (max-width:700px) { .sum { grid-template-columns:repeat(2,1fr); } }
-  .sumbox { border:1px solid var(--line); border-radius:6px; padding:10px 12px; text-align:center; }
-  .sumbox .n { font-family:var(--mono); font-size:20px; font-weight:600; }
-  .sumbox .l { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); }
+  /* One row. Six tiles at a quarter of the width each wrapped onto a second
+     line and left two empty cells; auto-fit lets them share whatever is
+     there, and they only wrap when a tile would fall below its minimum. */
+  .sum { display:grid; grid-template-columns:repeat(auto-fit, minmax(108px, 1fr));
+         gap:8px; margin-bottom:16px; }
+  .sumbox { border:1px solid var(--line); border-radius:6px; padding:8px 9px;
+            text-align:center; }
+  .sumbox .n { font-family:var(--mono); font-size:17px; font-weight:600;
+               line-height:1.25; }
+  /* A price that is still moving, so it does not read as a settled exit. */
+  /* The three figures that say what a trade IS, before any of the detail.
+     An open position gets a fourth, its running clock. */
+  .ordhead { display:grid; grid-template-columns:repeat(auto-fit, minmax(96px, 1fr));
+             gap:10px; padding:12px 14px; margin-bottom:14px; border-radius:8px;
+             background:var(--sunken); border:1px solid var(--line); }
+  .ordhead.is-open { border-color:var(--accent); }
+  .ordfig { text-align:center; }
+  .ordfig-n { font-family:var(--mono); font-size:19px; font-weight:700;
+              line-height:1.2; font-variant-numeric:tabular-nums; }
+  .ordfig-x { font-size:13px; font-weight:600; color:var(--muted); margin-left:3px; }
+  .ordfig-l { font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+              color:var(--faint); margin-top:3px; }
+  .live-clock { color:var(--accent); display:flex; align-items:center;
+                justify-content:center; gap:6px; }
+  .livenow { color:var(--accent); font-variant-numeric:tabular-nums; }
+  .sumbox .l { font-size:9.5px; text-transform:uppercase; letter-spacing:.05em;
+               color:var(--faint); white-space:nowrap; overflow:hidden;
+               text-overflow:ellipsis; }
 
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:18px; }
   .card + .card { margin-top:16px; }
@@ -230,24 +289,40 @@
   <h1>Trade tester</h1>
   <p class="sub">Four inputs. Everything else comes from .env, and DRY_RUN decides whether anything is bought.</p>
 
-  <div class="daybar">
-    <label for="ov_expiry">Expiry for EVERY trade</label>
-    <input type="date" id="ov_expiry">
-    <button type="button" class="btn-small" id="ovclear">Use .env</button>
-    <span class="verdict" id="dayverdict"></span>
-    <div class="alts" id="dayalts"></div>
+  <div class="topgrid">
+  <!-- The left column is "what every trade will use": the expiry, then the
+       state the server is actually in. They answer the same question. -->
+  <div class="topleft">
+    <div class="daybar">
+      <label for="ov_expiry">Expiry for EVERY trade</label>
+      <input type="date" id="ov_expiry">
+      <button type="button" class="btn-small" id="ovclear">Use .env</button>
+      <span class="verdict" id="dayverdict"></span>
+      <div class="alts" id="dayalts"></div>
+    </div>
+
+    <div class="status" id="status">
+      <span class="pill"><span class="k">Server</span><span class="v">checking…</span></span>
+      <button type="button" class="btn-small refresh" id="refreshall">Refresh</button>
+    </div>
   </div>
 
-  <div class="status" id="status">
-    <span class="pill"><span class="k">Server</span><span class="v">checking…</span></span>
-    <button type="button" class="btn-small refresh" id="refreshall">Refresh</button>
+  <div class="symbar" id="symbar">
+    <div class="symbar-head">
+      <span>SYMBOLS</span>
+      <span class="livesub">Blank a box to fall back to .env, then the default.
+        Disabling refuses NEW trades only -- closing is never blocked.</span>
+    </div>
+    <div class="symhead">
+      <span></span><span></span><span>TAKE PROFIT</span><span>STOP LOSS</span><span>USING</span>
+    </div>
+    <div id="symrows"><div class="placeholder" style="padding:10px 0">Loading…</div></div>
+  </div>
   </div>
 
   <div class="shell">
     <nav class="nav">
       <button type="button" id="nav-trade" class="on" onclick="showPage('trade')">Trade</button>
-      <button type="button" id="nav-positions" onclick="showPage('positions')">
-        Positions <span class="count" id="poscount"></span></button>
       <button type="button" id="nav-history" onclick="showPage('history')">
         Order history <span class="count" id="histcount"></span></button>
     </nav>
@@ -324,41 +399,10 @@
         <h2>Result</h2>
         <div id="out"><div class="placeholder">Press Test to see what would happen.</div></div>
       </div>
-
-      <div class="card" id="livecard" hidden>
-        <h2><span class="live"></span>Live order — updating every 3s</h2>
-        <div id="livebox"></div>
-      </div>
     </div>
   </div>
     </div><!-- /page-trade -->
 
-    <div class="page" id="page-positions">
-      <div class="cols">
-        <div class="card">
-          <h2 style="display:flex;align-items:center;gap:8px">
-            Positions held &mdash; click one
-            <select id="posfilter" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
-              <option value="">all expiries</option>
-            </select>
-          </h2>
-          <div id="positions"><div class="placeholder">…</div></div>
-        </div>
-
-        <div class="card" id="detailcard" hidden>
-          <h2 style="display:flex;align-items:center;gap:8px">
-            <span class="live"></span>Position &mdash; live
-            <select id="detailrate" style="width:auto;margin:0 0 0 auto;padding:3px 6px;font-size:11px">
-              <option value="2000" selected>every 2s</option>
-              <option value="3000">every 3s</option>
-              <option value="5000">every 5s</option>
-              <option value="10000">every 10s</option>
-            </select>
-          </h2>
-          <div id="detailbox"></div>
-        </div>
-      </div>
-    </div><!-- /page-positions -->
 
     <div class="page" id="page-history">
       <div class="daybar">
@@ -386,7 +430,6 @@
 <script>
 const $ = id => document.getElementById(id);
 const out = $("out");
-let liveTimer = null;
 let liveOrderId = null;
 
 /* ---------- helpers ---------- */
@@ -470,192 +513,9 @@ function refreshBtn() {
   return b;
 }
 
-/* ---------- positions ---------- */
-// Positions are filtered by EXPIRY, and the choices are built from what is
-// actually held -- offering a date with nothing on it would be noise. The
-// filter defaults to "all", so nothing is ever hidden by accident.
-let positionsCache = [];
-
-function positionExpiries(positions) {
-  return [...new Set(positions.map(p => p.expiry))].sort();
-}
-
-function rebuildPositionFilter(positions) {
-  const sel = $("posfilter");
-  const keep = sel.value;
-  const counts = {};
-  positions.forEach(p => { counts[p.expiry] = (counts[p.expiry] || 0) + 1; });
-
-  sel.innerHTML = `<option value="">all expiries (${positions.length})</option>` +
-    positionExpiries(positions).map(d =>
-      `<option value="${d}">${d} (${counts[d]})</option>`).join("");
-  sel.value = positionExpiries(positions).includes(keep) ? keep : "";
-}
-
-function renderPositions() {
-  const box = $("positions");
-  const want = $("posfilter").value;
-  const rows = want ? positionsCache.filter(p => p.expiry === want) : positionsCache;
-
-  if (!positionsCache.length) {
-    box.innerHTML = `<div class="placeholder">Nothing held.</div>`;
-    return;
-  }
-  if (!rows.length) {
-    box.innerHTML = `<div class="placeholder">Nothing held expiring ${want}.</div>`;
-    return;
-  }
-
-  box.innerHTML = `<table class="grid">
-    <tr><th>Contract</th><th>Expiry</th><th>Qty</th><th>Cost</th><th>P&amp;L</th><th>DTE</th></tr>` +
-    rows.map(p => {
-      const pnl = p.tiger_unrealised_pnl;
-      const cls = pnl == null ? "" : (pnl >= 0 ? "pos" : "neg");
-      return `<tr class="clickable" data-id="${p.identifier.replace(/"/g, "&quot;")}">
-        <td>${p.underlying} <span class="strike">${p.strike}</span> ${p.option_type[0]}</td>
-        <td>${p.expiry}</td>
-        <td>${p.quantity}</td>
-        <td>${money(p.cost_basis)}</td>
-        <td class="${cls}">${pnl == null ? "—" : (pnl >= 0 ? "+" : "") + money(pnl)}</td>
-        <td>${p.days_to_expiry}${p.expiring_soon ? " ⚠" : ""}</td>
-      </tr>`;
-    }).join("") + `</table>`;
-
-  box.querySelectorAll("tr.clickable").forEach(row => {
-    row.onclick = () => showPosition(row.dataset.id);
-    if (row.dataset.id === detailId) row.classList.add("on");
-  });
-}
-
-async function loadPositions() {
-  const box = $("positions");
-  if (!key()) { box.innerHTML = `<div class="placeholder">Enter your API key.</div>`; return; }
-  try {
-    const r = await fetch("/positions", { headers: hdrs() });
-    const d = await r.json();
-    if (!r.ok) { box.innerHTML = `<div class="placeholder">${(d.error || d).message || "failed"}</div>`; return; }
-    positionsCache = d.positions;
-    $("poscount").textContent = d.positions.length;
-    rebuildPositionFilter(positionsCache);
-    renderPositions();
-  } catch (e) {
-    box.innerHTML = `<div class="placeholder">${e.message}</div>`;
-  }
-}
-
-$("posfilter").onchange = renderPositions;
-
-/* ---------- one position, priced live ---------- */
-let detailId = null;
-let detailTimer = null;
-// Guards against stacking. The call is usually ~576ms but has been seen at
-// 3179ms, so at a 2s interval a slow one is still running when the next
-// fires. Skipping a tick beats piling requests up.
-let detailBusy = false;
-
-function detailInterval() {
-  return parseInt($("detailrate").value, 10) || 5000;
-}
-
-function startDetailTimer() {
-  if (detailTimer) clearInterval(detailTimer);
-  detailTimer = setInterval(pollDetail, detailInterval());
-}
-
-function showPosition(identifier) {
-  detailId = identifier;
-  $("detailcard").hidden = false;
-  pollDetail();
-  startDetailTimer();
-  loadPositions();
-}
-
-async function pollDetail() {
-  if (!detailId || detailBusy) return;
-  detailBusy = true;
-  const box = $("detailbox");
-  try {
-    const r = await fetch(`/positions/detail?identifier=${encodeURIComponent(detailId)}`,
-                          { headers: hdrs() });
-    const d = await r.json();
-    if (!r.ok) {
-      box.innerHTML = `<div class="placeholder">${(d.error || d).message || "failed"}</div>`;
-      clearInterval(detailTimer); detailTimer = null;
-      return;
-    }
-
-    const up = (d.unrealised_pnl ?? 0) >= 0;
-    const guard = d.has_stop_loss
-      ? `<div class="safe">${d.protection_note}</div>`
-      : `<div class="naked">${d.protection_note}</div>`;
-
-    box.innerHTML = guard + `
-      <div style="text-align:center;margin-bottom:14px">
-        <div class="pnlbig ${up ? "pos" : "neg"}">${up ? "+" : ""}${money(d.unrealised_pnl)}</div>
-        <div style="font-size:12px;color:var(--muted)">
-          ${up ? "+" : ""}${d.unrealised_pnl_percent}% &nbsp;unrealised</div>
-      </div>
-      <div class="livehead">
-        <div class="livename">${d.underlying} <span class="strike strike-lg">$${d.strike}</span> ${d.option_type}
-          <span class="livesub">exp ${d.expiry} &middot; ${d.days_to_expiry} days left
-            &middot; ${d.quantity} contract(s)</span></div>
-        <div class="liveclock ticking">${d.held_seconds == null
-            ? "—" : duration(d.held_seconds)}</div>
-      </div>
-      <table>
-        <tr><td>Bought at</td><td>${money(d.average_cost)}
-          <span class="livesub">$${money(d.cost_basis)} in total, commission included</span></td></tr>
-        <tr><td>Price now</td><td>${d.current_price == null ? "no price"
-            : money(d.current_price) + " &nbsp;(" + Math.round(d.price_age_seconds) + "s old)"}</td></tr>
-        <tr><td>Worth</td><td>${d.current_value == null ? "—" : "$" + money(d.current_value)}</td></tr>
-        <tr><td>Take profit</td><td>${d.take_profit_price == null ? "none resting"
-            : `<span class="pos">${money(d.take_profit_price)}</span>` +
-              (d.percent_to_take_profit == null ? ""
-                : ` <span class="livesub">${d.percent_to_take_profit}% away</span>`)}</td></tr>
-        <tr><td>Stop loss</td><td>${d.stop_loss_price == null ? "NONE RESTING"
-            : `<span class="neg">${money(d.stop_loss_price)}</span>` +
-              (d.percent_to_stop_loss == null ? ""
-                : ` <span class="livesub">${d.percent_to_stop_loss}% cushion</span>`)}</td></tr>
-        <tr><td>Opened</td><td>${d.entry_filled_at
-            ? new Date(d.entry_filled_at).toLocaleString() : "—"}</td></tr>
-      </table>
-      ${(d.current_price && d.stop_loss_price && d.take_profit_price) ? (() => {
-        const span = d.take_profit_price - d.stop_loss_price;
-        const at = Math.max(0, Math.min(100,
-          ((d.current_price - d.stop_loss_price) / span) * 100));
-        return `<div class="ladder">
-          <div class="ladder-track"><div class="ladder-now" style="left:${at}%"></div></div>
-          <div class="ladder-ends">
-            <span class="neg">stop ${money(d.stop_loss_price)}</span>
-            <span class="pos">target ${money(d.take_profit_price)}</span>
-          </div></div>`;
-      })() : ""}
-      <h2 style="margin-top:16px">Orders working on it</h2>
-      ${d.working_orders.length
-        ? `<table class="grid"><tr><th>Role</th><th>Type</th><th>Price</th><th>TIF</th><th>Status</th></tr>` +
-          d.working_orders.map(o => `<tr>
-            <td class="${o.role === "STOP_LOSS" ? "neg" : (o.role === "TAKE_PROFIT" ? "pos" : "")}">${o.role}</td>
-            <td>${o.action} ${o.order_type || ""}</td>
-            <td>${o.price == null ? "—" : money(o.price)}</td>
-            <td>${o.time_in_force || "—"}</td>
-            <td>${statusChip(o.status)}</td></tr>`).join("") + `</table>`
-        : `<div class="placeholder" style="padding:14px 0">No orders on this contract.</div>`}
-      <p class="note">The price is a LAST TRADE from free bars, not a bid.
-         You would sell into the bid, which is lower.</p>`;
-  } catch (e) {
-    box.innerHTML = `<div class="placeholder">${e.message}</div>`;
-  } finally {
-    detailBusy = false;
-  }
-}
-
-// The expiry chosen once at the top is used for EVERY trade, whatever the
-// symbol. Weekly expiries do not line up across underlyings -- the same date
-// can exist for TSLA and not for AVGO -- which is what the verdict line is
-// for: say so BEFORE the order is sent, not as a 404 afterwards.
-let expiryCache = {};
-
-let configuredExpiry = null;   // TRADE_EXPIRY_DATE, or null when auto
+/* The positions page is gone -- its live pricing and its clock now live
+   on the order-history rows, where the same position is already listed.
+   Two tabs showed the same holdings from two different angles. */
 
 async function expiriesFor(symbol) {
   if (expiryCache[symbol]) return expiryCache[symbol];
@@ -811,12 +671,10 @@ try {
     $("symbol").value = savedSymbol;
   }
 } catch (e) {}
-$("detailrate").onchange = () => { if (detailId) startDetailTimer(); };
 
 function refreshAll() {
-  loadStatus(); loadPositions(); loadTradeSettings(); checkTradingDay();
+  loadStatus(); loadHistory(); loadTradeSettings(); loadSymbolSettings(); checkTradingDay();
   startSpot();
-  if (detailId) pollDetail();
   if ($("page-history").classList.contains("on")) loadHistory();
 }
 refreshAll();
@@ -824,13 +682,43 @@ refreshAll();
 /* ---------- pages ---------- */
 let historyCache = [];
 
+/* The history page polls while it is VISIBLE, and stops when it is not.
+   Every second, because an open position's clock and P&L should move -- the
+   server holds a short cache in front of the broker, so a 1s page does not
+   mean 1s of Tiger. See service/core/live_cache.py.
+
+   Skipping a tick while one is still in flight beats stacking requests: the
+   call is usually fast but has been seen to take seconds. */
+const HISTORY_POLL_MS = 1000;
+let historyTimer = null;
+let historyBusy = false;
+
+function startHistoryPolling() {
+  stopHistoryPolling();
+  historyTimer = setInterval(async () => {
+    if (historyBusy || document.hidden) return;
+    historyBusy = true;
+    try { await loadHistory({ quiet: true }); } finally { historyBusy = false; }
+  }, HISTORY_POLL_MS);
+}
+
+function stopHistoryPolling() {
+  if (historyTimer) clearInterval(historyTimer);
+  historyTimer = null;
+}
+
 function showPage(name) {
-  ["trade", "positions", "history"].forEach(p => {
+  ["trade", "history"].forEach(p => {
     $("page-" + p).classList.toggle("on", p === name);
     $("nav-" + p).classList.toggle("on", p === name);
   });
-  if (name === "history") loadHistory();
-  if (name === "positions") loadPositions();
+
+  if (name === "history") {
+    loadHistory();
+    startHistoryPolling();
+  } else {
+    stopHistoryPolling();
+  }
 }
 
 function outcomeTag(o) {
@@ -889,8 +777,14 @@ function avgHeld(rows, outcome) {
   return duration(held.reduce((a, b) => a + b, 0) / held.length);
 }
 
-function renderHistory() {
+function renderHistory(options = {}) {
   const list = $("histlist");
+  // A poll redraws the table every second. Without this the row you are
+  // reading would deselect itself under you, and the detail panel would
+  // blank -- so remember what was open and restore it after the redraw.
+  const selected = options.keepSelection
+    ? (list.querySelector("tr.clickable.on") || {}).dataset?.i
+    : null;
   const day = $("histday").value || "";
   const rows = day
     ? historyCache.filter(o => o.placed_at && marketDay(o.placed_at) === day)
@@ -900,16 +794,38 @@ function renderHistory() {
   const count = (code) => rows.filter(o => o.outcome === code).length;
   const pnl = rows.reduce((total, o) => total + (o.realised_pnl || 0), 0);
   const up = pnl >= 0;
-  $("histsummary").innerHTML = `
-    <div class="sumbox"><div class="n pos">${count("TOOK_PROFIT")}</div><div class="l">Take profit</div></div>
-    <div class="sumbox"><div class="n neg">${count("STOPPED_OUT")}</div><div class="l">Stopped out</div></div>
-    <div class="sumbox"><div class="n">${count("STILL_OPEN")}</div><div class="l">Still open</div></div>
-    <div class="sumbox"><div class="n ${up ? "pos" : "neg"}">${up ? "+" : ""}${money(pnl)}</div>
-      <div class="l">Realised P&amp;L</div></div>
-    <div class="sumbox"><div class="n pos">${avgHeld(rows, "TOOK_PROFIT")}</div>
-      <div class="l">Avg hold, winners</div></div>
-    <div class="sumbox"><div class="n neg">${avgHeld(rows, "STOPPED_OUT")}</div>
-      <div class="l">Avg hold, losers</div></div>`;
+  // Built ONCE, then only the numbers are written. Replacing innerHTML every
+  // second destroys and rebuilds every node, which is the flicker: the boxes
+  // visibly blank and redraw. A number changing in place does not.
+  const tiles = [
+    ["tp",   "pos", "Take profit"],
+    ["so",   "neg", "Stopped out"],
+    ["open", "",    "Still open"],
+    ["pnl",  "",    "Realised P&amp;L"],
+    ["hw",   "pos", "Hold, winners"],
+    ["hl",   "neg", "Hold, losers"],
+  ];
+
+  const summary = $("histsummary");
+  if (!summary.firstChild) {
+    summary.innerHTML = tiles.map(([id, cls, label]) =>
+      `<div class="sumbox"><div class="n ${cls}" id="sum-${id}">—</div>
+       <div class="l">${label}</div></div>`).join("");
+  }
+
+  const setTile = (id, text, cls) => {
+    const node = $("sum-" + id);
+    if (!node) return;
+    if (node.textContent !== text) node.textContent = text;
+    if (cls !== undefined && node.className !== "n " + cls) node.className = "n " + cls;
+  };
+
+  setTile("tp", String(count("TOOK_PROFIT")));
+  setTile("so", String(count("STOPPED_OUT")));
+  setTile("open", String(count("STILL_OPEN")));
+  setTile("pnl", (up ? "+" : "") + money(pnl), up ? "pos" : "neg");
+  setTile("hw", avgHeld(rows, "TOOK_PROFIT"));
+  setTile("hl", avgHeld(rows, "STOPPED_OUT"));
 
   $("histdayverdict").className = "verdict" + (day && !rows.length ? " bad" : "");
   $("histdayverdict").textContent = day
@@ -922,51 +838,207 @@ function renderHistory() {
     return;
   }
 
-  list.innerHTML = `<table class="grid">
-    <tr><th>Contract</th><th>Bought</th><th>Exit</th><th>Held</th>
-        <th>Outcome</th><th>P&amp;L</th></tr>` +
-    rows.map(o => {
-      const i = historyCache.indexOf(o);
-      const cls = o.realised_pnl == null ? "" : (o.realised_pnl >= 0 ? "pos" : "neg");
-      return `<tr class="clickable" data-i="${i}">
-        <td>${o.underlying} <span class="strike">${o.strike ?? ""}</span> ${(o.option_type || "")[0] || ""}</td>
-        <td>${o.fill_price == null ? "—" : money(o.fill_price)}</td>
-        <td>${o.exit_price == null ? "—" : money(o.exit_price)}</td>
-        <td>${duration(o.held_seconds)}</td>
-        <td>${outcomeTag(o.outcome)}</td>
-        <td class="${cls}">${o.realised_pnl == null ? "—" :
-            (o.realised_pnl >= 0 ? "+" : "") + money(o.realised_pnl)}</td>
-      </tr>`;
-    }).join("") + `</table>`;
-
-  list.querySelectorAll("tr.clickable").forEach(row => {
-    row.onclick = () => {
-      list.querySelectorAll("tr.clickable").forEach(x => x.classList.remove("on"));
-      row.classList.add("on");
-      showOrder(historyCache[parseInt(row.dataset.i, 10)]);
+  // A closed row shows what was made; an open one shows what it is worth now.
+  // Both come from the server -- the page does no arithmetic on prices and
+  // keeps no clock of its own.
+  const cellsFor = (o) => {
+    const pnlValue = o.realised_pnl ?? o.unrealised_pnl ?? null;
+    return {
+      contract: `${o.underlying} <span class="strike">${o.strike ?? ""}</span> ${(o.option_type || "")[0] || ""}`,
+      bought: o.fill_price == null ? "—" : money(o.fill_price),
+      exit: o.exit_price != null ? money(o.exit_price)
+            : o.current_price != null ? `<span class="livenow">${money(o.current_price)}</span>`
+            : "—",
+      held: duration(o.held_seconds ?? o.held_open_seconds),
+      outcome: outcomeTag(o.outcome),
+      pnl: pnlValue == null ? "—" : (pnlValue >= 0 ? "+" : "") + money(pnlValue),
+      pnlCls: pnlValue == null ? "" : (pnlValue >= 0 ? "pos" : "neg"),
     };
-  });
+  };
+
+  // The row identity. The OUTCOME belongs in it: a sell turns STILL_OPEN into
+  // CLOSED_MANUALLY on the same order, and the in-place path only rewrites
+  // the three moving cells -- so keying on the id alone left the tag reading
+  // OPEN for a position that had just been sold.
+  const shape = rows.map(o => `${o.order_id_text}:${o.outcome}`).join(",");
+
+  if (list.dataset.shape !== shape) {
+    // The set of rows changed -- a new order, or a different day filter.
+    // This is the only path that rebuilds the table.
+    list.dataset.shape = shape;
+    list.innerHTML = `<table class="grid">
+      <tr><th>Contract</th><th>Bought</th><th>Exit</th><th>Held</th>
+          <th>Outcome</th><th>P&amp;L</th></tr>` +
+      rows.map(o => {
+        const i = historyCache.indexOf(o);
+        const c = cellsFor(o);
+        return `<tr class="clickable" data-i="${i}" data-id="${o.order_id_text}">
+          <td>${c.contract}</td>
+          <td>${c.bought}</td>
+          <td class="cell-exit">${c.exit}</td>
+          <td class="cell-held">${c.held}</td>
+          <td>${c.outcome}</td>
+          <td class="cell-pnl ${c.pnlCls}">${c.pnl}</td>
+        </tr>`;
+      }).join("") + `</table>`;
+
+    list.querySelectorAll("tr.clickable").forEach(row => {
+      row.onclick = () => {
+        list.querySelectorAll("tr.clickable").forEach(x => x.classList.remove("on"));
+        row.classList.add("on");
+        showOrder(historyCache[parseInt(row.dataset.i, 10)]);
+      };
+    });
+  } else {
+    // Same orders. Write only the three cells that move, leaving the rest of
+    // the DOM -- and the selection -- untouched.
+    rows.forEach(o => {
+      const row = list.querySelector(`tr[data-id="${o.order_id_text}"]`);
+      if (!row) return;
+      const c = cellsFor(o);
+      const write = (selector, html, cls) => {
+        const cell = row.querySelector(selector);
+        if (!cell) return;
+        if (cell.innerHTML !== html) cell.innerHTML = html;
+        if (cls !== undefined) {
+          const want = selector === ".cell-pnl" ? "cell-pnl " + cls : cls;
+          if (cell.className !== want) cell.className = want;
+        }
+      };
+      write(".cell-exit", c.exit);
+      write(".cell-held", c.held);
+      write(".cell-pnl", c.pnl, c.pnlCls);
+    });
+  }
+
+  if (selected != null) {
+    const again = list.querySelector(`tr.clickable[data-i="${selected}"]`);
+    if (again) {
+      again.classList.add("on");
+      // Refresh the panel's numbers too, in place.
+      showOrder(historyCache[parseInt(selected, 10)]);
+    }
+  }
 }
 
-async function loadHistory() {
+async function loadHistory(options = {}) {
+  const quiet = options.quiet === true;
   const list = $("histlist");
   if (!key()) { list.innerHTML = `<div class="placeholder">Enter your API key.</div>`; return; }
   try {
-    const r = await fetch("/orders/history", { headers: hdrs() });
+    const r = await fetch(
+      "/orders/history" + (options.fresh ? "?fresh=true" : ""),
+      { headers: hdrs() });
     const d = await r.json();
-    if (!r.ok) { list.innerHTML = `<div class="placeholder">${(d.error||d).message}</div>`; return; }
+    if (!r.ok) {
+      // A poll that fails leaves what is on screen. Replacing a working
+      // table with an error because one tick timed out is worse than a
+      // table a second out of date.
+      if (!quiet) list.innerHTML = `<div class="placeholder">${(d.error||d).message}</div>`;
+      return;
+    }
 
     historyCache = d.orders;
     historySummary = d;
     $("histcount").textContent = d.orders.length;
-    renderHistory();
+    renderHistory({ keepSelection: quiet });
   } catch (e) {
-    list.innerHTML = `<div class="placeholder">${e.message}</div>`;
+    if (!quiet) list.innerHTML = `<div class="placeholder">${e.message}</div>`;
   }
 }
 
 $("histday").onchange = renderHistory;
 $("histdayclear").onclick = () => { $("histday").value = ""; renderHistory(); };
+
+/* ---------- per-symbol settings -------------------------------------- */
+/* Enable/disable, and a bracket per symbol. Held on the SERVER, not here:
+   disabling has to stop a script and a curl too, not just this page.
+
+   Four levels decide a percentage, and the row shows which one won:
+   the per-trade box above, then this, then .env, then the default. */
+
+async function loadSymbolSettings() {
+  const box = $("symrows");
+  if (!key()) { box.innerHTML = `<div class="placeholder" style="padding:10px 0">Enter the API key to load symbols.</div>`; return; }
+
+  try {
+    const r = await fetch("/trade/symbols", { headers: hdrs() });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+
+    box.innerHTML = `<div class="symgrid">` + d.symbols.map(sym => `
+      <div class="symrow ${sym.enabled ? "" : "off"}" data-symbol="${sym.symbol}">
+        <span class="symname">${sym.symbol}</span>
+        <button type="button" class="btn-small symtoggle ${sym.enabled ? "on" : "off"}"
+                data-enabled="${sym.enabled}">${sym.enabled ? "ENABLED" : "DISABLED"}</button>
+        <input type="number" step="0.5" min="0.5" max="1000"
+               class="sym-tp" value="${sym.take_profit ?? ""}" placeholder="—">
+        <input type="number" step="0.5" min="0.5" max="99.5"
+               class="sym-sl" value="${sym.stop_loss ?? ""}" placeholder="—">
+        <span class="eff"><span class="sym-eff-text">${sym.effective_take_profit}% /
+          ${sym.effective_stop_loss}% — ${sym.take_profit_source}</span>
+          <span class="verdict sym-verdict"></span></span>
+      </div>`).join("") + `</div>`;
+
+    box.querySelectorAll(".symrow").forEach(row => {
+      const toggle = row.querySelector(".symtoggle");
+      toggle.onclick = () => {
+        // Flip locally so the button responds at once; saveSymbol reports
+        // the truth from the server either way.
+        const now = toggle.dataset.enabled !== "true";
+        toggle.dataset.enabled = String(now);
+        toggle.textContent = now ? "ENABLED" : "DISABLED";
+        toggle.className = "btn-small symtoggle " + (now ? "on" : "off");
+        row.classList.toggle("off", !now);
+        saveSymbol(row);
+      };
+      row.querySelectorAll("input").forEach(input => {
+        input.onchange = () => saveSymbol(row);
+      });
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="placeholder" style="padding:10px 0">Could not load symbols: ${e.message}</div>`;
+  }
+}
+
+async function saveSymbol(row) {
+  const symbol = row.dataset.symbol;
+  const verdict = row.querySelector(".sym-verdict");
+  const tp = row.querySelector(".sym-tp").value.trim();
+  const sl = row.querySelector(".sym-sl").value.trim();
+
+  verdict.className = "verdict sym-verdict";
+  verdict.textContent = "saving…";
+
+  try {
+    const r = await fetch(`/trade/symbols/${encodeURIComponent(symbol)}`, {
+      method: "PUT",
+      headers: hdrs(),
+      // Blank clears the override rather than setting zero, so .env comes back.
+      body: JSON.stringify({
+        enabled: row.querySelector(".symtoggle").dataset.enabled === "true",
+        take_profit: tp === "" ? null : parseFloat(tp),
+        stop_loss: sl === "" ? null : parseFloat(sl)
+      })
+    });
+    const d = await r.json();
+
+    if (!r.ok) {
+      verdict.className = "verdict sym-verdict bad";
+      verdict.textContent = d.message || ("HTTP " + r.status);
+      return;
+    }
+
+    row.querySelector(".sym-eff-text").textContent =
+      `${d.effective_take_profit}% / ${d.effective_stop_loss}% — ${d.take_profit_source}`;
+    verdict.textContent = "saved";
+    setTimeout(() => { verdict.textContent = ""; }, 1800);
+  } catch (e) {
+    verdict.className = "verdict sym-verdict bad";
+    verdict.textContent = e.message;
+  }
+}
+
 
 /* ---------- quick sell ----------------------------------------------- */
 /* Five one-click prices for a position still open, each a fixed number of
@@ -980,7 +1052,18 @@ $("histdayclear").onclick = () => { $("histday").value = ""; renderHistory(); };
 
 let quickSellSteps = [];   // filled from GET /trade/settings
 
-async function renderQuickSell(o) {
+function priceAgeText(seconds) {
+  // No age means the price came from the BROKER's own market_price, which
+  // tracks continuously and carries no timestamp. An age means it came from
+  // the traded-bar fallback, which on a quiet option can be minutes old --
+  // and a limit set from that may sit unfilled, so say so.
+  if (seconds == null) return "";
+  if (seconds < 20) return "just traded";
+  if (seconds < 60) return `traded ${Math.round(seconds)}s ago`;
+  return `traded ${Math.round(seconds / 60)}m ago — may be stale`;
+}
+
+function renderQuickSell(o) {
   const box = $("quicksell");
   if (!box) return;
 
@@ -989,21 +1072,12 @@ async function renderQuickSell(o) {
     return;
   }
 
-  box.innerHTML = `<div class="livesub">Checking what it is worth now…</div>`;
-
-  let premium = null;
-  try {
-    const r = await fetch(
-      `/positions/detail?identifier=${encodeURIComponent(o.identifier)}`,
-      { headers: hdrs() });
-    if (r.ok) {
-      premium = (await r.json()).current_price;
-    } else if (r.status === 404) {
-      box.innerHTML = `<div class="livesub">This position is no longer held —
-        nothing to sell. The history may be a moment behind.</div>`;
-      return;
-    }
-  } catch (e) { /* fall through to the no-price message */ }
+  // The row already carries what the contract is worth -- the history
+  // endpoint prices every open position, from the same cache. Fetching it
+  // again here would be a second request for a number already in hand, and
+  // the "checking…" placeholder it needed is what made the panel blink on
+  // every poll.
+  const premium = o.current_price;
 
   if (premium == null) {
     box.innerHTML = `<div class="livesub">No live price for this contract, so
@@ -1014,11 +1088,53 @@ async function renderQuickSell(o) {
 
   const held = o.quantity || 0;
 
+  // Same contract, new price: rewrite the figures and leave the buttons in
+  // place. Rebuilding them every second would blink, and would drop a click
+  // landing at the wrong moment.
+  // A sell already in flight: leave the panel exactly as it is. Repricing
+  // under a pending order would re-enable the buttons the click disabled,
+  // and a second click would sell twice.
+  if (box.dataset.selling === "1") return;
+
+  if (box.dataset.identifier === o.identifier && box.querySelector(".qs-btn")) {
+    const sub = box.querySelector(".qs-sub");
+    if (sub) {
+      // The price age comes with the price: a sell limit set from a trade
+      // that happened a minute ago can sit unfilled on a wide spread.
+      sub.innerHTML = `${held} contract(s) at <strong>${money(premium)}</strong>
+        each <span class="qs-age">${priceAgeText(o.current_price_age_seconds)}</span>.
+        Every button sells all ${held}.`;
+    }
+    box.querySelectorAll(".qs-btn").forEach((btn, index) => {
+      const step = quickSellSteps[index];
+      if (step == null) return;
+      const cents = Math.round(premium * 100) - Math.round(step * 100);
+      const limit = cents / 100;
+      const dead = limit <= 0;
+      btn.disabled = dead;
+      btn.dataset.limit = limit.toFixed(2);
+      btn.dataset.qty = held;
+      const face = dead ? "—" : "SELL " + money(limit);
+      if (btn.childNodes[0] && btn.childNodes[0].textContent.trim() !== face) {
+        btn.childNodes[0].textContent = face;
+      }
+      const at = btn.querySelector(".qs-at");
+      const note = dead ? "too cheap" : money(step) + " below";
+      if (at && at.textContent !== note) at.textContent = note;
+    });
+    return;
+  }
+
+  box.dataset.identifier = o.identifier || "";
   box.innerHTML = `
-    <div class="qs-head">SELL THIS POSITION NOW</div>
-    <div class="qs-sub">${held} contract(s), worth
-      <strong>${money(premium)}</strong> each right now.
-      Each button sells ALL ${held} at the price shown.</div>
+    <div class="qs-head">Sell now
+      <button type="button" class="btn-small qs-refresh" id="qsrefresh"
+              title="Read the price from the broker now, skipping the cache">
+        &#8635; Refresh price</button>
+    </div>
+    <div class="qs-sub">${held} contract(s) at <strong>${money(premium)}</strong>
+      each <span class="qs-age">${priceAgeText(o.current_price_age_seconds)}</span>.
+      Every button sells all ${held}.</div>
     <div class="qs-row">` +
     quickSellSteps.map(step => {
       // Snapped down here too, so the button shows the price that will
@@ -1043,31 +1159,45 @@ async function renderQuickSell(o) {
         <span class="qs-at">${dead ? "too cheap" : money(step) + " below"}</span>
       </button>`;
     }).join("") + `</div>
-    <div class="qs-note">These price BELOW the market on purpose, so they fill
-      at once. You receive the fill price, which may differ.</div>`;
+    <div class="qs-note">Priced below the market to fill at once. You receive
+      the fill price, which may differ.</div>`;
 
   box.querySelectorAll(".qs-btn").forEach(btn => {
     btn.onclick = () => quickSell(btn, o);
   });
+
+  // Its own refresh, separate from anything else on the page. The buttons are
+  // priced off the last TRADED price, which on a quiet option can be a minute
+  // old -- this reads the broker now rather than waiting for the poll's cache
+  // to turn over.
+  const refresh = box.querySelector("#qsrefresh");
+  if (refresh) {
+    refresh.onclick = async (event) => {
+      event.stopPropagation();
+      refresh.disabled = true;
+      const was = refresh.innerHTML;
+      refresh.textContent = "reading…";
+      try {
+        await loadHistory({ fresh: true, quiet: true });
+      } finally {
+        refresh.disabled = false;
+        refresh.innerHTML = was;
+      }
+    };
+  }
 }
 
 async function quickSell(btn, o) {
   const limit = parseFloat(btn.dataset.limit);
   const qty   = parseInt(btn.dataset.qty, 10);
 
-  if (!confirm(
-      `Sell ${qty} contract(s) of
-${o.identifier}
-
-` +
-      `at ${money(limit)} each — about ${money(limit * qty * 100)} total.
-
-` +
-      `This is below the market, so it should fill immediately.`)) {
-    return;
-  }
-
+  // NO CONFIRMATION. A dialog on a sell is a delay measured in seconds, on an
+  // order whose whole point is to be out now -- and the price it names is
+  // stale the moment it appears, because the panel keeps repricing behind it.
+  // The button already says SELL and the price it sells at; a second "are you
+  // sure" buys nothing but slippage.
   const row = $("quicksell");
+  row.dataset.selling = "1";
   row.querySelectorAll(".qs-btn").forEach(b => b.disabled = true);
   const verdict = document.createElement("div");
   verdict.className = "livesub";
@@ -1085,6 +1215,7 @@ ${o.identifier}
     if (!r.ok) {
       verdict.className = "verdict bad";
       verdict.textContent = `${d.error_code || r.status}: ${d.message || "failed"}`;
+      row.dataset.selling = "";
       row.querySelectorAll(".qs-btn").forEach(b => b.disabled = false);
       return;
     }
@@ -1096,6 +1227,7 @@ ${o.identifier}
 
     if (d.position_unprotected) {
       verdict.className = "verdict bad";
+      row.dataset.selling = "";
       verdict.innerHTML = sold > 0
         ? `<strong>SOLD ${sold} — BUT THE REST HAS NO STOP LOSS.</strong><br>${d.warning || ""}`
         : `<strong>NOTHING SOLD — NO STOP LOSS ON THIS POSITION.</strong><br>${d.warning || ""}`;
@@ -1108,6 +1240,7 @@ ${o.identifier}
       verdict.textContent =
         `${d.order_status} — nothing filled at ${money(d.limit_price)}. ` +
         `Try a lower price.`;
+      row.dataset.selling = "";
       row.querySelectorAll(".qs-btn").forEach(b => b.disabled = false);
       return;
     }
@@ -1118,12 +1251,16 @@ ${o.identifier}
       (d.average_fill_price != null ? ` at ${money(d.average_fill_price)}` : "") +
       (d.warning ? ` — ${d.warning}` : "");
 
-    // The position and the history have both changed.
-    await loadHistory();
-    if (typeof loadPositions === "function") loadPositions();
+    // The position and the history have both changed. fresh=true because the
+    // answer must be the state AFTER the sell -- a cached read here would
+    // show the position still open for a few seconds, which reads as the
+    // sell having failed.
+    row.dataset.selling = "";
+    await loadHistory({ fresh: true });
   } catch (e) {
     verdict.className = "verdict bad";
     verdict.textContent = "Request failed: " + e.message;
+    row.dataset.selling = "";
     row.querySelectorAll(".qs-btn").forEach(b => b.disabled = false);
   }
 }
@@ -1140,16 +1277,96 @@ function showOrder(o) {
     EXPIRED:     ["b-warn", "EXPIRED"]
   }[o.outcome] || ["b-warn", o.outcome];
 
-  const pnl = o.realised_pnl == null ? "" : `
+  // Realised once closed; unrealised while open, so the number never blanks
+  // on the position you are actually watching.
+  const isOpen = o.outcome === "STILL_OPEN";
+  const pnlValue = o.realised_pnl ?? o.unrealised_pnl ?? null;
+  const pnlPercent = o.realised_pnl_percent ?? o.unrealised_pnl_percent ?? null;
+
+  const pnl = pnlValue == null ? "" : `
     <div style="text-align:center;margin-bottom:14px">
-      <div class="pnlbig ${o.realised_pnl >= 0 ? "pos" : "neg"}">
-        ${o.realised_pnl >= 0 ? "+" : ""}${money(o.realised_pnl)}</div>
-      <div style="font-size:12px;color:var(--muted)">
-        ${o.realised_pnl_percent >= 0 ? "+" : ""}${o.realised_pnl_percent}% realised,
-        before commission</div>
+      <div class="pnlbig ${pnlValue >= 0 ? "pos" : "neg"}">
+        ${pnlValue >= 0 ? "+" : ""}${money(pnlValue)}</div>
+      <div class="pnlsub" style="font-size:12px;color:var(--muted)">
+        ${pnlPercent == null ? "" : (pnlPercent >= 0 ? "+" : "") + pnlPercent + "%"}
+        ${isOpen ? "unrealised" : "realised"}, before commission</div>
     </div>`;
 
-  $("histdetail").innerHTML =
+  // The three numbers that say what this trade IS, before any of the detail:
+  // what it filled at, which strike, how many. An open position also shows
+  // its clock, which ticks from the broker's fill timestamp on the server.
+  const head = `
+    <div class="ordhead${isOpen ? " is-open" : ""}">
+      <div class="ordfig">
+        <div class="ordfig-n">${o.fill_price == null ? "—" : money(o.fill_price)}</div>
+        <div class="ordfig-l">Filled at</div>
+      </div>
+      <div class="ordfig">
+        <div class="ordfig-n">${o.strike ?? "—"}<span
+          class="ordfig-x">${(o.option_type || "")[0] || ""}</span></div>
+        <div class="ordfig-l">Strike</div>
+      </div>
+      <div class="ordfig">
+        <div class="ordfig-n">${o.quantity ?? "—"}</div>
+        <div class="ordfig-l">Contracts</div>
+      </div>
+      ${isOpen ? `<div class="ordfig">
+        <div class="ordfig-n live-clock"><span class="live"></span>${
+          duration(o.held_open_seconds)}</div>
+        <div class="ordfig-l">Held, running</div>
+      </div>` : ""}
+    </div>`;
+
+  // Same order, one second later: write the figures that move and leave the
+  // rest of the panel alone. Rebuilding it every second is what made the
+  // whole card blink -- and it would close any <details> the reader opened.
+  const panel = $("histdetail");
+
+  // The same order can CHANGE: a sell fills and STILL_OPEN becomes
+  // CLOSED_MANUALLY, the banner changes, the clock stops and the sell panel
+  // must go. Keying the in-place path on the order id alone kept redrawing
+  // the old picture -- the position was gone and the panel still offered to
+  // sell it. The outcome is part of the identity, not just the id.
+  const panelKey = `${o.order_id_text}:${o.outcome}`;
+
+  if (panel.dataset.panelKey === panelKey) {
+    if (isOpen) {
+      // The clock. Its dot is re-inserted with the text so the blink keeps
+      // running rather than being replaced by a bare string.
+      const clock = panel.querySelector(".live-clock");
+      if (clock) {
+        const want = duration(o.held_open_seconds);
+        if (clock.textContent.trim() !== want) {
+          clock.innerHTML = `<span class="live"></span>${want}`;
+        }
+      }
+    }
+
+    const big = panel.querySelector(".pnlbig");
+    if (big && pnlValue != null) {
+      const want = (pnlValue >= 0 ? "+" : "") + money(pnlValue);
+      if (big.textContent.trim() !== want) {
+        big.textContent = want;
+        big.className = "pnlbig " + (pnlValue >= 0 ? "pos" : "neg");
+      }
+    }
+
+    const sub = panel.querySelector(".pnlsub");
+    if (sub && pnlPercent != null) {
+      const want = `${pnlPercent >= 0 ? "+" : ""}${pnlPercent}% ${
+        isOpen ? "unrealised" : "realised"}, before commission`;
+      if (sub.textContent.trim() !== want) sub.textContent = want;
+    }
+
+    // The sell buttons are priced off what the contract is worth NOW, so they
+    // have to move with it. Without this they keep offering a price from
+    // whenever the row was first opened.
+    if (isOpen) renderQuickSell(o);
+    return;
+  }
+
+  panel.dataset.panelKey = panelKey;
+  panel.innerHTML = head +
     `<div class="banner ${banner[0]}">${banner[1]}</div>` + pnl +
     `<div id="quicksell"></div>` + `
     <table>
@@ -1325,136 +1542,18 @@ function renderOk(data, exactOrderId) {
     </table>
     <details><summary>Full response</summary><pre>${JSON.stringify(data, null, 2)}</pre></details>`;
 
-  if (real && exactOrderId) startLive(exactOrderId, data);
+  // Tracking continues on the order-history page, which holds the position
+  // and its clock. Nothing here polls.
 }
 
-/* ---------- live order tracking ---------- */
-/* Two clocks run here. `liveTicker` ticks LOCALLY every second so the elapsed
-   time moves smoothly; `liveTimer` fetches from Tiger every 3s. Ticking
-   locally is what lets the display look live without spending an API call
-   every second. */
-let liveCtx = null;        // what we are watching, and its known facts
-let liveTicker = null;
+/* The trade page no longer tracks the order after placing it. What was
+   here polled Tiger every 3s and ran a SECOND clock in the browser,
+   stamped from when a poll first noticed the fill -- wrong by up to a
+   poll, and by the position's whole age if the tab was opened later.
 
-function startLive(orderId, data) {
-  liveOrderId = String(orderId);   // a STRING, never a Number -- see above
-  liveCtx = {
-    identifier: data.contract.identifier,
-    strike: data.strike,
-    optionType: data.option_type,
-    expiry: data.expiry,
-    quantity: data.quantity,
-    limit: data.prices.entry_price_actual,
-    takeProfit: data.prices.take_profit_price,
-    stopLoss: data.prices.stop_loss_price,
-    legs: [],
-    filledAt: null,          // stamped the moment the parent fills
-    entryPrice: null,
-    exitedAt: null,
-    exitLeg: null
-  };
-  $("livecard").hidden = false;
-  if (liveTimer) clearInterval(liveTimer);
-  if (liveTicker) clearInterval(liveTicker);
-  pollLive();
-  liveTimer = setInterval(pollLive, 3000);
-  liveTicker = setInterval(renderLive, 1000);
-}
+   The order-history page carries that now, from the broker's own fill
+   timestamp. This page reports what was ORDERED and stops. */
 
-/* mm:ss, for the running clock. */
-function clockText(seconds) {
-  const s = Math.max(0, Math.floor(seconds));
-  const m = Math.floor(s / 60);
-  return String(m).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
-}
-
-let liveBusy = false;
-
-async function pollLive() {
-  if (!liveOrderId || liveBusy) return;
-  liveBusy = true;
-  try {
-    const [oRes, lRes] = await Promise.all([
-      fetch(`/orders/${liveOrderId}`, { headers: hdrs() }),
-      fetch(`/orders/${liveOrderId}/legs`, { headers: hdrs() })
-    ]);
-    const o = await oRes.json();
-    const l = lRes.ok ? await lRes.json() : { legs: [] };
-    const c = liveCtx;
-
-    const status = String(o.status || "").toUpperCase();
-    const parentFilled = /FILLED/.test(status) && !/PARTIAL/.test(status);
-
-    // The clock starts at the FILL. Stamp it once, the first time we see it.
-    if (parentFilled && !c.filledAt) {
-      c.filledAt = Date.now();
-      c.entryPrice = o.average_fill_price;
-      // The result card was drawn before the broker had filled anything, so
-      // it is still showing the LIMIT. A limit fills at the best available
-      // price -- measured across 55 real orders, every one filled BELOW its
-      // limit -- so leaving it would misreport what was actually paid.
-      showActualFill(c.entryPrice, c.limit);
-    }
-
-    c.legs = l.legs || [];
-
-    // Whichever leg filled is the exit. They are OCA, so only one can.
-    const hitLeg = c.legs.find(g => /FILLED/.test(String(g.status || "").toUpperCase()));
-    if (hitLeg && !c.exitedAt) {
-      c.exitedAt = Date.now();
-      c.exitLeg = hitLeg;
-    }
-
-    c.parentStatus = o.status;
-    c.filledQty = o.filled_quantity;
-    c.actualCash = o.actual_cash;
-
-    // Once an exit has filled the position is closed, so the live P&L below
-    // has nothing to read. Realise it from the two FILL prices instead.
-    if (c.exitedAt && c.entryPrice != null && c.exitLeg
-        && c.exitLeg.average_fill_price != null) {
-      c.exitPrice = c.exitLeg.average_fill_price;
-      c.pnl = Math.round((c.exitPrice - c.entryPrice) * 100 * (c.quantity || 1) * 100) / 100;
-      c.pnlPercent = Math.round((c.exitPrice - c.entryPrice) / c.entryPrice * 10000) / 100;
-      c.realised = true;
-    }
-
-    // Live price, so the distance-to-exit bar means something.
-    if (!c.realised) try {
-      const pr = await fetch(
-        `/positions/detail?identifier=${encodeURIComponent(c.identifier)}`,
-        { headers: hdrs() });
-      if (pr.ok) {
-        const d = await pr.json();
-        c.currentPrice = d.current_price;
-        c.pnl = d.unrealised_pnl;
-        c.pnlPercent = d.unrealised_pnl_percent;
-        // Tiger's own fill stamp beats ours: it is when the fill really
-        // happened, not when we first noticed it.
-        if (d.entry_filled_at && !c.filledAtServer) {
-          c.filledAtServer = new Date(d.entry_filled_at).getTime();
-        }
-      }
-    } catch (e) { /* the panel still works without a live price */ }
-
-    renderLive();
-
-    const finished = c.exitedAt
-      || (/CANCEL|REJECT|EXPIRE/.test(status) && !parentFilled);
-    if (finished) {
-      clearInterval(liveTimer); liveTimer = null;
-      clearInterval(liveTicker); liveTicker = null;
-      renderLive();
-      loadPositions(); loadHistory();
-    }
-  } catch (e) {
-    $("livebox").innerHTML = `<div class="placeholder">${e.message}</div>`;
-  } finally {
-    liveBusy = false;
-  }
-}
-
-/* Swap the result card from "buy limit" to what the fill actually cost. */
 function showActualFill(fillPrice, limitPrice) {
   const value = $("entryval");
   if (!value || fillPrice == null) return;
@@ -1467,79 +1566,6 @@ function showActualFill(fillPrice, limitPrice) {
   $("entrysub").innerHTML = saved && saved > 0.0001
     ? `filled ${(saved * 100).toFixed(0)}¢ under your ${money(limitPrice)} limit`
     : `at your ${money(limitPrice)} limit`;
-}
-
-function renderLive() {
-  const c = liveCtx;
-  if (!c) return;
-
-  const started = c.filledAtServer || c.filledAt;
-  const ended = c.exitedAt;
-  const heldSeconds = started ? ((ended || Date.now()) - started) / 1000 : null;
-
-  const running = started && !ended;
-  const headClock = started
-    ? (running ? clockText(heldSeconds) : duration(heldSeconds))
-    : "waiting for fill";
-
-  // Where does the price sit between the stop and the target?
-  let bar = "";
-  if (c.currentPrice && c.stopLoss && c.takeProfit) {
-    const span = c.takeProfit - c.stopLoss;
-    const at = Math.max(0, Math.min(100, ((c.currentPrice - c.stopLoss) / span) * 100));
-    const toTp = (c.takeProfit - c.currentPrice) / c.currentPrice * 100;
-    const toSl = (c.currentPrice - c.stopLoss) / c.currentPrice * 100;
-    bar = `
-      <div class="ladder">
-        <div class="ladder-track"><div class="ladder-now" style="left:${at}%"></div></div>
-        <div class="ladder-ends">
-          <span class="neg">stop ${money(c.stopLoss)} &middot; <b>${toSl.toFixed(1)}% away</b></span>
-          <span class="pos"><b>${toTp.toFixed(1)}% away</b> &middot; target ${money(c.takeProfit)}</span>
-        </div>
-      </div>`;
-  }
-
-  const pnlClass = c.pnl == null ? "" : (c.pnl >= 0 ? "pos" : "neg");
-  const pnlText = c.pnl == null ? "—"
-    : `${c.pnl >= 0 ? "+" : "−"}$${money(Math.abs(c.pnl))} (${c.pnlPercent > 0 ? "+" : ""}${c.pnlPercent}%)`;
-
-  const outcome = ended
-    ? (String(c.exitLeg.order_type || "").toUpperCase().includes("STP")
-        ? `<div class="banner b-bad">STOPPED OUT after ${duration(heldSeconds)}</div>`
-        : `<div class="banner b-good">TOOK PROFIT after ${duration(heldSeconds)}</div>`)
-    : "";
-
-  $("livebox").innerHTML = outcome + `
-    <div class="livehead">
-      <div class="livename">${c.identifier.split(" ")[0]} <span class="strike strike-lg">$${c.strike}</span> ${c.optionType}
-        <span class="livesub">exp ${c.expiry} &middot; ${c.quantity} contract(s)</span></div>
-      <div class="liveclock${running ? " ticking" : ""}">${headClock}</div>
-    </div>
-    <table>
-      <tr><td>Bought at</td><td>${c.entryPrice == null ? "waiting…" : "$" + money(c.entryPrice)}
-        ${c.entryPrice ? `<span class="livesub">limit was ${money(c.limit)}</span>` : ""}</td></tr>
-      ${c.realised
-        ? `<tr><td>Sold at</td><td><b>$${money(c.exitPrice)}</b>
-             <span class="livesub">${String(c.exitLeg.order_type || "").toUpperCase().includes("STP")
-               ? "stop loss" : "take profit"}</span></td></tr>`
-        : `<tr><td>Price now</td><td>${c.currentPrice == null ? "—" : "$" + money(c.currentPrice)}</td></tr>`}
-      <tr><td>P&amp;L${c.realised ? " (realised)" : ""}</td>
-        <td class="${pnlClass}"><b>${pnlText}</b>${c.realised
-          ? ` <span class="livesub">before ~$6 commission</span>` : ""}</td></tr>
-      <tr><td>Status</td><td>${statusChip(c.parentStatus)} ${c.filledQty == null ? 0 : c.filledQty} filled</td></tr>
-      <tr><td>Cash paid</td><td>${c.actualCash == null ? "—" : "$" + money(c.actualCash)}</td></tr>
-    </table>
-    ${bar}
-    <h2 style="margin-top:16px">Exits on the book</h2>
-    ${(c.legs || []).length
-      ? `<table class="grid"><tr><th>Leg</th><th>Type</th><th>Price</th><th>TIF</th><th>Status</th></tr>` +
-        c.legs.map(g => `<tr><td>${g.leg_kind || "—"}</td><td>${g.order_type || "—"}</td>
-          <td>${g.price == null ? "—" : money(g.price)}</td><td>${g.time_in_force || "—"}</td>
-          <td>${statusChip(g.status)}</td></tr>`).join("") + `</table>`
-      : `<div class="placeholder" style="padding:16px 0">No legs reported yet.</div>`}
-    <p class="note">${ended
-      ? `Held ${duration(heldSeconds)} from fill to exit.`
-      : (started ? "Holding — refreshing every 3 seconds…" : "Waiting for the buy to fill…")}</p>`;
 }
 
 /* ---------- send ---------- */
@@ -1571,7 +1597,7 @@ async function send() {
     if (r.ok) {
       renderOk(data, exactOrderId);
       out.insertAdjacentHTML("beforeend", `<p class="note">Round trip: ${ms} ms</p>`);
-      if (!data.dry_run) { newId(); loadPositions(); loadHistory(); }
+      if (!data.dry_run) { newId(); loadHistory(); }
     } else {
       renderError(r.status, data);
     }

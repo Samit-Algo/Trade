@@ -313,3 +313,62 @@ class TestAManualSellBelongsToTheRightBuy:
 
         assert not closed_after(self.stub(), self.stub(order_time=2000))
         assert not closed_after(self.stub(trade_time=1000), self.stub())
+
+
+class TestTheBrokerPriceIsPreferred:
+    """get_option_bars lags badly on a quiet contract.
+
+    A bar only appears when the option TRADES, so a contract that has not
+    traded for minutes reports a price that old. Measured live: five minutes
+    stale while the Tiger app moved.
+
+        market_price   5.345 -> 5.335 -> 5.37   (tracks continuously)
+        bar close      5.29  -> 5.29  -> 5.29   (frozen)
+
+    market_price is what the broker's own app shows, and it is available for
+    anything HELD -- which is exactly when a price is needed, since the sell
+    buttons price an open position.
+    """
+
+    def test_a_held_position_uses_the_brokers_price(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from api.routes import orders
+
+        held = SimpleNamespace(
+            identifier="QQQ   260918C00706000", market_price_latest=5.37
+        )
+        monkeypatch.setattr(orders.CACHE, "get", lambda *a, **k: ([held], 0.0))
+
+        assert orders.position_market_price("QQQ   260918C00706000") == 5.37
+
+    def test_whitespace_does_not_prevent_the_match(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from api.routes import orders
+
+        held = SimpleNamespace(
+            identifier="QQQ   260918C00706000", market_price_latest=5.37
+        )
+        monkeypatch.setattr(orders.CACHE, "get", lambda *a, **k: ([held], 0.0))
+
+        assert orders.position_market_price("  QQQ   260918C00706000  ") == 5.37
+
+    def test_a_contract_not_held_returns_none(self, monkeypatch):
+        """So the caller falls back to the bars rather than showing nothing."""
+        from api.routes import orders
+
+        monkeypatch.setattr(orders.CACHE, "get", lambda *a, **k: ([], 0.0))
+
+        assert orders.position_market_price("QQQ   260918C00706000") is None
+
+    def test_a_broker_failure_falls_back_rather_than_raising(self, monkeypatch):
+        """A price is a display value. Losing it must not fail the request."""
+        from api.routes import orders
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("broker down")
+
+        monkeypatch.setattr(orders.CACHE, "get", boom)
+
+        assert orders.position_market_price("QQQ   260918C00706000") is None

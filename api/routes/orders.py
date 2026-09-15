@@ -10,20 +10,28 @@ filled -- is made by the same library functions the CLI calls.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query
 from tigeropen.common.consts import SecurityType
 
+from api.service.market import fetch_recent_traded_price
 from api.service.core.broker import ORDERS_LIMITER
+from api.service.core.live_cache import (
+    CACHE,
+    ORDERS_MAX_AGE_SECONDS,
+    POSITIONS_MAX_AGE_SECONDS,
+)
 from api.service.contract import parse_identifier
+from api.service.position import list_option_positions
 from api.service.order import (
     get_attached_legs,
     get_order_status,
     normalise_status,
 )
 
-from ..shared import get_settings, get_trade_client
+from ..shared import get_quote_client, get_settings, get_trade_client
 from ..errors import ApiError
 from ..schemas import (
     FillOutcomeOut,
@@ -52,7 +60,16 @@ def to_utc(milliseconds) -> datetime | None:
 
 
 @router.get("/orders/history", response_model=OrderHistoryResponse)
-def read_order_history(limit: int = Query(default=100, ge=1, le=300)):
+def read_order_history(
+    limit: int = Query(default=100, ge=1, le=300),
+    fresh: bool = Query(
+        default=False,
+        description="Bypass the display cache and read the broker now. For a "
+        "REFRESH the reader asked for -- the automatic poll must not set it, "
+        "or the cache that keeps a 1s page inside a 60-per-minute broker "
+        "limit stops doing anything.",
+    ),
+):
     """List every order placed, newest first, saying what became of each.
 
     One Tiger call. Orders come back flat, with legs carrying a parent_id, so
@@ -71,8 +88,22 @@ def read_order_history(limit: int = Query(default=100, ge=1, le=300)):
     """
     settings = get_settings()
     ORDERS_LIMITER.wait()
-    raw = get_trade_client().get_orders(
-        account=settings.account, sec_type=SecurityType.OPT, limit=limit
+    if fresh:
+        # Everything this endpoint reads: the order list, and the price of
+        # every open position. Dropped together so one click gives one
+        # coherent picture rather than a new list against old prices.
+        CACHE.invalidate()
+
+    # Cached: the page polls every second so the clock moves, but the ORDER
+    # LIST only changes when something is placed or fills. Served from memory
+    # between refreshes, so the poll rate stops deciding the broker load --
+    # see service/core/live_cache.py.
+    raw, _age = CACHE.get(
+        f"orders:{limit}",
+        lambda: get_trade_client().get_orders(
+            account=settings.account, sec_type=SecurityType.OPT, limit=limit
+        ),
+        ORDERS_MAX_AGE_SECONDS,
     )
 
     legs_by_parent: dict = {}
@@ -167,6 +198,41 @@ def read_order_history(limit: int = Query(default=100, ge=1, le=300)):
             else None
         )
 
+        # A position still open has no exit to measure to, so it is measured
+        # to NOW -- on the server, from the broker's own fill timestamp.
+        #
+        # The page used to do this itself by stamping Date.now() the first
+        # time a poll saw the fill. That was wrong by up to a poll interval,
+        # and wrong by the position's whole age if the tab was opened later.
+        # Nothing here depends on when anyone looked.
+        held_open = None
+        current_price = None
+        current_price_age = None
+        unrealised_pnl = None
+        unrealised_pnl_percent = None
+
+        if filled_ms and not exited_ms and outcome == "STILL_OPEN":
+            held_open = round((time.time() * 1000 - filled_ms) / 1000.0, 1)
+
+            # What it is worth NOW, so an open row carries the same numbers
+            # the positions page used to show. Cached per contract: the page
+            # polls every second, and this would otherwise be one broker call
+            # per open position per second.
+            # The broker's own price first -- it tracks continuously. The
+            # traded-bar price is the fallback, and it is what carries an
+            # age, because a bar says when it happened.
+            current_price = position_market_price(identifier)
+            current_price_age = None
+            if current_price is None:
+                current_price, current_price_age = live_price(identifier)
+            if current_price is not None and entry:
+                unrealised_pnl = round(
+                    (current_price - entry) * multiplier * quantity, 2
+                )
+                unrealised_pnl_percent = round(
+                    (current_price - entry) / entry * 100, 2
+                )
+
         rows.append(
             OrderHistoryRow(
                 order_id_text=str(getattr(parent, "id", "") or ""),
@@ -193,6 +259,11 @@ def read_order_history(limit: int = Query(default=100, ge=1, le=300)):
                 exited_at=to_utc(exited_ms),
                 fill_delay_seconds=fill_delay,
                 held_seconds=held,
+                held_open_seconds=held_open,
+                current_price=current_price,
+                current_price_age_seconds=current_price_age,
+                unrealised_pnl=unrealised_pnl,
+                unrealised_pnl_percent=unrealised_pnl_percent,
                 legs=[
                     WorkingOrderOut(
                         order_id_text=str(getattr(leg, "id", "") or ""),
@@ -311,6 +382,81 @@ def read_leg_price(order) -> float | None:
     Reading the wrong one returns None and looks like a missing price.
     """
     return getattr(order, "limit_price", None) or getattr(order, "aux_price", None)
+
+
+def position_market_price(identifier: str) -> float | None:
+    """The broker's own price for a contract currently held.
+
+    PREFERRED over the one-minute bars. get_option_bars can sit minutes behind
+    on a quiet contract -- measured at five minutes stale while the Tiger app
+    moved -- because a bar only appears when the option TRADES. `market_price`
+    on the position is what the app itself shows, and it tracks continuously:
+
+        market_price   5.345 -> 5.335 -> 5.37   (over 25 seconds)
+        our bar price  5.29  -> 5.29  -> 5.29   (frozen)
+
+    Only available for something HELD, which is exactly when it is needed: the
+    sell buttons price an open position.
+
+    Args:
+        identifier: The full option identifier.
+
+    Returns:
+        The broker's market price, or None when the contract is not held or
+        the read failed.
+    """
+    wanted = identifier.strip()
+
+    try:
+        positions, _age = CACHE.get(
+            "positions",
+            lambda: list_option_positions(get_trade_client()),
+            POSITIONS_MAX_AGE_SECONDS,
+        )
+    except Exception:  # noqa: BLE001 -- fall back to the bars
+        return None
+
+    for position in positions or []:
+        if position.identifier.strip() == wanted:
+            return position.market_price_latest
+
+    return None
+
+
+def live_price(identifier: str) -> tuple[float | None, float | None]:
+    """What this contract last traded at, cached.
+
+    The history page polls every second so its clocks move. Without a cache
+    that is one broker call per open position per second -- and get_positions
+    is capped at 60 a minute, which ONE position would consume. See
+    service/core/live_cache.py.
+
+    Args:
+        identifier: The full option identifier.
+
+    Returns:
+        A pair of (last traded price, how many seconds ago it traded), or
+        (None, None) when it cannot be fetched. None is not an error here: the
+        row simply shows no live value rather than the page failing over a
+        display number.
+
+        The AGE matters to the caller. This is the last price the option
+        TRADED at, not a bid, and on a quiet contract that can be a minute
+        old -- a sell limit set from it may sit unfilled.
+    """
+    try:
+        recent, _age = CACHE.get(
+            f"price:{identifier}",
+            lambda: fetch_recent_traded_price(get_quote_client(), identifier),
+            POSITIONS_MAX_AGE_SECONDS,
+        )
+    except Exception:  # noqa: BLE001 -- a missing price must not hide the row
+        return None, None
+
+    if recent is None:
+        return None, None
+
+    return recent.price, recent.age_seconds
 
 
 def closed_after(parent, sell) -> bool:

@@ -39,6 +39,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from api.service.contract import find_option_contract
+from api.service.core.live_cache import CACHE
 from api.service.core.safety import build_order_record, write_order_record
 from api.service.order import cancel_order, sell_option, snap_down
 from api.service.position import list_option_positions
@@ -312,6 +313,10 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
     if stubborn_legs:
         note = "Some legs would not cancel: " + "; ".join(stubborn_legs)
         warning = f"{warning} {note}" if warning else note
+
+    # Closing changed the account -- drop the display cache so the position
+    # disappears from the page at once rather than lingering for an interval.
+    CACHE.invalidate()
 
     return ClosePositionResponse(
         identifier=identifier,

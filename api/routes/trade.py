@@ -49,7 +49,9 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Request
 
 from api.service.contract import select_contract
+from api.service.core.live_cache import CACHE
 from api.service.core.safety import build_order_record, write_order_record
+from api.service.core.symbol_settings import is_enabled, read_for
 from api.service.market import (
     fetch_spot_price,
     MAX_RECENT_TRADE_AGE_SECONDS,
@@ -385,6 +387,13 @@ def resolve_bracket_percent(
         return supplied, f"{supplied:g}% {name}, supplied on the request"
 
     wanted = symbol.strip().upper()
+
+    # Set in the page, which is editable between trades. .env needs a restart,
+    # so this sits above it -- the more recently changed value wins.
+    stored = read_for(wanted).get(name.replace(" ", "_"))
+    if stored is not None:
+        return stored, f"{stored:g}% {name}, set for {wanted} in the UI"
+
     if wanted in per_symbol:
         value = per_symbol[wanted]
         return value, (
@@ -739,7 +748,24 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
     if replay is not None:
         return replay
 
-    # 2. Is this underlying already busy? One trade per symbol at a time --
+    # 2. Has this symbol been switched off in the page? Checked here rather
+    #    than in the UI alone, because "disabled" has to mean disabled for
+    #    every caller -- a script or a curl included. Closing is deliberately
+    #    NOT gated on this: a symbol you have stopped opening trades on must
+    #    still be one you can sell.
+    if not is_enabled(body.symbol):
+        release_request_id(body.client_order_id)
+        raise ApiError(
+            status_code=409,
+            error_code="SYMBOL_DISABLED",
+            message=(
+                f"{body.symbol.upper()} is switched off, so no trade was "
+                "placed. Enable it in the trade page to trade it again. "
+                "Closing an existing position is unaffected."
+            ),
+        )
+
+    # 3. Is this underlying already busy? One trade per symbol at a time --
     #    an order still on the book counts, not just a filled position, so a
     #    second click during the seconds before a fill is refused too.
     settings = get_settings()
@@ -802,3 +828,6 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
         )
     finally:
         release_symbol(body.symbol)
+        # The account just changed. Drop the display cache so the page shows
+        # the new order at once rather than the old picture for a few seconds.
+        CACHE.invalidate()

@@ -14,6 +14,7 @@ from api.service.position import (
 from tigeropen.common.consts import SecurityType
 
 from api.service.core.broker import OPEN_ORDERS_LIMITER, ORDERS_LIMITER
+from api.service.core.live_cache import CACHE, POSITIONS_MAX_AGE_SECONDS
 from api.service.market import (
     BidSnapshot,
     QuoteSource,
@@ -94,7 +95,15 @@ def read_positions(
     """
     settings = get_settings()
     supplied_bids = parse_bid_arguments(bid)
-    positions = list_option_positions(get_trade_client())
+    # Cached for DISPLAY only. The guards that decide whether an order may be
+    # placed call list_option_positions directly and always read live -- a
+    # stale read there could let a second position open on a symbol that
+    # already has one.
+    positions, _age = CACHE.get(
+        "positions",
+        lambda: list_option_positions(get_trade_client()),
+        POSITIONS_MAX_AGE_SECONDS,
+    )
 
     rows = []
     total_cost_basis = 0.0
