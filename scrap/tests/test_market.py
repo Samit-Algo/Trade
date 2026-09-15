@@ -101,3 +101,80 @@ class TestIsLowLiquidity:
         assert is_low_liquidity(50, threshold=100) is True
 
 
+
+
+class TestAnEmptyBarIsNotAPrice:
+    """Tiger opens a bar the moment a minute begins, carrying the previous
+    close forward with volume 0. Reading that reports a price nobody traded
+    at, and it lags what the broker's own app shows.
+
+    Measured live on QQQ:
+        00:29  c=5.36  vol=21   <- the real last trade
+        00:30  c=5.36  vol=0    <- carried forward, nothing happened
+    """
+
+    def bars(self, rows):
+        import pandas
+
+        return pandas.DataFrame(rows)
+
+    def fetch(self, rows, monkeypatch):
+        from api.service.market import data
+
+        class FakeClient:
+            def get_option_bars(self, **kwargs):
+                return self.frame
+
+        client = FakeClient()
+        client.frame = self.bars(rows)
+        monkeypatch.setattr(data.OPTION_BARS_LIMITER, "wait", lambda: None)
+        return data.fetch_recent_traded_price(client, "QQQ   260918C00706000")
+
+    def test_an_empty_newest_bar_is_skipped(self, monkeypatch):
+        result = self.fetch([
+            {"time": 1_000_000, "close": 5.36, "volume": 21},
+            {"time": 1_060_000, "close": 5.36, "volume": 0},
+        ], monkeypatch)
+
+        assert result.volume == 21
+        assert result.bar_time_ms == 1_000_000
+
+    def test_several_empty_bars_are_walked_back_through(self, monkeypatch):
+        """A contract that has not traded for minutes still reports its last
+        REAL trade rather than the newest carried-forward close."""
+        result = self.fetch([
+            {"time": 1_000_000, "close": 5.20, "volume": 14},
+            {"time": 1_060_000, "close": 5.20, "volume": 0},
+            {"time": 1_120_000, "close": 5.20, "volume": 0},
+            {"time": 1_180_000, "close": 5.20, "volume": 0},
+        ], monkeypatch)
+
+        assert result.bar_time_ms == 1_000_000
+
+    def test_a_traded_newest_bar_is_used_as_is(self, monkeypatch):
+        result = self.fetch([
+            {"time": 1_000_000, "close": 5.20, "volume": 14},
+            {"time": 1_060_000, "close": 5.41, "volume": 18},
+        ], monkeypatch)
+
+        assert result.price == 5.41
+
+    def test_bars_with_no_volume_column_still_work(self, monkeypatch):
+        """Volume is not guaranteed to be present. Absent, the newest bar is
+        the best available answer -- unknown is not the same as zero."""
+        result = self.fetch([
+            {"time": 1_000_000, "close": 5.20},
+            {"time": 1_060_000, "close": 5.41},
+        ], monkeypatch)
+
+        assert result.price == 5.41
+
+    def test_the_age_is_measured_from_the_bar_that_traded(self, monkeypatch):
+        """Not from the empty one -- otherwise a stale price would report
+        itself as seconds old and read as current."""
+        result = self.fetch([
+            {"time": 1_000_000, "close": 5.36, "volume": 21},
+            {"time": 1_060_000, "close": 5.36, "volume": 0},
+        ], monkeypatch)
+
+        assert result.bar_time_ms == 1_000_000

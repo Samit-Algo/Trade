@@ -843,7 +843,26 @@ def fetch_recent_traded_price(quote_client, identifier: str) -> RecentTrade | No
     if "time" not in bars.columns or "close" not in bars.columns:
         return None
 
-    newest = bars.sort_values("time", ascending=True).iloc[-1]
+    ordered = bars.sort_values("time", ascending=True)
+
+    # The newest bar is often EMPTY -- Tiger opens a bar for the current
+    # minute the moment it begins, carrying the previous close forward with
+    # volume 0. Reading that reports a price nobody traded at, and it lags
+    # whatever the broker's own app shows.
+    #
+    # Measured live:
+    #     00:29  c=5.36  vol=21   <- the real last trade
+    #     00:30  c=5.36  vol=0    <- carried forward, nothing happened
+    #
+    # So walk back to the newest bar that actually TRADED. A bar with no
+    # volume holds no information that the one before it does not.
+    newest = ordered.iloc[-1]
+    for index in range(len(ordered) - 1, -1, -1):
+        candidate = ordered.iloc[index]
+        volume = _read_optional_int(candidate, "volume")
+        if volume is None or volume > 0:
+            newest = candidate
+            break
 
     price = _read_optional_float(newest, "close")
     bar_time_ms = _read_optional_int(newest, "time")
