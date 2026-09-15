@@ -14,6 +14,19 @@ one already made.
 THE SAME GUARD RUNS. sell_option calls assert_order_allowed immediately before
 place_order, exactly as the buy path does. A close is still an order.
 
+THE BRACKET LEGS MUST GO FIRST. A bracketed position has its take-profit and
+stop-loss resting on the book, and those reserve the whole position: Tiger
+answers a sell with "4 shares of your position are reserved for pending
+orders. The maximum you can sell is 0", and the order EXPIRES unfilled. So
+closing means cancelling the legs, then selling.
+
+That order is deliberate and it has a cost: between the cancel and the fill
+the position has no stop. If the sell then fails, the position is left
+UNPROTECTED, and the response says so in as many words rather than reporting
+a tidy failure. Re-attaching the legs automatically was considered and not
+done -- it is a second thing that can fail at the worst moment, and a caller
+who is told plainly can act faster than a retry that also breaks.
+
 ONE THING THIS GETS RIGHT THAT THE FIRST ATTEMPT DID NOT. Everything that can
 fail is done BEFORE submission. Once the order is sent, the response is built
 from values already in hand -- because an exception after place_order returns
@@ -27,13 +40,14 @@ from fastapi import APIRouter, Request
 
 from api.service.contract import find_option_contract
 from api.service.core.safety import build_order_record, write_order_record
-from api.service.order import sell_option, snap_down
+from api.service.order import cancel_order, sell_option, snap_down
 from api.service.position import list_option_positions
 
 from ..errors import ApiError
 from ..order_rules import build_price_only_quote
 from ..schemas import ClosePositionRequest, ClosePositionResponse
 from ..shared import get_quote_client, get_settings, get_trade_client
+from .positions import fetch_working_orders
 
 router = APIRouter(tags=["positions"])
 
@@ -103,6 +117,49 @@ def resolve_sell_limit(requested: float, tick_size: float) -> float:
         )
 
     return limit
+
+
+def cancel_resting_legs(identifier: str, trade_client) -> tuple[list, list]:
+    """Cancel the bracket legs holding this position, so it can be sold.
+
+    They reserve the whole position: with a take-profit and a stop-loss on the
+    book, Tiger refuses a sell with "the maximum you can sell is 0" and the
+    order expires unfilled. Cancelling them is therefore part of closing, not
+    an optimisation.
+
+    A leg that will not cancel is NOT fatal here. The sell is attempted anyway
+    and will fail on its own if the reservation still stands -- which reports
+    the real problem, rather than this guessing at it.
+
+    Args:
+        identifier: The full option identifier.
+        trade_client: A tigeropen TradeClient.
+
+    Returns:
+        A pair of (what was cancelled, what would not cancel), each a list of
+        short descriptions for the response.
+    """
+    cancelled, stubborn = [], []
+
+    for leg in fetch_working_orders(identifier):
+        if leg.role not in ("TAKE_PROFIT", "STOP_LOSS"):
+            continue
+
+        description = f"{leg.role} {leg.order_type or ''} @ {leg.price}".strip()
+
+        try:
+            order_id = int(leg.order_id_text)
+        except (TypeError, ValueError):
+            stubborn.append(f"{description} (unreadable id)")
+            continue
+
+        try:
+            cancel_order(trade_client, order_id)
+            cancelled.append(description)
+        except Exception as error:  # noqa: BLE001 -- the sell reports the truth
+            stubborn.append(f"{description} ({error})")
+
+    return cancelled, stubborn
 
 
 @router.post("/positions/close", response_model=ClosePositionResponse)
@@ -188,6 +245,14 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
         record["client_host"] = request.client.host if request.client else None
         write_order_record(record)
 
+    # ---- the legs go first, and the position is exposed from here ---------
+    #
+    # Cancelling frees the contracts the bracket had reserved. Until the sell
+    # fills there is no stop on this position, which is the price of closing
+    # it at all -- and it is why a failed sell below says so explicitly.
+
+    cancelled_legs, stubborn_legs = cancel_resting_legs(identifier, trade_client)
+
     # ---- from here the order can reach the broker -------------------------
     #
     # FAILURE AFTER SUBMISSION. Anything raising below this line returns an
@@ -208,6 +273,46 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
         on_submitted=record_submission,
     )
 
+    # Nothing sold, and the legs are gone: the position is now unprotected.
+    # Said plainly, because the caller has to act on it.
+    sold = outcome.filled_quantity or 0
+    # True whenever contracts are left holding with their legs gone -- a
+    # failed sell, a partial fill, or a deliberate partial close.
+    unprotected = bool(cancelled_legs) and (held - sold) > 0
+
+    if unprotected and sold <= 0:
+        warning = (
+            f"NOTHING SOLD, AND THIS POSITION NOW HAS NO STOP LOSS. The "
+            f"bracket legs were cancelled to free the contracts "
+            f"({'; '.join(cancelled_legs)}), then the sell at "
+            f"{limit_price:.2f} came back {outcome.status} without filling. "
+            f"{held} contract(s) are still held with nothing protecting them "
+            f"-- sell again at a lower limit, or re-place a stop, now."
+        )
+    elif sold and sold < quantity:
+        warning = (
+            f"Only {sold:g} of {quantity} sold. {held - sold:g} contract(s) "
+            f"are still held with NO STOP LOSS -- the bracket legs were "
+            f"cancelled to place this order and cover the whole position, so "
+            f"they do not come back for the remainder."
+        )
+    elif cancelled_legs and (held - sold) > 0:
+        # A deliberate partial close. The legs covered the WHOLE position, so
+        # cancelling them to free part of it leaves the rest bare. Worth
+        # saying: the sell succeeded exactly as asked, and the consequence is
+        # still that something is now unprotected.
+        warning = (
+            f"Sold {sold:g}. The remaining {held - sold:g} contract(s) have "
+            f"NO STOP LOSS: the cancelled legs covered all {held}, and "
+            f"closing part of the position does not re-place them."
+        )
+    else:
+        warning = None
+
+    if stubborn_legs:
+        note = "Some legs would not cancel: " + "; ".join(stubborn_legs)
+        warning = f"{warning} {note}" if warning else note
+
     return ClosePositionResponse(
         identifier=identifier,
         underlying=underlying,
@@ -223,4 +328,7 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
         filled_quantity=outcome.filled_quantity,
         average_fill_price=outcome.average_fill_price,
         cash_received=estimate.total_cash,
+        legs_cancelled=cancelled_legs,
+        position_unprotected=unprotected,
+        warning=warning,
     )

@@ -1089,10 +1089,34 @@ ${o.identifier}
       return;
     }
 
-    verdict.className = "verdict";
+    // A 200 does NOT mean it sold. Tiger accepts the order and it can still
+    // expire unfilled -- which is what happens when the bracket legs are
+    // holding the contracts, and it is easy to miss in a one-line status.
+    const sold = d.filled_quantity || 0;
+
+    if (d.position_unprotected) {
+      verdict.className = "verdict bad";
+      verdict.innerHTML = sold > 0
+        ? `<strong>SOLD ${sold} — BUT THE REST HAS NO STOP LOSS.</strong><br>${d.warning || ""}`
+        : `<strong>NOTHING SOLD — NO STOP LOSS ON THIS POSITION.</strong><br>${d.warning || ""}`;
+      row.querySelectorAll(".qs-btn").forEach(b => b.disabled = false);
+      return;
+    }
+
+    if (sold <= 0) {
+      verdict.className = "verdict bad";
+      verdict.textContent =
+        `${d.order_status} — nothing filled at ${money(d.limit_price)}. ` +
+        `Try a lower price.`;
+      row.querySelectorAll(".qs-btn").forEach(b => b.disabled = false);
+      return;
+    }
+
+    verdict.className = "verdict" + (sold < d.quantity_closed ? " bad" : "");
     verdict.textContent =
-      `${d.order_status} — ${d.filled_quantity} of ${d.quantity_closed} filled` +
-      (d.average_fill_price != null ? ` at ${money(d.average_fill_price)}` : "");
+      `${d.order_status} — ${sold} of ${d.quantity_closed} sold` +
+      (d.average_fill_price != null ? ` at ${money(d.average_fill_price)}` : "") +
+      (d.warning ? ` — ${d.warning}` : "");
 
     // The position and the history have both changed.
     await loadHistory();
