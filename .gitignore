@@ -21,6 +21,10 @@ tiger_openapi_token.properties
 logs/
 *.log
 
+# Per-symbol enable/disable and bracket overrides, set from the page. This
+# machine's operating state, like .env -- not part of the project.
+symbol_settings.json
+
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------

@@ -65,6 +65,57 @@ class ExpiryOut(BaseModel):
     )
 
 
+class SymbolSettingIn(BaseModel):
+    """One symbol's settings, as the page saves them.
+
+    Both percentages are optional and independent. Null means "fall back" --
+    to this symbol's .env setting, then to the global default -- so clearing a
+    box in the page restores the configured value rather than zeroing it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=True,
+        description="False refuses NEW trades on this symbol, for every "
+        "caller. Closing an existing position is unaffected.",
+    )
+    take_profit: float | None = Field(
+        default=None, gt=0, le=1000,
+        description="Percent. Null falls back to .env, then the default.",
+    )
+    stop_loss: float | None = Field(
+        default=None, gt=0, lt=100,
+        description="Percent. Null falls back to .env, then the default.",
+    )
+
+
+class SymbolSettingOut(SymbolSettingIn):
+    """One symbol's settings, with what it actually resolves to."""
+
+    symbol: str
+    effective_take_profit: float = Field(
+        description="The percentage a trade would really use, after the UI "
+        "value, this symbol's .env setting and the default are considered."
+    )
+    effective_stop_loss: float
+    take_profit_source: str = Field(
+        description="Which of the three set it, so a surprising bracket is "
+        "traceable without reading three files."
+    )
+    stop_loss_source: str
+
+
+class SymbolSettingsResponse(BaseModel):
+    """Every tradable symbol, and how it is currently configured."""
+
+    symbols: list[SymbolSettingOut]
+    default_take_profit: float = Field(
+        description="TAKE_PROFIT_PERCENT, used by any symbol with nothing set."
+    )
+    default_stop_loss: float
+
+
 class ClosePositionRequest(BaseModel):
     """Which held position to sell, and at what price.
 
@@ -816,6 +867,32 @@ class OrderHistoryRow(BaseModel):
         description="Filled to exited -- how long the position was actually "
         "held. None while still open.",
     )
+    held_open_seconds: float | None = Field(
+        default=None,
+        description="For a position still OPEN: filled to NOW, measured on "
+        "the server from the broker's own fill timestamp. The page used to "
+        "count from when it first NOTICED the fill, which was wrong by a poll "
+        "interval and by however long the position had existed before the tab "
+        "was opened.",
+    )
+    current_price: float | None = Field(
+        default=None,
+        description="What the contract last traded at, for a position still "
+        "open. Cached a few seconds: the page polls every second, and one "
+        "broker call per position per second exceeds the documented limit.",
+    )
+    current_price_age_seconds: float | None = Field(
+        default=None,
+        description="How long ago the contract last TRADED at that price. "
+        "This is not a bid -- on a quiet option it can be a minute old, and "
+        "a sell limit set from it may sit unfilled.",
+    )
+    unrealised_pnl: float | None = Field(
+        default=None,
+        description="Worth now minus paid, for an open position. Gross of "
+        "commission, like realised_pnl.",
+    )
+    unrealised_pnl_percent: float | None = Field(default=None)
 
 
 class OrderHistoryResponse(BaseModel):
