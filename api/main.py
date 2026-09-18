@@ -36,7 +36,8 @@ from api.service.core.config import ConfigError
 from .errors import ApiError, classify_exception
 from .shared import get_settings
 from .routes import (
-    close, health, market, orders, positions, symbol_settings, trade, ui
+    close, export, health, market, orders, positions, symbol_settings,
+    trade, ui
 )
 
 #: Paths reachable without a key. Deliberately tiny: only the liveness check,
@@ -89,6 +90,9 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(market.router)
     app.include_router(positions.router)
+    # Before orders: /orders/{order_id} would otherwise match
+    # /orders/export and try to read "export" as an integer.
+    app.include_router(export.router)
     app.include_router(orders.router)
     app.include_router(trade.router)
     app.include_router(close.router)

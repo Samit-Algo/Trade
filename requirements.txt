@@ -10,3 +10,6 @@ pytest
 # HTTP API (Phase 8)
 fastapi
 uvicorn[standard]
+
+# Order-history export to .xlsx (api/service/export)
+openpyxl
