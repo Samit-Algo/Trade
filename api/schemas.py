@@ -831,8 +831,8 @@ class OrderHistoryRow(BaseModel):
     status: str
 
     outcome: Literal[
-        "TOOK_PROFIT", "STOPPED_OUT", "CLOSED_MANUALLY", "STILL_OPEN",
-        "NOT_FILLED", "CANCELLED", "EXPIRED", "UNKNOWN",
+        "TOOK_PROFIT", "STOPPED_OUT", "CLOSED_MANUALLY", "CLOSED",
+        "STILL_OPEN", "NOT_FILLED", "CANCELLED", "EXPIRED", "UNKNOWN",
     ]
     outcome_note: str = Field(description="One sentence a human can read.")
     exit_price: float | None = Field(description="What the closing leg filled at.")

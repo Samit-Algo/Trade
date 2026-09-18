@@ -11,13 +11,14 @@ filled -- is made by the same library functions the CLI calls.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Query
 from tigeropen.common.consts import SecurityType
 
 from api.service.market import fetch_recent_traded_price
 from api.service.core.broker import ORDERS_LIMITER
+from api.service.export import realised_by_contract, realised_total
 from api.service.core.live_cache import (
     CACHE,
     ORDERS_MAX_AGE_SECONDS,
@@ -129,6 +130,21 @@ def read_order_history(
 
         parents.append(order)
 
+    # What the broker says is HELD, which is the authority on whether a row
+    # is open. Read once for the whole listing rather than per row.
+    try:
+        positions, _age = CACHE.get(
+            "positions",
+            lambda: list_option_positions(get_trade_client()),
+            POSITIONS_MAX_AGE_SECONDS,
+        )
+        held_now = {p.identifier.strip() for p in positions or []}
+        holdings_known = True
+    except Exception:  # noqa: BLE001
+        # Unknown is not the same as flat. Without this the whole history
+        # would flip to CLOSED on one failed read.
+        held_now, holdings_known = set(), False
+
     rows = []
     for parent in parents:
         legs = legs_by_parent.get(getattr(parent, "id", None), [])
@@ -141,7 +157,14 @@ def read_order_history(
             sell for sell in manual_sells.get(identifier_for_match, [])
             if closed_after(parent, sell)
         ]
-        outcome, note, exit_price = describe_outcome(parent, legs, closes)
+        # Assume held when the holdings read failed, so a broker hiccup
+        # cannot mark a live position closed.
+        still_held = (
+            identifier_for_match.strip() in held_now if holdings_known else True
+        )
+        outcome, note, exit_price = describe_outcome(
+            parent, legs, closes, still_held=still_held
+        )
 
         identifier = str(getattr(parent, "contract", "")).split("/")[0]
         # parse_identifier returns a 4-tuple, not an object. This is its
@@ -286,13 +309,28 @@ def read_order_history(
     rows.sort(key=lambda r: r.placed_at or datetime.min.replace(tzinfo=timezone.utc),
               reverse=True)
 
+    # THE TOTAL COMES FROM THE FILLS, not from adding the rows up.
+    #
+    # Each row pairs its BUY with the SELL that appears to have closed it, and
+    # that pairing over-counts once a contract is traded more than once in a
+    # session: two buys can be handed the same later sell's exit price.
+    # Measured against the account's own trade-history export, a real +451
+    # summed to +1153 this way, with NVDA 220 CALL alone inflated by +420.
+    #
+    # Cash in from sells minus cash out for buys needs no pairing and cannot
+    # be fooled. It is what the broker computes and what its Daily P&L shows.
+    # See service/export/realised.py.
+    total_realised = _total_from_fills(rows)
+    if total_realised is None:
+        total_realised = round(sum(r.realised_pnl or 0 for r in rows), 2)
+
     return OrderHistoryResponse(
         orders=rows,
         took_profit=sum(1 for r in rows if r.outcome == "TOOK_PROFIT"),
         stopped_out=sum(1 for r in rows if r.outcome == "STOPPED_OUT"),
         closed_manually=sum(1 for r in rows if r.outcome == "CLOSED_MANUALLY"),
         still_open=sum(1 for r in rows if r.outcome == "STILL_OPEN"),
-        total_realised_pnl=round(sum(r.realised_pnl or 0 for r in rows), 2),
+        total_realised_pnl=total_realised,
     )
 
 
@@ -459,6 +497,40 @@ def live_price(identifier: str) -> tuple[float | None, float | None]:
     return recent.price, recent.age_seconds
 
 
+def _total_from_fills(rows) -> float | None:
+    """Total the period's P&L the way the broker does, from the fills.
+
+    Covers the days the listed orders span, so the number under a filtered
+    table still answers for what is on screen.
+
+    Args:
+        rows: The shaped history rows, used only for their date range.
+
+    Returns:
+        The total, gross of charges, or None when the fills cannot be read --
+        in which case the caller falls back to summing the rows, which is
+        wrong for a repeatedly traded contract but better than nothing.
+    """
+    days = [r.placed_at.date() for r in rows if r.placed_at]
+    if not days:
+        return 0.0
+
+    try:
+        settings = get_settings()
+        ORDERS_LIMITER.wait()
+        filled = get_trade_client().get_filled_orders(
+            account=settings.account,
+            sec_type=SecurityType.OPT,
+            start_date=min(days).isoformat(),
+            # A day past the end: the broker treats end_date as exclusive in
+            # places, and the market-day filter does the real cutting.
+            end_date=(max(days) + timedelta(days=1)).isoformat(),
+        )
+        return realised_total(realised_by_contract(filled, min(days), max(days)))
+    except Exception:  # noqa: BLE001 -- see the docstring
+        return None
+
+
 def closed_after(parent, sell) -> bool:
     """Could this SELL have closed this BUY?
 
@@ -488,7 +560,7 @@ def closed_after(parent, sell) -> bool:
     return sell_placed >= entry_filled
 
 
-def describe_outcome(parent, legs, closes=()) -> tuple[str, str, float | None]:
+def describe_outcome(parent, legs, closes=(), still_held=True) -> tuple[str, str, float | None]:
     """Work out what became of one bracketed order.
 
     Tiger never says "the stop fired". It reports a status per order, and the
@@ -506,6 +578,9 @@ def describe_outcome(parent, legs, closes=()) -> tuple[str, str, float | None]:
         parent: The entry order.
         legs: Its attached legs.
         closes: Standalone SELL orders on the same contract.
+        still_held: Whether the BROKER reports this contract as held. False
+            means the position is gone however it left, so no branch below may
+            answer STILL_OPEN -- see the note on it.
 
     Returns:
         A triple of (outcome code, a readable sentence, the exit fill price).
@@ -555,6 +630,27 @@ def describe_outcome(parent, legs, closes=()) -> tuple[str, str, float | None]:
             "CLOSED_MANUALLY",
             f"Closed by hand at {exit_price:,.2f}, not by either exit leg.",
             exit_price,
+        )
+
+    # NOTHING BELOW MAY SAY OPEN IF THE BROKER SAYS IT IS NOT HELD.
+    #
+    # Everything above reconstructs what became of an order from the order
+    # records, and that reconstruction has limits. A position can leave by a
+    # route those records do not show as a matching sell: an expiry, an
+    # assignment, a close from the broker's own app, or -- seen live -- a
+    # manual sell and a take-profit leg filling in the SAME INSTANT, which
+    # sold two contracts twice and left a short that a later buy flattened.
+    #
+    # get_positions is not a reconstruction. It is what is held. So it decides
+    # this one thing, and the order records are left to explain HOW a position
+    # closed rather than WHETHER it did.
+    if not still_held:
+        return (
+            "CLOSED",
+            "No longer held. The broker reports no position in this contract, "
+            "and no closing order on it could be matched -- it may have been "
+            "closed from the broker's app, expired, or been assigned.",
+            None,
         )
 
     if legs:

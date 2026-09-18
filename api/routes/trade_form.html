@@ -105,6 +105,15 @@
            font-variant-numeric:tabular-nums; }
   .qs-note { font-size:11px; color:var(--faint); }
   .qs-age { color:var(--faint); font-size:11px; }
+  .exportbox { background:var(--card); border:1px solid var(--line);
+               border-radius:8px; padding:12px 14px; margin-bottom:14px; }
+  .exportrow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .exportrow label { display:flex; align-items:center; gap:5px; margin:0;
+                     font-size:12.5px; color:var(--ink); }
+  .exportrow input[type=radio] { width:auto; margin:0; }
+  .exportrow input[type=date] { width:auto; margin:0; padding:5px 8px;
+                                font-size:12.5px; }
+  .exportrow input[type=date]:disabled { opacity:.4; }
   .daybar .verdict { font-size:13px; font-weight:500; }
   .daybar .verdict.good { color:var(--good); }
   .daybar .verdict.bad  { color:var(--bad); }
@@ -410,6 +419,29 @@
         <input type="date" id="histday">
         <button type="button" class="btn-small" id="histdayclear">All dates</button>
         <span class="verdict" id="histdayverdict"></span>
+        <button type="button" class="btn-small" id="histexport"
+                style="margin-left:auto"
+                title="Download these orders as a spreadsheet">
+          Export to Excel</button>
+      </div>
+
+      <!-- Asked for on the way out rather than as a persistent form: the
+           export is occasional, and a date range sitting on screen would
+           read as a filter on the table below, which it is not. -->
+      <div class="exportbox" id="exportbox" hidden>
+        <div class="qs-head">Export to Excel</div>
+        <div class="exportrow">
+          <label><input type="radio" name="exportwhen" value="today" checked>
+            Today</label>
+          <label><input type="radio" name="exportwhen" value="range">
+            Date range</label>
+          <input type="date" id="exportfrom" disabled>
+          <span class="livesub">to</span>
+          <input type="date" id="exportto" disabled>
+          <button type="button" class="btn-small" id="exportgo">Download</button>
+          <button type="button" class="btn-small" id="exportcancel">Cancel</button>
+          <span class="verdict" id="exportverdict"></span>
+        </div>
       </div>
       <div class="sum" id="histsummary"></div>
       <div class="cols">
@@ -726,6 +758,7 @@ function outcomeTag(o) {
     TOOK_PROFIT: ["t-prof", "TAKE PROFIT"],
     STOPPED_OUT: ["t-stop", "STOP LOSS"],
     CLOSED_MANUALLY: ["t-stop", "CLOSED BY HAND"],
+    CLOSED:      ["t-none", "CLOSED"],
     STILL_OPEN:  ["t-open", "OPEN"],
     NOT_FILLED:  ["t-none", "NOT FILLED"],
     CANCELLED:   ["t-none", "CANCELLED"],
@@ -792,7 +825,24 @@ function renderHistory(options = {}) {
 
   // Totals follow the filter. A day's P&L is the point of picking a day.
   const count = (code) => rows.filter(o => o.outcome === code).length;
-  const pnl = rows.reduce((total, o) => total + (o.realised_pnl || 0), 0);
+
+  // THE SERVER'S TOTAL, not the sum of these rows.
+  //
+  // Each row pairs its buy with the sell that appears to have closed it, and
+  // that pairing over-counts once a contract is traded more than once: two
+  // buys can be handed the same later sell's exit price. Adding the rows up
+  // showed +1153 against a real +451.
+  //
+  // The server computes it from the fills instead -- cash in minus cash out,
+  // which needs no pairing. It covers every order it returned, so it can only
+  // be used when no day filter is on; with a filter the rows are all there is,
+  // and the tile says so rather than showing a number for the wrong period.
+  const filtered = Boolean(day);
+  const pnl = filtered
+    ? rows.reduce((total, o) => total + (o.realised_pnl || 0), 0)
+    : (historySummary && historySummary.total_realised_pnl != null
+        ? historySummary.total_realised_pnl
+        : rows.reduce((total, o) => total + (o.realised_pnl || 0), 0));
   const up = pnl >= 0;
   // Built ONCE, then only the numbers are written. Replacing innerHTML every
   // second destroys and rebuilds every node, which is the flicker: the boxes
@@ -824,6 +874,21 @@ function renderHistory(options = {}) {
   setTile("so", String(count("STOPPED_OUT")));
   setTile("open", String(count("STILL_OPEN")));
   setTile("pnl", (up ? "+" : "") + money(pnl), up ? "pos" : "neg");
+
+  // A filtered day is summed from the rows, which over-counts a contract
+  // traded repeatedly. Better to say so than to print a number that quietly
+  // disagrees with the broker.
+  const pnlLabel = document.querySelector("#sum-pnl + .l");
+  if (pnlLabel) {
+    pnlLabel.innerHTML = filtered
+      ? 'Realised P&amp;L <span style="opacity:.7">(rows)</span>'
+      : "Realised P&amp;L";
+    pnlLabel.title = filtered
+      ? "Summed from the rows on screen. A contract traded several times in "
+        + "one day is over-counted; clear the date filter for the broker's "
+        + "own figure."
+      : "From the fills: cash in minus cash out, the broker's own basis.";
+  }
   setTile("hw", avgHeld(rows, "TOOK_PROFIT"));
   setTile("hl", avgHeld(rows, "STOPPED_OUT"));
 
@@ -946,6 +1011,112 @@ async function loadHistory(options = {}) {
     if (!quiet) list.innerHTML = `<div class="placeholder">${e.message}</div>`;
   }
 }
+
+/* ---------- export to Excel ------------------------------------------ */
+/* Fetched rather than linked, because every route but /health needs the
+   X-API-Key header and a plain <a href> cannot send one. That means the file
+   arrives as a blob and the download is triggered from it. */
+
+function exportRange() {
+  const useRange = document.querySelector(
+    'input[name="exportwhen"]:checked').value === "range";
+
+  if (!useRange) return {};
+
+  const from = $("exportfrom").value;
+  const to = $("exportto").value;
+  if (!from) return null;
+
+  // An end before a start is refused by the server too; caught here so the
+  // reader is told without a round trip.
+  return { start: from, end: to || from };
+}
+
+$("histexport").onclick = () => {
+  const box = $("exportbox");
+  box.hidden = !box.hidden;
+  if (!box.hidden && !$("exportfrom").value) {
+    // Default the range to the day being filtered, or today.
+    const day = $("histday").value || marketToday();
+    $("exportfrom").value = day;
+    $("exportto").value = day;
+  }
+};
+
+$("exportcancel").onclick = () => { $("exportbox").hidden = true; };
+
+document.querySelectorAll('input[name="exportwhen"]').forEach(radio => {
+  radio.onchange = () => {
+    const useRange = document.querySelector(
+      'input[name="exportwhen"]:checked').value === "range";
+    $("exportfrom").disabled = !useRange;
+    $("exportto").disabled = !useRange;
+  };
+});
+
+$("exportgo").onclick = async () => {
+  const button = $("exportgo");
+  const verdict = $("exportverdict");
+  const range = exportRange();
+
+  if (range === null) {
+    verdict.className = "verdict bad";
+    verdict.textContent = "Pick a start date.";
+    return;
+  }
+
+  const query = new URLSearchParams(range).toString();
+
+  button.disabled = true;
+  verdict.className = "verdict";
+  verdict.textContent = "building…";
+
+  try {
+    const r = await fetch("/orders/export" + (query ? "?" + query : ""),
+                          { headers: hdrs() });
+
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      verdict.className = "verdict bad";
+      verdict.textContent = d.message || ("HTTP " + r.status);
+      return;
+    }
+
+    const count = r.headers.get("X-Order-Count");
+    if (count === "0") {
+      // The file would open empty, which looks like a failure. Say so
+      // instead of handing over a blank spreadsheet.
+      verdict.className = "verdict bad";
+      verdict.textContent = "No orders in that period.";
+      return;
+    }
+
+    // The filename the server chose, so one place decides how it is named.
+    const disposition = r.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    const name = match ? match[1] : "orders.xlsx";
+
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Freed once the browser has taken it; leaking these holds the whole
+    // file in memory for the life of the tab.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    verdict.className = "verdict";
+    verdict.textContent = `${count} order(s) — ${name}`;
+  } catch (e) {
+    verdict.className = "verdict bad";
+    verdict.textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+};
 
 $("histday").onchange = renderHistory;
 $("histdayclear").onclick = () => { $("histday").value = ""; renderHistory(); };
@@ -1271,6 +1442,7 @@ function showOrder(o) {
     TOOK_PROFIT: ["b-good", "TAKE PROFIT TRIGGERED"],
     STOPPED_OUT: ["b-bad",  "STOP LOSS TRIGGERED"],
     CLOSED_MANUALLY: ["b-bad", "CLOSED BY HAND — not by either exit leg"],
+    CLOSED:      ["b-warn", "CLOSED — no longer held"],
     STILL_OPEN:  ["b-warn", "STILL OPEN — neither exit has fired"],
     NOT_FILLED:  ["b-warn", "NOT FILLED — nothing was bought"],
     CANCELLED:   ["b-warn", "CANCELLED"],

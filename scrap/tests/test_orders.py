@@ -372,3 +372,87 @@ class TestTheBrokerPriceIsPreferred:
         monkeypatch.setattr(orders.CACHE, "get", boom)
 
         assert orders.position_market_price("QQQ   260918C00706000") is None
+
+
+class TestTheBrokerDecidesWhatIsOpen:
+    """Reconstructing "still open" from order records is guesswork.
+
+    A position can leave by a route those records do not show as a matching
+    sell: an expiry, an assignment, a close from the broker's own app, or --
+    seen live -- a manual sell and a take-profit leg filling in the SAME
+    instant, which sold the position twice and left a short that a later buy
+    flattened. Every one of those left a row claiming to be open, with a sell
+    button offering to close something that was not there.
+
+    get_positions is not a reconstruction. It is what is held.
+    """
+
+    def order(self, **kwargs):
+        from types import SimpleNamespace
+
+        base = {"status": "FILLED", "filled": 2, "avg_fill_price": 3.73}
+        base.update(kwargs)
+        return SimpleNamespace(**base)
+
+    def test_a_filled_entry_not_held_reads_closed(self):
+        from api.routes.orders import describe_outcome
+
+        outcome, note, _ = describe_outcome(
+            self.order(), legs=[], closes=(), still_held=False
+        )
+
+        assert outcome == "CLOSED"
+        assert "no longer held" in note.lower()
+
+    def test_a_filled_entry_still_held_reads_open(self):
+        from api.routes.orders import describe_outcome
+
+        outcome, _, _ = describe_outcome(
+            self.order(), legs=[], closes=(), still_held=True
+        )
+
+        assert outcome == "STILL_OPEN"
+
+    def test_holdings_do_not_override_a_leg_that_fired(self):
+        """A take-profit that filled is a better answer than "closed": it says
+        HOW it closed, and carries the exit price."""
+        from api.routes.orders import describe_outcome
+
+        leg = self.order(order_type="LMT", avg_fill_price=3.79)
+        outcome, _, exit_price = describe_outcome(
+            self.order(), legs=[leg], closes=(), still_held=False
+        )
+
+        assert outcome == "TOOK_PROFIT"
+        assert exit_price == 3.79
+
+    def test_holdings_do_not_override_a_matched_manual_sell(self):
+        from api.routes.orders import describe_outcome
+
+        sell = self.order(avg_fill_price=3.69)
+        outcome, _, exit_price = describe_outcome(
+            self.order(), legs=[], closes=[sell], still_held=False
+        )
+
+        assert outcome == "CLOSED_MANUALLY"
+        assert exit_price == 3.69
+
+    def test_an_unfilled_entry_is_unaffected(self):
+        """Nothing was ever bought, so holdings say nothing about it."""
+        from api.routes.orders import describe_outcome
+
+        outcome, _, _ = describe_outcome(
+            self.order(filled=0, status="CANCELLED"), legs=[], closes=(),
+            still_held=False,
+        )
+
+        assert outcome == "CANCELLED"
+
+    def test_the_default_assumes_held(self):
+        """So a caller that cannot read holdings does not mark live positions
+        closed -- unknown is not the same as flat."""
+        from api.routes.orders import describe_outcome
+
+        outcome, _, _ = describe_outcome(self.order(), legs=[], closes=())
+
+        assert outcome == "STILL_OPEN"
