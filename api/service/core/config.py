@@ -147,12 +147,13 @@ class Settings:
 
 
 #: The settings being read right now. `load_settings` points this at the
-#: market's own EnvReader for the duration of one load, so the ten `_get_*`
-#: helpers below do not each need a reader passed to them.
+#: file's EnvReader for the duration of one load, so the ten `_get_*` helpers
+#: below do not each need a reader passed to them.
 #:
 #: It is a module-level value because the helpers are module-level functions,
-#: and it is ALWAYS restored in a `finally` -- see `load_settings`. Two
-#: markets never load at the same moment on the same thread.
+#: and it is ALWAYS restored in a `finally` -- see `load_settings`, which is
+#: what keeps a nested or failed load from leaving it pointing at the wrong
+#: file.
 _active_reader: EnvReader | None = None
 
 
@@ -162,9 +163,9 @@ def _get(name: str, default: str = "") -> str:
     Copy-pasted account IDs routinely arrive with a trailing space, which would
     otherwise silently fail the exact-match paper account check.
 
-    Reads from whichever market is currently being loaded. Outside a load it
-    falls back to the real environment, which is what the module-level
-    defaults below expect.
+    Reads from the file currently being loaded. Outside a load it falls back
+    to the real environment, which is what the module-level defaults below
+    expect.
     """
     if _active_reader is not None:
         return _active_reader.get(name, default)
