@@ -1,26 +1,20 @@
-"""Reading one market's .env WITHOUT putting it in the shared environment.
+"""Reading a .env WITHOUT copying it into the shared environment.
 
-THE PROBLEM. `load_dotenv()` copies a .env file into `os.environ`, which is a
-single namespace shared by the whole program. That is fine with one market.
-With two it is a trap, because the two .env files use some of the SAME names
-to mean DIFFERENT things:
+THE PROBLEM WITH load_dotenv. It copies the file into `os.environ`, which is
+one namespace shared by the whole program. Two consequences, both unwanted:
 
-    US .env      MAX_TRADE_CASH=800      dollars
-    India .env   MAX_TRADE_CASH=10000    rupees
+  - Settings leak. Every name in .env becomes visible to every library in the
+    process, and to anything that shells out. A file that holds an API key
+    and an account number should not be spread that widely to be read once.
 
-`load_dotenv` does not overwrite a name that is already set, so whichever file
-is loaded FIRST wins. Load the US file first and India believes its limit is
-800 RUPEES -- roughly a tenth of one lot -- and refuses nearly every trade.
-Load them the other way round and the US cap silently becomes $10,000.
+  - It cannot be undone. `load_dotenv` does not overwrite a name that is
+    already set, so once a value is in `os.environ` a later read cannot
+    replace it. A test that wants different settings has to unpick the
+    environment by hand, and whatever it misses leaks into the next test.
 
-Worse, settings are built when a market is first used, so WHICH market wins
-can change from one restart to the next. That is the kind of bug that looks
-like the broker misbehaving.
-
-THE FIX. `dotenv_values()` parses a file and hands it back as a plain dict
-without touching `os.environ`. Each market keeps its values in its own box.
-The eleven shared names stop colliding because they are never in the same
-place at the same time.
+THE FIX. `dotenv_values()` parses a file and hands it back as a plain dict,
+leaving `os.environ` alone. The values live in an EnvReader that is passed
+where it is needed and thrown away afterwards, so nothing outlives the read.
 
 WHAT STILL OVERRIDES A FILE. A real environment variable, if one is set. That
 order -- real environment first, then the file -- is what lets a container or
@@ -37,17 +31,16 @@ from dotenv import dotenv_values
 
 
 class EnvReader:
-    """One market's settings, read from its own file.
+    """One .env file's settings, held in a box of their own.
 
-    Every `load_settings` uses one of these instead of reaching into
-    `os.environ` directly. Two markets therefore hold two readers, and neither
-    can see the other's values.
+    `load_settings` uses one of these instead of reaching into `os.environ`
+    directly, so the values go where they are needed and nowhere else.
 
     Lookup order for any name:
 
       1. A real environment variable, when one is set. Lets a container or a
          test override without editing a file.
-      2. This market's .env file.
+      2. The .env file this reader was built from.
       3. The default passed in by the caller.
     """
 
