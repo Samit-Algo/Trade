@@ -1,0 +1,38 @@
+# How this project is built and tested.
+#
+# Neither backend had one of these files. It is added now, BEFORE any folder
+# moves, so that packaging is settled while paths are still unchanged -- one
+# change at a time is easier to undo than two tangled together.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tiger-options-backend"
+version = "8.0"
+description = "HTTP access to US options through Tiger Brokers."
+requires-python = ">=3.11"
+
+dependencies = [
+    "tigeropen",
+    "python-dotenv",
+    "fastapi",
+    "uvicorn[standard]",
+    "openpyxl",
+    "pandas",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["api"]
+
+[tool.pytest.ini_options]
+# Where the tests live. Without this you must type the path every time.
+testpaths = ["scrap/tests"]
+
+# Show the reason a test was skipped, and make an unexpected pass a failure
+# rather than a quiet success.
+addopts = "-ra --strict-markers"
