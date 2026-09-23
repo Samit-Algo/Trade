@@ -25,6 +25,9 @@ logs/
 # machine's operating state, like .env -- not part of the project.
 symbol_settings.json
 
+# The clock-following bracket schedule, when changed from the page.
+time_bracket_settings.json
+
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------

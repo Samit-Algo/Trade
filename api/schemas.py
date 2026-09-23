@@ -116,6 +116,103 @@ class SymbolSettingsResponse(BaseModel):
     default_stop_loss: float
 
 
+class TimeBracketWindowOut(BaseModel):
+    """One window of the clock-following schedule, as the page shows it."""
+
+    minutes: int | None = Field(
+        description="Where this window ends, in minutes from the start. "
+        "Null for the last window, which runs to the close."
+    )
+    take_profit: float
+    stop_loss: float
+
+
+class TimeBracketSettingIn(BaseModel):
+    """The schedule, as the page saves it.
+
+    Saved whole: a timezone, a start and a window table only mean anything
+    together, so overriding one and leaving the others on .env would produce
+    a schedule nobody wrote.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="False leaves brackets exactly as they were before this "
+        "feature existed. Per-symbol values are unaffected either way.",
+    )
+    timezone: str = Field(
+        default="Asia/Kolkata",
+        description="An IANA name such as Asia/Kolkata or Asia/Singapore, "
+        "NOT an abbreviation like IST. Only changes how times are displayed "
+        "and how a fixed start is read; MARKET_OPEN is the same instant "
+        "everywhere.",
+    )
+    start: str = Field(
+        default="MARKET_OPEN",
+        description="MARKET_OPEN to follow the US session open, which keeps "
+        "up with US daylight saving on its own, or a 24-hour time such as "
+        "19:00 to pin it.",
+    )
+    windows: str = Field(
+        default="45:20:20, *:5:10",
+        description="minutes:take_profit:stop_loss entries, earliest first, "
+        "the last using * for the rest of the session. "
+        "'45:20:20, *:5:10' means 20/20 for the first 45 minutes, then 5/10.",
+    )
+
+
+class TimeBracketSettingOut(BaseModel):
+    """The schedule in force, and what it means right now."""
+
+    enabled: bool
+    timezone: str
+    start: str
+    windows: str
+    parsed_windows: list[TimeBracketWindowOut] = Field(
+        description="The window table parsed out, so the page can render a "
+        "row per window without parsing the string itself."
+    )
+    source: str = Field(
+        description="'the UI' or '.env' -- which of the two is in force. "
+        "A saved schedule overrides .env until it is cleared."
+    )
+    env_enabled: bool = Field(
+        description="What .env alone says, so the page can show what "
+        "clearing the override would go back to."
+    )
+    env_timezone: str
+    env_start: str
+    env_windows: str
+    now: str | None = Field(
+        default=None,
+        description="The current time in the schedule's timezone, HH:MM.",
+    )
+    session_start: str | None = Field(
+        default=None,
+        description="When today's schedule begins, HH:MM in its timezone. "
+        "With MARKET_OPEN this moves with US daylight saving.",
+    )
+    active_index: int | None = Field(
+        default=None,
+        description="Which window is active now, from zero. Null when the "
+        "schedule is off, or before it starts -- in which case a trade uses "
+        "the configured default instead.",
+    )
+    active_take_profit: float | None = None
+    active_stop_loss: float | None = None
+    minutes_remaining: int | None = Field(
+        default=None,
+        description="Whole minutes until the active window ends. Null in the "
+        "last window, which does not end.",
+    )
+    status: str = Field(
+        description="One line the page can show as-is, e.g. 'window 1 of 2 "
+        "-- TP 20% / SL 20% -- switches in 24 min'."
+    )
+
+
 class ClosePositionRequest(BaseModel):
     """Which held position to sell, and at what price.
 

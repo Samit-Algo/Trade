@@ -13,6 +13,11 @@
     --bad:#a8362a;  --bad-soft:#fae9e6;
     --warn:#8a5a08; --warn-soft:#fbf0dc;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    /* The new chrome: a rail beside the page, a raised header on each card,
+       and one blue that means "this commits something". */
+    --rail:#111823; --rail-ink:#dbe2ec; --rail-muted:#8b97a7;
+    --head:#f7f9fb; --shadow:0 1px 2px rgba(16,24,40,.06);
+    --primary:#2563eb; --primary-ink:#fff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -22,14 +27,70 @@
       --good:#4fba93; --good-soft:#12271f;
       --bad:#e2705d;  --bad-soft:#2b1714;
       --warn:#d09a44; --warn-soft:#2a2013;
+      --rail:#0c1119; --rail-ink:#e2e7ef; --rail-muted:#8b97a7;
+      --head:#1b222d; --shadow:0 1px 2px rgba(0,0,0,.35);
+      --primary:#2f6fe4; --primary-ink:#fff;
     }
   }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--ground); color:var(--ink);
          font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  .wrap { max-width:none; margin:0; padding:20px 26px 60px; }
-  h1 { font-size:21px; margin:0; }
-  .sub { color:var(--muted); margin:2px 0 0; font-size:13.5px; }
+  .wrap { max-width:none; margin:0; padding:0; }
+
+  /* ---------- app shell ----------
+     A fixed rail beside a scrolling page. The rail holds navigation only,
+     so where you are is answerable without reading the content. */
+  .app { display:grid; grid-template-columns:232px minmax(0,1fr);
+         min-height:100vh; align-items:stretch; }
+  .rail { background:var(--rail); color:var(--rail-ink);
+          border-right:1px solid var(--line); padding:18px 14px;
+          display:flex; flex-direction:column; gap:22px;
+          position:sticky; top:0; height:100vh; }
+  .brand { display:flex; align-items:center; gap:10px; padding:2px 8px;
+           font-size:15px; font-weight:700; letter-spacing:-.01em; }
+  .brand svg { width:22px; height:22px; flex:0 0 auto; color:var(--primary); }
+  .railnav { display:flex; flex-direction:column; gap:3px; }
+  .railnav button { display:flex; align-items:center; gap:11px; width:100%;
+          text-align:left; padding:10px 11px; border-radius:8px; border:1px solid transparent;
+          background:transparent; color:var(--rail-muted); font:inherit;
+          font-size:13.5px; font-weight:500; cursor:pointer; }
+  .railnav button svg { width:17px; height:17px; flex:0 0 auto; }
+  .railnav button:hover { background:rgba(255,255,255,.05); color:var(--rail-ink); }
+  .railnav button.on { background:var(--accent-soft); color:var(--accent);
+                       border-color:var(--accent); font-weight:600; }
+  .railnav .count { margin-left:auto; font-family:var(--mono); font-size:11px;
+                    padding:1px 7px; border-radius:10px;
+                    background:rgba(255,255,255,.07); color:var(--rail-muted); }
+  /* Empty until the history loads. Without this the padded pill renders as
+     a stray dash beside the label. */
+  .railnav .count:empty { display:none; }
+  .railnav button.on .count { background:var(--accent); color:#fff; }
+  /* Pinned to the bottom: it answers "is this armed?", which you want
+     visible whatever you have scrolled to. */
+  .railfoot { margin-top:auto; display:flex; align-items:center; gap:10px;
+              padding:11px; border-radius:8px; background:rgba(255,255,255,.04);
+              border:1px solid var(--line); }
+  .railfoot .dot { width:9px; height:9px; border-radius:50%;
+                   background:var(--good); flex:0 0 auto; }
+  .railfoot.live .dot { background:var(--bad); }
+  .railfoot .rf-t { font-size:12.5px; font-weight:600; line-height:1.3; }
+  .railfoot .rf-s { font-size:11px; color:var(--rail-muted); line-height:1.3; }
+
+  .main { padding:20px 26px 60px; min-width:0; }
+  .mainhead { display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+              margin-bottom:16px; }
+  .mainhead .status { flex:1 1 auto; margin:0; }
+  .mainhead .mh-right { margin-left:auto; display:flex; align-items:center;
+                        gap:10px; flex-wrap:wrap; }
+
+  @media (max-width: 860px) {
+    .app { grid-template-columns:1fr; }
+    .rail { position:static; height:auto; flex-direction:row; flex-wrap:wrap;
+            align-items:center; gap:12px; }
+    .railnav { flex-direction:row; flex-wrap:wrap; }
+    .railfoot { margin-top:0; margin-left:auto; }
+    .main { padding:16px; }
+  }
 
   /* ---------- status strip ---------- */
   .status { display:flex; flex-wrap:wrap; gap:8px; margin:0; align-items:center; }
@@ -65,22 +126,149 @@
                  letter-spacing:.04em; color:var(--muted); }
   /* One grid so every row lines up under the headers: name, toggle, TP, SL,
      then what it resolves to. */
-  .symgrid { display:grid; grid-template-columns:52px 96px 74px 74px 1fr;
-             gap:6px 10px; align-items:center; }
-  .symhead { display:grid; grid-template-columns:52px 96px 74px 74px 1fr;
-             gap:6px 10px; font-size:10.5px; font-weight:700; color:var(--muted);
-             letter-spacing:.05em; padding-bottom:5px; }
+  .symgrid, .symhead { display:grid;
+             grid-template-columns:66px 84px minmax(72px,1fr) minmax(72px,1fr) minmax(150px,1.6fr);
+             gap:6px 12px; align-items:center; }
+  .symhead { font-size:10.5px; font-weight:700; color:var(--muted);
+             letter-spacing:.05em; padding:11px 16px 9px;
+             border-bottom:1px solid var(--line); background:var(--head); }
+  /* The rows sit flush in the panel, so they carry the side padding the
+     header has and the panel body does not. */
+  .symgrid { padding:0 16px 12px; }
   .symrow { display:contents; }
-  .symrow > * { padding:5px 0; border-top:1px solid var(--line); }
+  .symrow > * { padding:8px 0; border-top:1px solid var(--line); }
+  .symgrid .symrow:first-child > * { border-top:none; padding-top:12px; }
   .symname { font-weight:700; font-size:14px; }
   .symrow input[type=number] { width:100%; margin:0; padding:5px 7px; font-size:12.5px; }
   .symrow .eff { font-size:11px; color:var(--muted); line-height:1.35; }
   .symrow.off .symname, .symrow.off .eff { opacity:.45; }
-  .symtoggle { width:100%; }
-  .symtoggle { width:auto; padding:5px 11px; font-size:12px; font-weight:600;
-               min-width:82px; }
-  .symtoggle.on  { background:var(--good-soft); color:var(--good); border-color:var(--good); }
-  .symtoggle.off { background:var(--bad-soft);  color:var(--bad);  border-color:var(--bad); }
+  /* Clock-following brackets.
+
+     ITS OWN TRACKS, not the symbol bar's. The two cards sit in different
+     columns now, so sharing a track list bought no alignment and only
+     forced three number inputs into widths meant for a 4-letter ticker. */
+  .tbgrid, .tbhead { display:grid;
+            grid-template-columns:82px minmax(74px,1fr) minmax(74px,1fr) minmax(140px,1.5fr);
+            gap:6px 12px; align-items:center; }
+  .tbhead { font-size:10.5px; font-weight:700; color:var(--muted);
+            letter-spacing:.05em; padding-bottom:5px; align-items:end; }
+  .tbrow { display:contents; }
+  .tbrow > * { padding:5px 0; border-top:1px solid var(--line); }
+  .tbrow input[type=number], .tbrow input[type=text] {
+            width:100%; margin:0; padding:5px 7px; font-size:12.5px; }
+  /* The minutes box sits in the narrow name column, so it is centred like
+     the symbol name it lines up with rather than hugging the left edge. */
+  .tbrow .tb-min { text-align:center; }
+  .tbrow .tb-min:disabled { opacity:.55; cursor:not-allowed; }
+  /* Sits in the toggle column, where the symbol bar puts ENABLED/DISABLED,
+     so the marker for "this is the window running now" lands in the same
+     place the eye already checks on the card above. */
+  .tbmark { font-size:9.5px; font-weight:700; letter-spacing:.06em;
+            color:var(--good); background:var(--good-soft);
+            border:1px solid var(--good); border-radius:9px;
+            padding:1px 7px; margin-right:7px; display:none; }
+  .tbrow.active .tbmark { display:inline-block; }
+  .tbrow .tbwhen { font-size:11px; color:var(--muted); line-height:1.35; }
+  .tbrow.active .tbwhen { color:var(--good); font-weight:600; }
+  /* The * row runs to the close and cannot be reordered or removed, so it
+     is dimmed a shade to read as fixed rather than editable. */
+  .tbrow.final .tbwhen { font-style:italic; }
+
+  /* Enabled / timezone / start. A grid, not a flex row: on the same tracks
+     the fields start where the table's columns do instead of drifting. */
+  .tbfields { display:grid;
+              grid-template-columns:auto minmax(140px,1fr) minmax(130px,1fr) auto;
+              gap:10px 14px; align-items:end; margin-bottom:14px; }
+  .tbfields > div { min-width:0; }
+  .tbfields label { font-size:10.5px; font-weight:700; color:var(--muted);
+                    letter-spacing:.05em; display:block; margin-bottom:4px; }
+  .tbfields input { width:100%; margin:0; padding:6px 8px; font-size:12.5px; }
+  /* Right-aligned so "in force: .env" ends at the card edge, which stops the
+     gap between it and the START box reading as a missing column. */
+  .tbwhere { text-align:right; font-size:11px; color:var(--muted);
+             line-height:1.5; align-self:end; }
+
+  /* Sized to its text rather than the card, so a short sentence does not
+     stretch a coloured bar the full width. */
+  .tbstatus { display:inline-block; font-size:12px; padding:7px 11px;
+              border-radius:6px; background:var(--good-soft); color:var(--good);
+              font-weight:600; margin-bottom:12px; max-width:100%; }
+  .tbstatus.idle { background:transparent; color:var(--muted); font-weight:400;
+                   border:1px solid var(--line); }
+  .tbsource { font-size:11px; color:var(--muted); font-weight:400; }
+  /* The status banner carries an icon now, so it is a row not a block. */
+  .tbstatus { display:flex; align-items:flex-start; gap:8px; }
+  .tbstatus svg { width:15px; height:15px; flex:0 0 auto; margin-top:1px; }
+  .tbfields select { width:100%; margin:0; padding:6px 8px; font-size:12.5px; }
+  /* Revealed only when the select says Custom, so the common path is one
+     control and the escape hatch costs a row rather than a redesign. */
+  .tbfields .tbcustom { margin-top:6px; }
+  .tbfields .tbcustom[hidden] { display:none; }
+
+  /* ---------- settings page ---------- */
+  .kv { display:grid; grid-template-columns:minmax(150px,auto) 1fr;
+        gap:7px 16px; font-size:13px; }
+  .kv dt { color:var(--muted); font-size:11.5px; font-weight:600;
+           letter-spacing:.04em; text-transform:uppercase; padding-top:2px; }
+  .kv dd { margin:0; font-family:var(--mono); font-size:12.5px;
+           word-break:break-word; }
+  .kv dd.plain { font-family:inherit; font-size:13px; }
+  .kvsec { font-size:11px; font-weight:700; letter-spacing:.08em;
+           text-transform:uppercase; color:var(--faint);
+           margin:18px 0 9px; padding-bottom:6px;
+           border-bottom:1px solid var(--line); }
+  .kvsec:first-child { margin-top:0; }
+  /* The resolution chain, as a numbered list that says which rung a value
+     is actually on rather than describing it in prose. */
+  .rung { display:flex; gap:11px; align-items:flex-start; padding:9px 0;
+          border-top:1px solid var(--line); font-size:13px; }
+  .rung:first-child { border-top:none; padding-top:0; }
+  .rung .rn { width:21px; height:21px; border-radius:50%; flex:0 0 auto;
+          display:grid; place-items:center; font-size:11px; font-weight:700;
+          background:var(--sunken); color:var(--muted); }
+  .rung.new .rn { background:var(--accent-soft); color:var(--accent); }
+  .rung .rt { font-weight:600; }
+  .rung .rs { font-size:11.5px; color:var(--muted); line-height:1.5;
+          margin-top:1px; }
+
+  /* Add/remove belong to the table; save/reset commit the card. Grouped at
+     opposite ends so the destructive-ish pair is not adjacent to Save. */
+  .tbactions { display:flex; gap:8px; align-items:center; margin-top:12px;
+               flex-wrap:wrap; }
+  .tbactions .tbspacer { flex:1 1 auto; }
+  .tbactions .verdict { margin-left:2px; }
+  /* Sits between the header and the body when open, so it reads as a note
+     ABOUT the panel rather than another field in it. */
+  .tbnote { font-size:11.5px; color:var(--muted); line-height:1.6;
+            padding:12px 16px; background:var(--sunken);
+            border-bottom:1px solid var(--line); }
+  .tbnote[hidden] { display:none; }
+  .tbnote code { font-family:var(--mono); font-size:11px;
+            background:var(--card); padding:1px 5px; border-radius:3px; }
+
+  /* A quiet square button for the header. Not .btn-small: that is sized for
+     a label, and this is one glyph. */
+  .iconbtn { width:28px; height:28px; padding:0; margin:0; flex:0 0 auto;
+            display:grid; place-items:center; border-radius:6px;
+            background:transparent; border:1px solid var(--line);
+            color:var(--muted); cursor:pointer; }
+  .iconbtn svg { width:15px; height:15px; margin:0; }
+  .iconbtn:hover { color:var(--ink); border-color:var(--muted); }
+  .iconbtn.on { background:var(--accent-soft); color:var(--accent);
+            border-color:var(--accent); }
+
+  /* Narrow screens: the fixed tracks stop fitting, so both cards fall back
+     to labelled rows rather than a squeezed grid. */
+  @media (max-width: 760px) {
+    .tbfields { grid-template-columns:1fr 1fr; }
+    .tbwhere { text-align:left; grid-column:1 / -1; }
+    /* WHEN and the NOW badge go first -- the three editable boxes are what
+       the row is for, and they keep their width. */
+    .tbgrid, .tbhead { grid-template-columns:72px 1fr 1fr; }
+    .tbhead span:nth-child(4), .tbrow .tbwhen { display:none; }
+    .symgrid, .symhead { grid-template-columns:60px 76px 1fr 1fr; }
+    .symhead span:nth-child(5), .symrow .eff { display:none; }
+  }
   /* Selling is the irreversible half, so these read like the real-order
      button rather than the quiet secondary ones beside them. */
   /* Sits in the page, not on a coloured slab: the BUTTONS carry the warning,
@@ -122,8 +310,13 @@
 
   /* Two columns only. A third was tried and just left a dead panel: the
      result card is the only thing that grows, so give it the room. */
-  .cols { display:grid; grid-template-columns:520px minmax(0,1fr); gap:20px; align-items:start; }
-  @media (max-width:1000px) { .cols { grid-template-columns:1fr; } }
+  /* Two columns that SHARE the width rather than one fixed and one
+     leftover. The left holds the settings and the form, the right the
+     symbol table and the result -- both grow with the window, so a wide
+     screen does not leave a dead band down the right-hand side. */
+  .cols { display:grid; grid-template-columns:minmax(420px, 5fr) minmax(420px, 7fr);
+          gap:18px; align-items:start; }
+  @media (max-width:1100px) { .cols { grid-template-columns:1fr; } }
   /* The form's own fields go two-up once the card is wide enough. */
   .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
   .form-grid > *:nth-child(odd):last-child { grid-column:1 / -1; }
@@ -177,8 +370,72 @@
                color:var(--faint); white-space:nowrap; overflow:hidden;
                text-overflow:ellipsis; }
 
-  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:18px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:18px; box-shadow:var(--shadow); }
   .card + .card { margin-top:16px; }
+
+  /* ---------- panel: a card with a titled header strip ----------
+     The header carries an icon, a name and the one line of context that
+     used to float loose above the card. Keeping them together means the
+     explanation cannot drift away from the thing it explains. */
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px;
+           box-shadow:var(--shadow); overflow:hidden; }
+  .panel + .panel, .panel + form.panel, form.panel + .panel { margin-top:16px; }
+  /* Panels stack in a column; without this a tall one can overlap the next
+     when its body is a grid that overflows. */
+  .cols > div { display:flex; flex-direction:column; min-width:0; }
+  .panelhead { display:flex; align-items:flex-start; gap:11px;
+               padding:13px 16px; background:var(--head);
+               border-bottom:1px solid var(--line); }
+  .panelhead .ph-icon { width:30px; height:30px; border-radius:7px; flex:0 0 auto;
+               display:grid; place-items:center;
+               background:var(--accent-soft); color:var(--accent); }
+  .panelhead .ph-icon svg { width:16px; height:16px; }
+  .panelhead .ph-text { min-width:0; padding-top:1px; }
+  .panelhead h2 { font-size:14.5px; font-weight:650; letter-spacing:-.01em;
+               text-transform:none; margin:0; color:var(--ink); border:none;
+               padding:0; }
+  .panelhead .ph-sub { font-size:11.5px; color:var(--muted); line-height:1.45;
+               margin-top:2px; }
+  .panelhead .ph-right { margin-left:auto; display:flex; align-items:center;
+               gap:8px; flex:0 0 auto; }
+  .panelbody { padding:16px; }
+  .panelbody.flush { padding:0; }
+
+  /* ---------- toggle switch ----------
+     Replaces the ENABLED/DISABLED button. A switch reads as state rather
+     than as an action, which is what these actually are. */
+  .sw { position:relative; display:inline-flex; align-items:center; gap:9px;
+        cursor:pointer; user-select:none; padding:0; }
+  /* The knob is absolute, so the TRACK must be what it measures from --
+     not .sw, which includes the ON/OFF label and pushed it off the end. */
+  .sw-track { position:relative; width:38px; height:21px; border-radius:11px;
+        flex:0 0 auto; padding:0; box-sizing:border-box;
+        background:var(--bad); border:1px solid var(--bad);
+        transition:background .15s, border-color .15s; }
+  .sw-knob { position:absolute; left:2px; top:2px; width:15px; height:15px;
+        border-radius:50%; background:#fff; padding:0; border:none;
+        box-sizing:border-box; transition:transform .15s;
+        box-shadow:0 1px 2px rgba(0,0,0,.3); }
+  .sw[data-on="true"] .sw-track { background:var(--good); border-color:var(--good); }
+  .sw[data-on="true"] .sw-knob { transform:translateX(17px); }
+  .sw-label { font-size:11.5px; font-weight:700; letter-spacing:.05em;
+        color:var(--muted); }
+  .sw[data-on="true"] .sw-label { color:var(--good); }
+
+  /* ---------- empty state ---------- */
+  .empty { display:grid; place-items:center; gap:9px; padding:52px 20px;
+           text-align:center; color:var(--muted); }
+  .empty svg { width:40px; height:40px; opacity:.4; }
+  .empty .e-t { font-size:14px; font-weight:600; color:var(--ink); }
+  .empty .e-s { font-size:12px; line-height:1.6; max-width:42ch; }
+
+  /* Icons inside buttons sit on the text baseline rather than above it. */
+  .btn-small svg, .btn-real svg, .btn-primary svg {
+           width:14px; height:14px; vertical-align:-2px; margin-right:6px; }
+  .btn-primary { background:var(--primary); color:var(--primary-ink);
+           border-color:var(--primary); font-weight:600; }
+  .btn-primary:hover { filter:brightness(1.08); }
   .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.09em;
              color:var(--faint); margin:0 0 12px; font-weight:600; }
 
@@ -295,53 +552,96 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Trade tester</h1>
-  <p class="sub">Four inputs. Everything else comes from .env, and DRY_RUN decides whether anything is bought.</p>
+<div class="app">
 
-  <div class="topgrid">
-  <!-- The left column is "what every trade will use": the expiry, then the
-       state the server is actually in. They answer the same question. -->
-  <div class="topleft">
-    <div class="daybar">
-      <label for="ov_expiry">Expiry for EVERY trade</label>
-      <input type="date" id="ov_expiry">
-      <button type="button" class="btn-small" id="ovclear">Use .env</button>
-      <span class="verdict" id="dayverdict"></span>
-      <div class="alts" id="dayalts"></div>
-    </div>
+  <!-- ==================== RAIL ====================
+       Navigation and armed-state only. Nothing here changes what a trade
+       does, so it can stay put while the page beside it scrolls. -->
+  <aside class="rail">
+    <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/></svg><span>Trade Tester</span></div>
 
-    <div class="status" id="status">
-      <span class="pill"><span class="k">Server</span><span class="v">checking…</span></span>
-      <button type="button" class="btn-small refresh" id="refreshall">Refresh</button>
-    </div>
-  </div>
-
-  <div class="symbar" id="symbar">
-    <div class="symbar-head">
-      <span>SYMBOLS</span>
-      <span class="livesub">Blank a box to fall back to .env, then the default.
-        Disabling refuses NEW trades only -- closing is never blocked.</span>
-    </div>
-    <div class="symhead">
-      <span></span><span></span><span>TAKE PROFIT</span><span>STOP LOSS</span><span>USING</span>
-    </div>
-    <div id="symrows"><div class="placeholder" style="padding:10px 0">Loading…</div></div>
-  </div>
-  </div>
-
-  <div class="shell">
-    <nav class="nav">
-      <button type="button" id="nav-trade" class="on" onclick="showPage('trade')">Trade</button>
+    <nav class="railnav">
+      <button type="button" id="nav-trade" class="on" onclick="showPage('trade')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg><span>Trade</span></button>
       <button type="button" id="nav-history" onclick="showPage('history')">
-        Order history <span class="count" id="histcount"></span></button>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Order History</span><span class="count" id="histcount"></span></button>
+      <button type="button" id="nav-settings" onclick="showPage('settings')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
     </nav>
 
-    <div>
+    <div class="railfoot" id="railfoot">
+      <span class="dot"></span>
+      <div>
+        <div class="rf-t" id="rf-title">Checking…</div>
+        <div class="rf-s" id="rf-sub">reading server state</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==================== MAIN ==================== -->
+  <main class="main">
+    <div class="mainhead">
+      <div class="status" id="status">
+        <span class="pill"><span class="k">Server</span><span class="v">checking…</span></span>
+      </div>
+      <div class="mh-right">
+        <div class="daybar">
+          <label for="ov_expiry">Expiry for every trade</label>
+          <input type="date" id="ov_expiry">
+          <button type="button" class="btn-small" id="ovclear">Use .env</button>
+          <span class="verdict" id="dayverdict"></span>
+          <div class="alts" id="dayalts"></div>
+        </div>
+        <button type="button" class="btn-small" id="refreshall"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
+      </div>
+    </div>
+
     <div class="page on" id="page-trade">
   <div class="cols">
     <!-- ================= LEFT ================= -->
     <div>
-      <form class="card" id="form" autocomplete="off">
+      <div class="panel" id="tbbar">
+        <div class="panelhead">
+          <span class="ph-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+          <div class="ph-text">
+            <h2>Time-based Brackets</h2>
+            <div class="ph-sub">Wide just after the open, tight afterwards.
+              Ranks below a symbol&rsquo;s own setting &mdash; a symbol you tuned
+              keeps its bracket all session.</div>
+          </div>
+          <div class="ph-right">
+            <button type="button" class="iconbtn" id="tbinfo"
+                    aria-expanded="false" aria-controls="tbnote"
+                    title="What START and MINUTES mean"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01"/></svg></button>
+          </div>
+        </div>
+
+        <!-- Reference, not instruction: it explains two fields rather than
+             telling you to do anything, so it stays folded until asked
+             for instead of taking a block of the panel on every visit. -->
+        <div class="tbnote" id="tbnote" hidden>
+          <strong>START</strong> &mdash; <code>MARKET_OPEN</code> follows the US
+          open and keeps up with US daylight saving on its own; in December the
+          open moves an hour later in local time. Or write a fixed 24-hour time
+          such as 19:00.<br>
+          <strong>MINUTES</strong> &mdash; where a window ends, counted from the
+          start. The last row is <code>*</code> and runs to the close.
+        </div>
+
+        <div class="panelbody" id="tbbody">
+          <div class="placeholder">Loading…</div>
+        </div>
+      </div>
+
+      <form class="panel" id="form" autocomplete="off">
+        <div class="panelhead">
+          <span class="ph-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h3l2.4 12.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.6L21 7H6"/></svg></span>
+          <div class="ph-text">
+            <h2>Place Trade</h2>
+            <div class="ph-sub">Fill the details below and place a test order.</div>
+          </div>
+        </div>
+        <div class="panelbody">
         <fieldset>
           <legend>Access</legend>
           <label>API key
@@ -396,17 +696,52 @@
           </div>
         </fieldset>
 
-        <button type="button" class="btn-real" id="place">Place the order</button>
+        <button type="button" class="btn-real" id="place"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>Place the order</button>
         <p class="note" id="realnote"></p>
+        </div>
       </form>
 
     </div>
 
     <!-- ================= RIGHT ================= -->
     <div>
-      <div class="card">
-        <h2>Result</h2>
-        <div id="out"><div class="placeholder">Press Test to see what would happen.</div></div>
+      <div class="panel" id="symbar">
+        <div class="panelhead">
+          <span class="ph-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
+          <div class="ph-text">
+            <h2>Symbols</h2>
+            <div class="ph-sub">Blank a box to fall back to .env, then the default.
+              Disabling refuses NEW trades only &mdash; closing is never blocked.</div>
+          </div>
+        </div>
+        <div class="panelbody flush">
+          <div class="symhead">
+            <span>SYMBOL</span><span>ENABLED</span><span>TAKE PROFIT %</span>
+            <span>STOP LOSS %</span><span>NOTES</span>
+          </div>
+          <div id="symrows"><div class="placeholder" style="padding:14px 16px">Loading…</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panelhead">
+          <span class="ph-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M9 13h6M9 17h4"/></svg></span>
+          <div class="ph-text">
+            <h2>Result / Logs</h2>
+            <div class="ph-sub">What the server said about the last order.</div>
+          </div>
+          <div class="ph-right">
+            <button type="button" class="btn-small" id="outclear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>Clear</button>
+          </div>
+        </div>
+        <div class="panelbody" id="out">
+          <div class="empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+            <div class="e-t">No results yet</div>
+            <div class="e-s">Fill in the trade details and place an order
+              &mdash; or run with DRY_RUN=true &mdash; to see what would happen.</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -455,14 +790,56 @@
         </div>
       </div>
     </div><!-- /page-history -->
-    </div>
-  </div>
+
+    <div class="page" id="page-settings">
+      <div class="cols">
+        <div>
+          <div class="panel">
+            <div class="panelhead">
+              <span class="ph-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg></span>
+              <div class="ph-text">
+                <h2>Server Settings</h2>
+                <div class="ph-sub">Read-only. These come from .env and need a
+                  restart to change.</div>
+              </div>
+              <div class="ph-right">
+                <button type="button" class="btn-small" id="setrefresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
+              </div>
+            </div>
+            <div class="panelbody" id="setbody">
+              <div class="placeholder">Loading…</div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="panel">
+            <div class="panelhead">
+              <span class="ph-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01"/></svg></span>
+              <div class="ph-text">
+                <h2>How a bracket is chosen</h2>
+                <div class="ph-sub">Five levels, highest first. The first one
+                  that has a value wins.</div>
+              </div>
+            </div>
+            <div class="panelbody" id="setorder"></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /page-settings -->
+
+  </main>
+</div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
 const out = $("out");
 let liveOrderId = null;
+
+/* TRADE_EXPIRY_DATE, once loadTradeSettings has read it. Declared here
+   because checkTradingDay reads it and the two are started together --
+   whichever lost the race used to throw on an undeclared name. */
+let configuredExpiry = null;
 
 /* ---------- helpers ---------- */
 const money = n => (n === null || n === undefined) ? "—" : Number(n).toFixed(2);
@@ -503,7 +880,7 @@ async function loadStatus() {
   const strip = $("status");
   if (!key()) {
     strip.innerHTML = `<span class="pill no"><span class="k">API key</span><span class="v">not set</span></span>`;
-    strip.appendChild(refreshBtn());
+    setRail("Not connected", "enter the API key", false);
     return;
   }
   try {
@@ -531,18 +908,26 @@ async function loadStatus() {
         <span class="k">Mode</span><span class="v">${h.mode}</span></span>
       <span class="pill"><span class="k">Account</span><span class="v">${h.account_masked}</span></span>
       <span class="pill"><span class="k">Quotes</span><span class="v">${h.market_data_source}</span></span>`;
-    strip.appendChild(refreshBtn());
+
+    // The rail says whether this is armed, which is the one thing worth
+    // knowing whatever you have scrolled to.
+    setRail(
+      canTrade ? "Armed" : "Safe",
+      h.mode === "PAPER" ? "Paper trading mode" : "LIVE account",
+      canTrade && h.mode !== "PAPER"
+    );
   } catch (e) {
     strip.innerHTML = `<span class="pill no"><span class="k">Server</span><span class="v">${e.message}</span></span>`;
-    strip.appendChild(refreshBtn());
+    setRail("Unreachable", e.message, true);
   }
 }
 
-function refreshBtn() {
-  const b = document.createElement("button");
-  b.type = "button"; b.className = "btn-small refresh"; b.textContent = "Refresh";
-  b.onclick = refreshAll;
-  return b;
+function setRail(title, sub, danger) {
+  const foot = $("railfoot");
+  if (!foot) return;
+  $("rf-title").textContent = title;
+  $("rf-sub").textContent = sub;
+  foot.classList.toggle("live", !!danger);
 }
 
 /* The positions page is gone -- its live pricing and its clock now live
@@ -705,7 +1090,25 @@ try {
 } catch (e) {}
 
 function refreshAll() {
-  loadStatus(); loadHistory(); loadTradeSettings(); loadSymbolSettings(); checkTradingDay();
+  loadStatus(); loadHistory(); loadTradeSettings(); loadSymbolSettings();
+  loadTimeBrackets(); checkTradingDay();
+
+  // The result panel keeps the last order until it is cleared, so a fresh
+  // run is visibly a fresh run rather than a changed number somewhere.
+  const clearBtn = $("outclear");
+  if (clearBtn) clearBtn.onclick = () => { $("out").innerHTML = EMPTY_RESULT; };
+
+  // The field reference. Outside the panel body on purpose -- that body is
+  // rewritten every minute by the countdown, which would fold this back up
+  // while you were reading it.
+  const infoBtn = $("tbinfo");
+  if (infoBtn) infoBtn.onclick = () => {
+    const note = $("tbnote");
+    const show = note.hidden;
+    note.hidden = !show;
+    infoBtn.setAttribute("aria-expanded", String(show));
+    infoBtn.classList.toggle("on", show);
+  };
   startSpot();
   if ($("page-history").classList.contains("on")) loadHistory();
 }
@@ -739,8 +1142,18 @@ function stopHistoryPolling() {
   historyTimer = null;
 }
 
+/* The Result panel's resting state. Defined once so Clear restores exactly
+   what the page loaded with. */
+const EMPTY_RESULT = `
+  <div class="empty">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+    <div class="e-t">No results yet</div>
+    <div class="e-s">Fill in the trade details and place an order
+      &mdash; or run with DRY_RUN=true &mdash; to see what would happen.</div>
+  </div>`;
+
 function showPage(name) {
-  ["trade", "history"].forEach(p => {
+  ["trade", "history", "settings"].forEach(p => {
     $("page-" + p).classList.toggle("on", p === name);
     $("nav-" + p).classList.toggle("on", p === name);
   });
@@ -751,6 +1164,8 @@ function showPage(name) {
   } else {
     stopHistoryPolling();
   }
+
+  if (name === "settings") loadSettingsPage();
 }
 
 function outcomeTag(o) {
@@ -1140,8 +1555,12 @@ async function loadSymbolSettings() {
     box.innerHTML = `<div class="symgrid">` + d.symbols.map(sym => `
       <div class="symrow ${sym.enabled ? "" : "off"}" data-symbol="${sym.symbol}">
         <span class="symname">${sym.symbol}</span>
-        <button type="button" class="btn-small symtoggle ${sym.enabled ? "on" : "off"}"
-                data-enabled="${sym.enabled}">${sym.enabled ? "ENABLED" : "DISABLED"}</button>
+        <span class="sw" data-on="${sym.enabled}" data-enabled="${sym.enabled}"
+              role="switch" aria-checked="${sym.enabled}" tabindex="0"
+              title="Disabling refuses NEW trades only; closing is never blocked">
+          <span class="sw-track"><span class="sw-knob"></span></span>
+          <span class="sw-label">${sym.enabled ? "ON" : "OFF"}</span>
+        </span>
         <input type="number" step="0.5" min="0.5" max="1000"
                class="sym-tp" value="${sym.take_profit ?? ""}" placeholder="—">
         <input type="number" step="0.5" min="0.5" max="99.5"
@@ -1152,16 +1571,21 @@ async function loadSymbolSettings() {
       </div>`).join("") + `</div>`;
 
     box.querySelectorAll(".symrow").forEach(row => {
-      const toggle = row.querySelector(".symtoggle");
-      toggle.onclick = () => {
-        // Flip locally so the button responds at once; saveSymbol reports
+      const toggle = row.querySelector(".sw");
+      const flip = () => {
+        // Flip locally so the switch responds at once; saveSymbol reports
         // the truth from the server either way.
         const now = toggle.dataset.enabled !== "true";
         toggle.dataset.enabled = String(now);
-        toggle.textContent = now ? "ENABLED" : "DISABLED";
-        toggle.className = "btn-small symtoggle " + (now ? "on" : "off");
+        toggle.dataset.on = String(now);
+        toggle.setAttribute("aria-checked", String(now));
+        toggle.querySelector(".sw-label").textContent = now ? "ON" : "OFF";
         row.classList.toggle("off", !now);
         saveSymbol(row);
+      };
+      toggle.onclick = flip;
+      toggle.onkeydown = e => {
+        if (e.key === " " || e.key === "Enter") { e.preventDefault(); flip(); }
       };
       row.querySelectorAll("input").forEach(input => {
         input.onchange = () => saveSymbol(row);
@@ -1187,7 +1611,7 @@ async function saveSymbol(row) {
       headers: hdrs(),
       // Blank clears the override rather than setting zero, so .env comes back.
       body: JSON.stringify({
-        enabled: row.querySelector(".symtoggle").dataset.enabled === "true",
+        enabled: row.querySelector(".sw").dataset.enabled === "true",
         take_profit: tp === "" ? null : parseFloat(tp),
         stop_loss: sl === "" ? null : parseFloat(sl)
       })
@@ -1210,6 +1634,371 @@ async function saveSymbol(row) {
   }
 }
 
+
+
+/* ---------- settings page --------------------------------------------- */
+/* Read-only. Everything here comes from .env and needs a restart, so the
+   page shows it rather than pretending it can be edited. What IS editable
+   without a restart lives on the Trade page, next to what it affects. */
+
+async function loadSettingsPage() {
+  const box = $("setbody");
+  if (!key()) {
+    box.innerHTML = `<div class="placeholder">Enter the API key on the Trade page.</div>`;
+    return;
+  }
+
+  try {
+    const [sr, hr, tr] = await Promise.all([
+      fetch("/trade/settings", { headers: hdrs() }),
+      fetch("/health", { headers: hdrs() }),
+      fetch("/trade/time-brackets", { headers: hdrs() }),
+    ]);
+    if (!sr.ok) throw new Error("HTTP " + sr.status);
+    const d = await sr.json();
+    const h = hr.ok ? await hr.json() : {};
+    const tb = tr.ok ? await tr.json() : {};
+
+    const row = (k, v, plain) =>
+      `<dt>${k}</dt><dd class="${plain ? "plain" : ""}">${v ?? "—"}</dd>`;
+
+    const fmtMap = m => {
+      const keys = Object.keys(m || {});
+      return keys.length ? keys.map(x => `${x} ${m[x]}%`).join(", ") : "none set";
+    };
+
+    box.innerHTML = `
+      <div class="kvsec">Account</div>
+      <dl class="kv">
+        ${row("Mode", h.mode)}
+        ${row("Account", h.account_masked)}
+        ${row("Orders", h.orders_enabled ? "ENABLED" : "BLOCKED")}
+        ${row("Dry run", h.dry_run ? "TRUE — nothing is sent" : "FALSE — orders are real", true)}
+        ${row("Quotes", h.market_data_source)}
+      </dl>
+
+      <div class="kvsec">Every trade</div>
+      <dl class="kv">
+        ${row("Quantity", d.quantity)}
+        ${row("Take profit", d.take_profit_percent + "%")}
+        ${row("Stop loss", d.stop_loss_percent + "%")}
+        ${row("Strikes out", d.strikes_out)}
+        ${row("Max cash", "$" + d.max_trade_cash)}
+        ${row("Expiry", d.expiry_date || "auto-select")}
+        ${row("Min days to expiry", d.min_days_to_expiry)}
+        ${row("Leg time in force", d.leg_time_in_force)}
+        ${row("Tick size", d.option_tick_size)}
+        ${row("Buffer ticks", d.limit_buffer_ticks)}
+      </dl>
+
+      <div class="kvsec">Symbols</div>
+      <dl class="kv">
+        ${row("Tradable", (d.trade_symbols || []).join(", "), true)}
+        ${row("Per-symbol take profit", fmtMap(d.symbol_take_profit), true)}
+        ${row("Per-symbol stop loss", fmtMap(d.symbol_stop_loss), true)}
+      </dl>
+
+      <div class="kvsec">Time-based brackets</div>
+      <dl class="kv">
+        ${row("Enabled", tb.enabled ? "YES" : "NO")}
+        ${row("In force from", tb.source, true)}
+        ${row("Timezone", tb.timezone)}
+        ${row("Start", tb.start)}
+        ${row("Windows", tb.windows)}
+        ${row("Right now", tb.status, true)}
+      </dl>
+
+      <p class="note" style="margin-top:16px">
+        These are read once at startup. Changing .env needs a full restart —
+        <code>--reload</code> does not pick them up.
+      </p>`;
+  } catch (e) {
+    box.innerHTML = `<div class="placeholder">Could not load settings: ${e.message}</div>`;
+  }
+
+  renderResolutionOrder();
+}
+
+/* The five levels a bracket can come from. Written out because "why did
+   this order get 20%" is the question the source strings answer one at a
+   time, and this is the same answer in general. */
+function renderResolutionOrder() {
+  const box = $("setorder");
+  if (!box) return;
+
+  const rungs = [
+    ["Typed on the form", "The Take profit / Stop loss boxes. This trade only.", false],
+    ["Saved for the symbol", "Set in the Symbols panel. Beats .env because it can be changed between trades.", false],
+    ["The symbol&rsquo;s .env line", "e.g. <code>NVDA_TAKE_PROFIT_PERCENT</code>.", false],
+    ["The active time window", "Time-based Brackets, when enabled and inside the session.", true],
+    ["The configured default", "<code>TAKE_PROFIT_PERCENT</code> / <code>STOP_LOSS_PERCENT</code>.", false],
+  ];
+
+  box.innerHTML = rungs.map((r, i) => `
+    <div class="rung ${r[2] ? "new" : ""}">
+      <span class="rn">${i + 1}</span>
+      <div><div class="rt">${r[0]}</div><div class="rs">${r[1]}</div></div>
+    </div>`).join("") + `
+    <p class="note" style="margin-top:14px">
+      A symbol you tuned keeps its bracket all session — the clock governs the
+      symbols nobody has tuned, which is what the default used to do alone.
+    </p>`;
+}
+
+
+/* ---------- time-based brackets --------------------------------------- */
+/* Wide bracket for the volatile stretch after the open, tight afterwards.
+   Resolved ONCE when the order is placed -- a position keeps the bracket it
+   was born with, so nothing here touches an order already with the broker.
+
+   .env holds the defaults; saving here overrides them until Reset. The
+   window ranks BELOW a per-symbol setting on purpose: a symbol somebody
+   tuned keeps its bracket all session. */
+
+let tbTimer = null;
+
+function tbWindowRow(w, index, activeIndex, windows) {
+  // The last window has no end of its own -- it runs to the close.
+  const last = w.minutes === null;
+  const live = index === activeIndex;
+
+  // Each window starts where the one before it ended, so the span is read
+  // off its neighbour rather than shown as a bare end-minute.
+  const from = index === 0 ? 0 : windows[index - 1].minutes;
+  const when = last ? `from ${from} min to the close`
+                    : `${from}\u2013${w.minutes} min after the start`;
+
+  return `
+    <div class="tbrow ${live ? "active" : ""} ${last ? "final" : ""}" data-index="${index}">
+      <input type="text" class="tb-min" value="${last ? "*" : w.minutes}"
+             ${last ? "disabled" : ""} title="${last ? "The last window runs to the close" : "Minutes from the start"}">
+      <input type="number" step="0.5" min="0.5" max="1000"
+             class="tb-tp" value="${w.take_profit}">
+      <input type="number" step="0.5" min="0.5" max="99.5"
+             class="tb-sl" value="${w.stop_loss}">
+      <span class="tbwhen"><span class="tbmark">NOW</span>${when}</span>
+    </div>`;
+}
+
+async function loadTimeBrackets() {
+  const box = $("tbbody");
+  if (!key()) {
+    box.innerHTML = `<div class="placeholder" style="padding:10px 0">Enter the API key to load the schedule.</div>`;
+    return;
+  }
+
+  try {
+    const r = await fetch("/trade/time-brackets", { headers: hdrs() });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+
+    const rows = d.parsed_windows
+      .map((w, i) => tbWindowRow(w, i, d.active_index, d.parsed_windows))
+      .join("");
+
+    box.innerHTML = `
+      <div class="tbstatus ${d.active_index === null ? "idle" : ""}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01"/></svg><span>${d.status}</span></div>
+
+      <div class="tbfields">
+        <div class="tbtoggle-cell">
+          <label>ENABLED</label>
+          <span class="sw" id="tbtoggle" data-on="${d.enabled}" data-enabled="${d.enabled}"
+                role="switch" aria-checked="${d.enabled}" tabindex="0">
+            <span class="sw-track"><span class="sw-knob"></span></span>
+            <span class="sw-label">${d.enabled ? "ON" : "OFF"}</span>
+          </span>
+        </div>
+        <div>
+          <label>TIMEZONE</label>
+          ${tbSelect("tbtz", d.timezone, TB_ZONES)}
+        </div>
+        <div>
+          <label>START</label>
+          ${tbSelect("tbstart", d.start, TB_STARTS)}
+        </div>
+        <div class="tbwhere">
+          now ${d.now} &middot; starts ${d.session_start}<br>
+          in force: <strong>${d.source}</strong>
+        </div>
+      </div>
+
+      <div class="tbhead">
+        <span>MINUTES</span><span>TAKE PROFIT</span><span>STOP LOSS</span><span>WHEN</span>
+      </div>
+      <div class="tbgrid">${rows}</div>
+
+      <div class="tbactions">
+        <button type="button" class="btn-small" id="tbadd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Add Window</button>
+        <button type="button" class="btn-small" id="tbremove">Remove</button>
+        <span class="verdict" id="tbverdict"></span>
+        <span class="tbspacer"></span>
+        <button type="button" class="btn-small" id="tbreset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Reset to .env</button>
+        <button type="button" class="btn-small btn-primary" id="tbsave"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>Save</button>
+      </div>
+`;
+
+    const tbFlip = () => {
+      const t = $("tbtoggle");
+      const now = t.dataset.enabled !== "true";
+      t.dataset.enabled = String(now);
+      t.dataset.on = String(now);
+      t.setAttribute("aria-checked", String(now));
+      t.querySelector(".sw-label").textContent = now ? "ON" : "OFF";
+    };
+    $("tbtoggle").onclick = tbFlip;
+    $("tbtoggle").onkeydown = e => {
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); tbFlip(); }
+    };
+
+    // A select plus a revealed text box, so every value the server accepts
+    // stays reachable while the common ones are one click away.
+    ["tbtz", "tbstart"].forEach(id => {
+      const sel = $(id + "_sel");
+      if (sel) sel.onchange = () => {
+        const custom = sel.value === "__custom__";
+        $(id).hidden = !custom;
+        if (custom) $(id).focus();
+      };
+    });
+
+    // The last row is the * window and always stays last, so a new one is
+    // inserted before it rather than appended.
+    $("tbadd").onclick = () => {
+      const grid = box.querySelector(".tbgrid");
+      const rows = [...grid.querySelectorAll(".tbrow")];
+      const last = rows[rows.length - 1];
+      const prev = rows.length > 1 ? rows[rows.length - 2] : null;
+      const minutes = prev ? (parseInt(prev.querySelector(".tb-min").value) || 0) + 30 : 45;
+
+      const row = document.createElement("div");
+      row.className = "tbrow";
+      // Same five cells as a rendered row, or the grid loses alignment.
+      row.innerHTML = `
+        <input type="text" class="tb-min" value="${minutes}" title="Minutes from the start">
+        <input type="number" step="0.5" min="0.5" max="1000" class="tb-tp" value="10">
+        <input type="number" step="0.5" min="0.5" max="99.5" class="tb-sl" value="10">
+        <span class="tbwhen">ends at ${minutes} min &mdash; save to confirm</span>`;
+      grid.insertBefore(row, last);
+    };
+
+    $("tbremove").onclick = () => {
+      const rows = [...box.querySelectorAll(".tbrow")];
+      // Never the * row: without it the table says nothing about the rest
+      // of the session, and the server refuses it.
+      if (rows.length > 1) rows[rows.length - 2].remove();
+    };
+
+    $("tbsave").onclick  = saveTimeBrackets;
+    $("tbreset").onclick = resetTimeBrackets;
+
+    // Keep the countdown honest without hammering the endpoint.
+    if (tbTimer) clearTimeout(tbTimer);
+    tbTimer = setTimeout(loadTimeBrackets, 60000);
+  } catch (e) {
+    box.innerHTML = `<div class="placeholder" style="padding:10px 0">Could not load the schedule: ${e.message}</div>`;
+  }
+}
+
+/* The dropdown lists. Kept short on purpose -- anything not here is still
+   typeable through "Custom", and the server validates either way. */
+const TB_ZONES = [
+  ["Asia/Kolkata", "Asia/Kolkata (IST)"],
+  ["Asia/Singapore", "Asia/Singapore"],
+  ["Asia/Dubai", "Asia/Dubai"],
+  ["Europe/London", "Europe/London"],
+  ["US/Eastern", "US/Eastern (market)"],
+  ["UTC", "UTC"],
+];
+const TB_STARTS = [
+  ["MARKET_OPEN", "MARKET OPEN (follows US DST)"],
+  ["19:00", "19:00"],
+  ["19:30", "19:30"],
+  ["20:00", "20:00"],
+  ["09:30", "09:30"],
+];
+
+function tbSelect(id, value, options) {
+  const known = options.some(o => o[0] === value);
+  const opts = options
+    .map(o => `<option value="${o[0]}" ${o[0] === value ? "selected" : ""}>${o[1]}</option>`)
+    .join("");
+  return `
+    <select id="${id}_sel">
+      ${opts}
+      <option value="__custom__" ${known ? "" : "selected"}>Custom…</option>
+    </select>
+    <input type="text" id="${id}" value="${value}" ${known ? "hidden" : ""}
+           class="tbcustom" placeholder="type a value">`;
+}
+
+/* The select unless it says Custom, in which case the box beside it. */
+function tbValue(id) {
+  const sel = $(id + "_sel");
+  if (sel && sel.value !== "__custom__") return sel.value;
+  return $(id).value.trim();
+}
+
+function tbCollectWindows() {
+  return [...document.querySelectorAll("#tbbody .tbrow")].map(row => {
+    const min = row.querySelector(".tb-min").value.trim();
+    const tp  = row.querySelector(".tb-tp").value.trim();
+    const sl  = row.querySelector(".tb-sl").value.trim();
+    return `${min}:${tp}:${sl}`;
+  }).join(", ");
+}
+
+async function saveTimeBrackets() {
+  const verdict = $("tbverdict");
+  verdict.className = "verdict";
+  verdict.textContent = "saving\u2026";
+
+  try {
+    const r = await fetch("/trade/time-brackets", {
+      method: "PUT",
+      headers: hdrs(),
+      body: JSON.stringify({
+        enabled:  $("tbtoggle").dataset.enabled === "true",
+        timezone: tbValue("tbtz"),
+        start:    tbValue("tbstart"),
+        windows:  tbCollectWindows()
+      })
+    });
+    const d = await r.json();
+
+    if (!r.ok) {
+      verdict.className = "verdict bad";
+      verdict.textContent = d.message || ("HTTP " + r.status);
+      return;
+    }
+
+    await loadTimeBrackets();
+    const v = $("tbverdict");
+    if (v) {
+      v.textContent = "saved";
+      setTimeout(() => { const x = $("tbverdict"); if (x) x.textContent = ""; }, 1800);
+    }
+  } catch (e) {
+    verdict.className = "verdict bad";
+    verdict.textContent = e.message;
+  }
+}
+
+async function resetTimeBrackets() {
+  const verdict = $("tbverdict");
+  verdict.className = "verdict";
+  verdict.textContent = "resetting\u2026";
+
+  try {
+    // DELETE forgets the override so .env comes back, including any edit
+    // made to it since -- which saving a copy of .env would not.
+    const r = await fetch("/trade/time-brackets", { method: "DELETE", headers: hdrs() });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    await loadTimeBrackets();
+  } catch (e) {
+    verdict.className = "verdict bad";
+    verdict.textContent = e.message;
+  }
+}
 
 /* ---------- quick sell ----------------------------------------------- */
 /* Five one-click prices for a position still open, each a fixed number of

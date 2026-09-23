@@ -15,14 +15,22 @@ from datetime import date
 from pathlib import Path
 
 
-from dotenv import load_dotenv
+from .env import EnvReader, read_env_file
 
 
 from .safety import mask_account, resolve_account_mode
+from .time_brackets import (
+    TimeBracketError,
+    parse_start,
+    parse_timezone,
+    parse_windows,
+)
+from . import paths
 
 #: Repository root -- the directory containing .env and secrets/.
-#: core/ -> service/ -> api/ -> the repo root, where .env lives.
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+#: Imported rather than recomputed; paths.py is the one place that counts
+#: folder depth.
+PROJECT_ROOT = paths.PROJECT_ROOT
 
 DEFAULT_PRIVATE_KEY_PATH = "./secrets/tiger_private_key.pem"
 
@@ -109,6 +117,20 @@ class Settings:
     #: mapping uses take_profit_percent / stop_loss_percent above.
     symbol_take_profit: dict
     symbol_stop_loss: dict
+
+    # OPTIONAL: bracket percentages that follow the clock, widening for the
+    # volatile stretch after the open and tightening afterwards. See
+    # core/time_brackets.py. These are the DEFAULTS -- the page can override
+    # them without a restart, so read them through
+    # core/time_bracket_settings.effective() rather than from here.
+    #
+    # They sit BELOW the per-symbol values deliberately: a symbol someone
+    # took the trouble to tune keeps its bracket all session. This replaces
+    # the global default only.
+    time_brackets_enabled: bool
+    time_brackets_timezone: str          # IANA name, e.g. Asia/Kolkata
+    time_brackets_start: str             # MARKET_OPEN, or a 24-hour HH:MM
+    time_brackets_windows: str           # minutes:take_profit:stop_loss list
     trade_expiry_date: str | None  # YYYY-MM-DD, or None to auto-select
     leg_time_in_force: str       # DAY or GTC
     require_live_trading: bool   # refuse a price not traded this minute
@@ -124,12 +146,28 @@ class Settings:
         return self.mode == "PAPER"
 
 
+#: The settings being read right now. `load_settings` points this at the
+#: market's own EnvReader for the duration of one load, so the ten `_get_*`
+#: helpers below do not each need a reader passed to them.
+#:
+#: It is a module-level value because the helpers are module-level functions,
+#: and it is ALWAYS restored in a `finally` -- see `load_settings`. Two
+#: markets never load at the same moment on the same thread.
+_active_reader: EnvReader | None = None
+
+
 def _get(name: str, default: str = "") -> str:
-    """Read an environment variable, stripped of surrounding whitespace.
+    """Read one setting, stripped of surrounding whitespace.
 
     Copy-pasted account IDs routinely arrive with a trailing space, which would
     otherwise silently fail the exact-match paper account check.
+
+    Reads from whichever market is currently being loaded. Outside a load it
+    falls back to the real environment, which is what the module-level
+    defaults below expect.
     """
+    if _active_reader is not None:
+        return _active_reader.get(name, default)
     return os.environ.get(name, default).strip()
 
 
@@ -138,6 +176,13 @@ TRADE_SYMBOLS_DEFAULT: tuple[str, ...] = ("TSLA", "AAPL", "QQQ")
 
 #: Offered as one-click sell prices, in dollars below the live premium.
 QUICK_SELL_STEPS_DEFAULT: tuple[float, ...] = (0.01, 0.02, 0.03, 0.05, 0.10)
+
+#: The clock-following bracket schedule, when TIME_BRACKETS_* are not set.
+#: Wide for the volatile opening stretch, tight for the rest of the session.
+#: Inert until TIME_BRACKETS_ENABLED is true.
+TIME_BRACKETS_TIMEZONE_DEFAULT = "Asia/Kolkata"
+TIME_BRACKETS_START_DEFAULT = "MARKET_OPEN"
+TIME_BRACKETS_WINDOWS_DEFAULT = "45:20:20, *:5:10"
 
 #: Shares per option contract. Used to check the quantity bands against the
 #: cash cap at startup; the real multiplier comes from the contract itself.
@@ -536,11 +581,29 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
     been explicitly opted into.
     """
     env_path = Path(env_file) if env_file is not None else PROJECT_ROOT / ".env"
-    if env_path.exists():
-        load_dotenv(env_path)
-    elif env_file is not None:
+    if env_file is not None and not env_path.exists():
         raise ConfigError(f"Env file not found: {env_path}")
 
+    # Read this market's file into its OWN box rather than into os.environ,
+    # which two markets would share. See env.py for the collision that
+    # prevents -- MAX_TRADE_CASH means dollars here and rupees elsewhere.
+    global _active_reader
+    previous_reader = _active_reader
+    _active_reader = EnvReader(read_env_file(env_path), source=env_path)
+    try:
+        return _build_settings(env_path)
+    finally:
+        # Always restored, including when validation raises, so a failed load
+        # cannot leave the next one reading the wrong market's file.
+        _active_reader = previous_reader
+
+
+def _build_settings(env_path: Path) -> Settings:
+    """Read and validate every setting. Called with a reader already active.
+
+    Split out of `load_settings` only so the reader can be restored in a
+    `finally` without indenting two hundred lines of validation.
+    """
     tiger_id = _get("TIGER_ID")
     account = _get("TIGER_ACCOUNT")
     paper_account = _get("TIGER_PAPER_ACCOUNT")
@@ -679,6 +742,28 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         "_STOP_LOSS_PERCENT", trade_symbols, maximum=100, inclusive=False
     )
 
+    # Bracket percentages that follow the clock. Stored as the raw text and
+    # validated here, so a malformed schedule refuses to boot rather than
+    # failing on the first trade of the evening. The page may override these
+    # later; its values go through the same parsers.
+    time_brackets_enabled = _get_bool("TIME_BRACKETS_ENABLED", default=False)
+    time_brackets_timezone = (
+        _get("TIME_BRACKETS_TIMEZONE") or TIME_BRACKETS_TIMEZONE_DEFAULT
+    )
+    time_brackets_start = _get("TIME_BRACKETS_START") or TIME_BRACKETS_START_DEFAULT
+    time_brackets_windows = (
+        _get("TIME_BRACKETS_WINDOWS") or TIME_BRACKETS_WINDOWS_DEFAULT
+    )
+
+    # Checked even when disabled: a schedule that is switched on mid-session
+    # should not be the moment its typo is discovered.
+    try:
+        parse_timezone(time_brackets_timezone)
+        parse_start(time_brackets_start)
+        parse_windows(time_brackets_windows)
+    except TimeBracketError as error:
+        raise ConfigError(f"TIME_BRACKETS: {error}") from error
+
     # A band whose top premium times its quantity exceeds MAX_TRADE_CASH would
     # propose orders the cap then refuses -- the table promising a size it
     # cannot deliver. Caught at startup, because discovering it mid-session
@@ -755,6 +840,10 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
         trade_symbols=trade_symbols,
         symbol_take_profit=symbol_take_profit,
         symbol_stop_loss=symbol_stop_loss,
+        time_brackets_enabled=time_brackets_enabled,
+        time_brackets_timezone=time_brackets_timezone,
+        time_brackets_start=time_brackets_start,
+        time_brackets_windows=time_brackets_windows,
         trade_expiry_date=trade_expiry_date,
         leg_time_in_force=leg_time_in_force,
         require_live_trading=require_live_trading,

@@ -45,6 +45,7 @@ That leaves ONE network call on a warm cache: place_order.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from fastapi import APIRouter, Request
 
@@ -52,6 +53,8 @@ from api.service.contract import select_contract
 from api.service.core.live_cache import CACHE
 from api.service.core.safety import build_order_record, write_order_record
 from api.service.core.symbol_settings import is_enabled, read_for
+from api.service.core import time_bracket_settings
+from api.service.core.time_brackets import resolve as resolve_window
 from api.service.market import (
     fetch_spot_price,
     MAX_RECENT_TRADE_AGE_SECONDS,
@@ -362,16 +365,62 @@ def resolve_entry_price(contract, settings) -> tuple[float, PriceSource]:
     )
 
 
+def resolve_time_window(moment: datetime | None = None):
+    """Find the schedule window this order falls in, if any.
+
+    Reads the page's saved schedule if there is one, otherwise .env. Both
+    are validated, so a schedule that cannot be read is treated as absent
+    rather than raising -- a convenience setting must not be able to stop a
+    trade.
+
+    Args:
+        moment: When to resolve for. Defaults to now; passed explicitly by
+            the tests and by the page's status line.
+
+    Returns:
+        The active window and the schedule's timezone name, or (None, "")
+        when the schedule is off, unusable, or the moment is before it
+        starts.
+    """
+    settings = get_settings()
+
+    try:
+        schedule = time_bracket_settings.effective(settings)
+    except Exception:
+        return None, ""
+
+    if not schedule.enabled:
+        return None, ""
+
+    now = moment or datetime.now(schedule.timezone)
+
+    window = resolve_window(
+        now,
+        windows=schedule.windows,
+        start=schedule.start,
+        display_timezone=schedule.timezone,
+    )
+    return window, schedule.timezone_name
+
+
 def resolve_bracket_percent(
-    *, supplied, symbol: str, per_symbol: dict, default: float, name: str
+    *, supplied, symbol: str, per_symbol: dict, default: float, name: str,
+    active_window=None, timezone_name: str = "",
 ) -> tuple[float, str]:
     """Return the bracket percentage to use, and say where it came from.
 
-    Three levels, highest first:
+    Five levels, highest first:
 
         1. supplied on the request  -- this trade only
-        2. the symbol's own setting -- e.g. TSLA_TAKE_PROFIT_PERCENT
-        3. the global default       -- TAKE_PROFIT_PERCENT
+        2. set for the symbol in the page
+        3. the symbol's own setting -- e.g. TSLA_TAKE_PROFIT_PERCENT
+        4. the active time window   -- see core/time_brackets.py
+        5. the global default       -- TAKE_PROFIT_PERCENT
+
+    The time window sits BELOW the per-symbol values on purpose. A symbol
+    somebody took the trouble to tune keeps its bracket all session; the
+    clock governs the symbols nobody has tuned, which is what the global
+    default used to do alone.
 
     Args:
         supplied: The request's value, or None.
@@ -379,6 +428,9 @@ def resolve_bracket_percent(
         per_symbol: The configured per-symbol mapping.
         default: The global default.
         name: What this is, for the reason string.
+        active_window: The window this order falls in, or None when the
+            schedule is off or the order is outside it.
+        timezone_name: The schedule's timezone, for the reason string.
 
     Returns:
         The percentage, and a sentence naming its source.
@@ -400,6 +452,14 @@ def resolve_bracket_percent(
             f"{value:g}% {name}, from {wanted}_"
             f"{name.upper().replace(' ', '_')}_PERCENT"
         )
+
+    if active_window is not None:
+        value = (
+            active_window.take_profit
+            if name == "take profit"
+            else active_window.stop_loss
+        )
+        return value, f"{value:g}% {name}, {active_window.label(timezone_name)}"
 
     return default, f"{default:g}% {name}, the configured default"
 
@@ -430,16 +490,28 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
     )
     entry_price, price_source = resolve_entry_price(contract, settings)
 
-    # Three levels, highest wins: what the request supplied, then this
-    # symbol's own setting, then the global default. The source is carried
-    # into the response -- a bracket that is not the one you expected should
-    # be traceable to the line of .env that set it.
+    # OPTIONAL: a bracket that follows the clock, wide just after the open
+    # and tight afterwards. See core/time_brackets.py -- this is None when
+    # the schedule is off, or when the order is before it starts.
+    #
+    # The clock is read ONCE, here, and the same instant decides both legs.
+    # Reading it twice would let an order placed on a window boundary take
+    # its take-profit from one window and its stop-loss from the next.
+    active_window, timezone_name = resolve_time_window()
+
+    # Five levels, highest wins: what the request supplied, this symbol's
+    # page setting, this symbol's own .env setting, the active time window,
+    # then the global default. The source is carried into the response -- a
+    # bracket that is not the one you expected should be traceable to the
+    # line of .env, the page field, or the window that set it.
     take_profit_percent, take_profit_source = resolve_bracket_percent(
         supplied=body.take_profit_percent,
         symbol=contract.underlying,
         per_symbol=settings.symbol_take_profit,
         default=settings.take_profit_percent,
         name="take profit",
+        active_window=active_window,
+        timezone_name=timezone_name,
     )
     stop_loss_percent, stop_loss_source = resolve_bracket_percent(
         supplied=body.stop_loss_percent,
@@ -447,6 +519,8 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
         per_symbol=settings.symbol_stop_loss,
         default=settings.stop_loss_percent,
         name="stop loss",
+        active_window=active_window,
+        timezone_name=timezone_name,
     )
 
     # OPTIONAL: scale the buy buffer to the premium instead of using a flat

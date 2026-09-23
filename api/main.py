@@ -37,7 +37,7 @@ from .errors import ApiError, classify_exception
 from .shared import get_settings
 from .routes import (
     close, export, health, market, orders, positions, symbol_settings,
-    trade, ui
+    time_brackets, trade, ui
 )
 
 #: Paths reachable without a key. Deliberately tiny: only the liveness check,
@@ -97,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(trade.router)
     app.include_router(close.router)
     app.include_router(symbol_settings.router)
+    app.include_router(time_brackets.router)
     app.include_router(ui.router)
 
     return app
