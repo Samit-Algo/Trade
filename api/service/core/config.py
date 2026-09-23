@@ -584,9 +584,8 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
     if env_file is not None and not env_path.exists():
         raise ConfigError(f"Env file not found: {env_path}")
 
-    # Read this market's file into its OWN box rather than into os.environ,
-    # which two markets would share. See env.py for the collision that
-    # prevents -- MAX_TRADE_CASH means dollars here and rupees elsewhere.
+    # Read the file into a box of its own rather than into os.environ, which
+    # is process-wide and cannot be undone. See env.py.
     global _active_reader
     previous_reader = _active_reader
     _active_reader = EnvReader(read_env_file(env_path), source=env_path)
