@@ -36,7 +36,8 @@ from api.service.core.config import ConfigError
 from .errors import ApiError, classify_exception
 from .shared import get_settings
 from .routes import (
-    close, export, health, market, orders, positions, symbol_settings,
+    armed, close, export, health, journey, market, orders, positions,
+    symbol_settings,
     time_brackets, trade, ui
 )
 
@@ -48,6 +49,12 @@ from .routes import (
 UNPROTECTED_PATHS = frozenset(
     {"/health", "/docs", "/redoc", "/openapi.json", "/ui"}
 )
+
+#: The form's own scripts. A separate prefix rather than a member of the set
+#: above, because it is the one place a PREFIX is allowed rather than an
+#: exact path -- and the route itself refuses any name that resolves outside
+#: the vendor folder, so the prefix cannot be walked out of.
+UNPROTECTED_PREFIX = "/ui/vendor/"
 
 API_KEY_HEADER = "X-API-Key"
 
@@ -94,9 +101,11 @@ def create_app() -> FastAPI:
     # /orders/export and try to read "export" as an integer.
     app.include_router(export.router)
     app.include_router(orders.router)
+    app.include_router(journey.router)
     app.include_router(trade.router)
     app.include_router(close.router)
     app.include_router(symbol_settings.router)
+    app.include_router(armed.router)
     app.include_router(time_brackets.router)
     app.include_router(ui.router)
 
@@ -117,7 +126,8 @@ def register_middleware(app: FastAPI) -> None:
         Compared with secrets.compare_digest so that a wrong key takes the
         same time to reject as a right one.
         """
-        if request.url.path in UNPROTECTED_PATHS:
+        if (request.url.path in UNPROTECTED_PATHS
+                or request.url.path.startswith(UNPROTECTED_PREFIX)):
             return await call_next(request)
 
         supplied_key = request.headers.get(API_KEY_HEADER, "")

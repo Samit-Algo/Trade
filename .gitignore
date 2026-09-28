@@ -28,6 +28,9 @@ symbol_settings.json
 # The clock-following bracket schedule, when changed from the page.
 time_bracket_settings.json
 
+# The arming switch, when flipped from the page.
+armed_settings.json
+
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from api.service.core import armed
 from ..shared import get_settings, orders_are_enabled
 from ..schemas import HealthResponse
 
@@ -24,7 +25,7 @@ def read_health() -> HealthResponse:
     return HealthResponse(
         status="ok",
         mode=settings.mode,
-        dry_run=settings.dry_run,
+        dry_run=armed.is_dry(settings),
         orders_enabled=enabled,
         market_data_source=settings.market_data_source,
         account_masked=settings.masked_account,

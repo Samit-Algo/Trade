@@ -53,3 +53,7 @@ SYMBOL_SETTINGS_PATH = PROJECT_ROOT / "symbol_settings.json"
 #: The clock-following bracket schedule, when it has been changed from the
 #: page. Absent means the TIME_BRACKETS_* values in .env are in force.
 TIME_BRACKET_SETTINGS_PATH = PROJECT_ROOT / "time_bracket_settings.json"
+
+#: The arming switch, when it has been flipped from the page. Absent means
+#: DRY_RUN in .env is in force.
+ARMED_SETTINGS_PATH = PROJECT_ROOT / "armed_settings.json"

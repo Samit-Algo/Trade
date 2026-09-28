@@ -9,6 +9,8 @@ happen, and what happened.
 
 from __future__ import annotations
 
+from . import armed
+
 import sys
 import json
 from datetime import datetime, timezone
@@ -139,7 +141,9 @@ def build_order_record(
         "submitted": False if stage == "SIMULATED" else None,
         "account_masked": mask_account(settings.account),
         "mode": settings.mode,
-        "dry_run": settings.dry_run,
+        # The live switch, not the startup value: the audit log has to
+        # say what was in force when THIS order was built.
+        "dry_run": armed.is_dry(settings),
         "contract": {
             "identifier": contract.identifier,
             "underlying": contract.underlying,

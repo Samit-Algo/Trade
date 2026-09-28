@@ -50,6 +50,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request
 
 from api.service.contract import select_contract
+from api.service.core import armed
 from api.service.core.live_cache import CACHE
 from api.service.core.safety import build_order_record, write_order_record
 from api.service.core.symbol_settings import is_enabled, read_for
@@ -637,7 +638,7 @@ def build_response(
     return TradeResponse(
         order_id=order_id,
         duplicate=False,
-        dry_run=settings.dry_run,
+        dry_run=armed.is_dry(settings),
         overrides_applied=list(plan.overrides),
         contract=shape_contract(contract),
         symbol=contract.underlying,
@@ -777,7 +778,7 @@ def read_trade_settings() -> dict:
     """
     settings = get_settings()
     return {
-        "dry_run": settings.dry_run,
+        "dry_run": armed.is_dry(settings),
         "mode": settings.mode,
         "quantity": settings.trade_quantity,
         "take_profit_percent": settings.take_profit_percent,
@@ -884,9 +885,11 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
             ),
         )
 
-    # 5. DRY_RUN on? Every price above is real; only the sending is skipped.
+    # 5. Switch SAFE? Every price above is real; only the sending is skipped.
     #    Nothing reached the broker, so the symbol is free again immediately.
-    if settings.dry_run:
+    #    Read live, so flipping the switch takes effect on the next trade
+    #    rather than at the next restart.
+    if armed.is_dry(settings):
         release_symbol(body.symbol)
         return remember_and_return(
             body.client_order_id, describe_only(plan, settings)

@@ -20,6 +20,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from api.service.core import armed
 from api.service.core.broker import build_quote_client, build_trade_client
 from api.service.core.config import Settings, load_settings
 
@@ -142,11 +143,13 @@ def orders_are_enabled(settings: Settings) -> tuple[bool, str]:
     Returns:
         A pair of (enabled, reason when not enabled).
     """
-    if settings.dry_run:
+    if armed.is_dry(settings):
+        _, source = armed.describe(settings)
         return False, (
-            "DRY_RUN is true, so no order can be submitted. This is Lock 3, and "
-            "it is on by default. Set DRY_RUN=false in .env only when you intend "
-            "to place real orders."
+            f"The switch is SAFE ({source}), so no order can be submitted. "
+            "This is Lock 3, and it is on by default. Arm it from the page, "
+            "or set DRY_RUN=false in .env, only when you intend to place "
+            "real orders."
         )
 
     if settings.mode != "PAPER":

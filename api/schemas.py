@@ -116,6 +116,43 @@ class SymbolSettingsResponse(BaseModel):
     default_stop_loss: float
 
 
+class ArmedSettingIn(BaseModel):
+    """The switch, as the page sets it.
+
+    Phrased as `armed` rather than `dry_run` because the page asks a
+    positive question -- "may this send orders?" -- and a tick box labelled
+    "dry run false" is a double negative in front of real money.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    armed: bool = Field(
+        default=False,
+        description="True lets orders reach the broker. False prices them "
+        "and returns everything, sending nothing. Closing a position is "
+        "unaffected either way.",
+    )
+
+
+class ArmedSettingOut(BaseModel):
+    """The switch, and what it means right now."""
+
+    dry_run: bool = Field(
+        description="The value every guard actually reads. True blocks sending."
+    )
+    armed: bool = Field(description="The inverse, for the page.")
+    source: str = Field(
+        description="'the UI' or '.env' -- which is in force. A stored "
+        "switch overrides .env until it is cleared."
+    )
+    env_dry_run: bool = Field(
+        description="What .env alone says, so the page can show what "
+        "clearing the override would return to."
+    )
+    mode: str = Field(description="PAPER or LIVE, so ARMED says what it arms.")
+    status: str = Field(description="One line the page can show as-is.")
+
+
 class TimeBracketWindowOut(BaseModel):
     """One window of the clock-following schedule, as the page shows it."""
 
@@ -905,6 +942,94 @@ class PositionDetailResponse(BaseModel):
         default=None,
         description="How much cushion is left before the stop, in percent.",
     )
+
+
+class BarOut(BaseModel):
+    """One minute of trading. Short names because there are hundreds."""
+
+    t: int = Field(description="Bar open, ms since epoch UTC.")
+    o: float
+    h: float = Field(description="The high. What the near-miss is made of.")
+    l: float
+    c: float
+    v: int
+
+
+class ExtremeOut(BaseModel):
+    """One end of the range a trade reached."""
+
+    price: float
+    time_ms: int
+    percent_from_entry: float
+
+
+class JourneyResponse(BaseModel):
+    """What one contract did between entry and exit.
+
+    Realised P&L cannot say a trade ran to within a whisker of its take
+    profit and reversed. These fields can, and that is the difference
+    between "it went nowhere" and "the target is set too far out".
+    """
+
+    order_id: str
+    identifier: str | None = None
+    underlying: str | None = None
+    strike: float | None = None
+    option_type: str | None = None
+
+    entry_price: float | None = Field(
+        default=None, description="The fill. Null when nothing filled."
+    )
+    exit_price: float | None = None
+    quantity: int | None = None
+    take_profit_price: float | None = None
+    stop_loss_price: float | None = None
+
+    entry_time_ms: int | None = None
+    exit_time_ms: int | None = None
+    is_open: bool = True
+
+    bars: list[BarOut] = Field(
+        default_factory=list,
+        description="One-minute OHLC over the trade, oldest first. A spike "
+        "inside a minute is in that bar's high; one BETWEEN bars is not "
+        "recorded anywhere.",
+    )
+
+    best: ExtremeOut | None = Field(
+        default=None, description="Highest premium reached after entry."
+    )
+    worst: ExtremeOut | None = None
+    progress_to_take_profit: float | None = Field(
+        default=None,
+        description="How far the peak got towards the take profit, 0-1. "
+        "0.96 means it came within 4% of the target and did not reach it.",
+    )
+    drawdown_to_stop_loss: float | None = None
+
+    high_water_pnl: float | None = Field(
+        default=None,
+        description="What the position was worth at its best, before "
+        "commission. Set against realised_pnl, this is the story.",
+    )
+    low_water_pnl: float | None = None
+    realised_pnl: float | None = None
+    unrealised_pnl: float | None = None
+
+    touched_take_profit: bool = False
+    touched_stop_loss: bool = Field(
+        default=False,
+        description="A high above the take profit does NOT prove the leg "
+        "misbehaved: the leg triggers on the quote the broker saw, and a "
+        "one-minute high can come from a print it never matched.",
+    )
+
+    truncated: bool = Field(
+        default=False,
+        description="True when the trade outran the bar limit. The TAIL is "
+        "dropped, never the entry.",
+    )
+    note: str | None = None
 
 
 class OrderHistoryRow(BaseModel):

@@ -106,6 +106,7 @@
   .pill.wait .v{ color:var(--warn); }
   .refresh { margin-left:auto; }
 
+
   /* Expiry on the left, the symbol table on the right. They are both "what
      every trade will use", so they belong on one line rather than stacked. */
   .topgrid { display:grid; grid-template-columns:minmax(300px, 1fr) minmax(360px, 1.15fr);
@@ -423,6 +424,8 @@
         color:var(--muted); }
   .sw[data-on="true"] .sw-label { color:var(--good); }
 
+
+
   /* ---------- empty state ---------- */
   .empty { display:grid; place-items:center; gap:9px; padding:52px 20px;
            text-align:center; color:var(--muted); }
@@ -454,6 +457,107 @@
   button { font:inherit; font-weight:600; padding:11px 14px; border-radius:6px;
            border:1px solid transparent; cursor:pointer; width:100%; }
   button:disabled { opacity:.45; cursor:not-allowed; }
+
+  /* ---------- the arming switch ----------
+     Defined AFTER the base .sw rules on purpose: it reuses the track and
+     knob but at a smaller size, and a rule that came first would simply
+     lose to them. The knob is absolute, so the BUTTON is the positioning
+     context -- without that it measures from the page and lands on top of
+     whatever pill sits beside it.
+
+     It also has to come after the generic `button` rule below, which
+     sets width:100% -- equal specificity, so source order decides, and
+     losing that one made the switch a full-width block in the status
+     row rather than a pill beside the others.
+
+     Red is the armed state, not a broken one. It is a warning. */
+  .armsw { position:relative; display:inline-flex; align-items:center; gap:8px;
+           width:auto; margin:0; padding:6px 13px 6px 8px; border-radius:20px;
+           font:inherit; font-size:12px; font-weight:700; letter-spacing:.05em;
+           line-height:1.25; cursor:pointer; white-space:nowrap; flex:0 0 auto;
+           border:1px solid var(--line); background:var(--card); }
+  .armsw .sw-track { width:32px; height:18px; border-radius:9px; flex:0 0 auto; }
+  .armsw .sw-knob { width:12px; height:12px; left:2px; top:2px; }
+  .armsw.safe { background:var(--good-soft); border-color:var(--good); color:var(--good); }
+  .armsw.safe .sw-track { background:var(--good); border-color:var(--good); }
+  .armsw.on { background:var(--bad-soft); border-color:var(--bad); color:var(--bad); }
+  .armsw.on .sw-track { background:var(--bad); border-color:var(--bad); }
+  /* 32 wide, 1px border each side, knob 12 at left 2 -> 32-2-12-2-2 = 14. */
+  .armsw.on .sw-knob { transform:translateX(14px); }
+  .armsw:hover { filter:brightness(1.07); }
+  .armsw[disabled] { opacity:.6; cursor:progress; }
+  .armsw-t { line-height:1; }
+
+  /* ---------- the trade journey ----------
+     Redesigned around one question: what happened to this trade? The old
+     panel showed everything at once and made the reader assemble the story.
+     This one tells it -- verdict, then picture, then the three prices that
+     matter, then the money.
+
+     Inline SVG, no library: the page loads no external scripts and works
+     with no network beyond the backend. */
+  .jrny { margin:0 0 16px; }
+
+  /* The verdict. First thing read, so it carries the colour. */
+  .jrnyhead { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+              margin-bottom:10px; }
+  .jrnytitle { font-size:11px; font-weight:700; letter-spacing:.1em;
+               text-transform:uppercase; color:var(--faint); }
+  .jrnybadge { display:inline-flex; align-items:center; gap:7px;
+               padding:5px 12px; border-radius:20px; font-size:12.5px;
+               font-weight:700; letter-spacing:.04em; white-space:nowrap;
+               border:1px solid var(--line); background:var(--card); }
+  .jrnybadge .dot { width:8px; height:8px; border-radius:50%;
+                    background:currentColor; flex:0 0 auto; }
+  .jrnybadge.win  { background:var(--good-soft); border-color:var(--good); color:var(--good); }
+  .jrnybadge.loss { background:var(--bad-soft);  border-color:var(--bad);  color:var(--bad); }
+  .jrnybadge.flat { background:var(--sunken); color:var(--muted); }
+  .jrnybadge.open { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
+  .jrnyrefresh { margin-left:auto; }
+
+  /* The one-line story, generated from the trade's own numbers. */
+  .jrnystory { font-size:13.5px; line-height:1.55; color:var(--ink);
+               margin:0 0 12px; }
+  .jrnystory b { font-weight:700; }
+  .jrnystory .pos { color:var(--good); }
+  .jrnystory .neg { color:var(--bad); }
+
+  /* The chart is drawn by Lightweight Charts into this box. Its own
+     canvas handles zoom, pan and the crosshair, so there is no SVG here
+     any more -- only the frame it lives in. */
+  .jrnychart { width:100%; height:320px; position:relative;
+               background:var(--sunken); border:1px solid var(--line);
+               border-radius:9px; overflow:hidden; }
+  /* The library writes its own attribution link; the panel already says
+     what the data is, and the link opens a site mid-review. */
+  .jrnychart #tv-attr-logo { display:none !important; }
+
+  /* Entry, best and exit. Drawn over the canvas rather than as a series:
+     the library strokes a segment between any real point and its
+     neighbours, so a one-point series always came with a stub of line
+     through the dot. Positioned from the chart's own coordinate API and
+     repositioned as it moves, so they still ride the zoom. */
+  .jrnydots { position:absolute; inset:0; pointer-events:none; }
+  .jrnydot { position:absolute; width:11px; height:11px; border-radius:50%;
+             transform:translate(-50%, -50%); border:2px solid var(--card);
+             box-shadow:0 0 0 1px rgba(0,0,0,.35); }
+  /* A hairline from the dot to the closing line, for the minutes where the
+     two differ -- a fill at 2.65 inside a minute that closed at 2.48 is a
+     real gap, and hiding it would be drawing a price that did not happen. */
+  .jrnydotstem { position:absolute; width:0; border-left:1px dashed;
+                 opacity:.55; transform:translateX(-50%); }
+
+  /* Hover readout. Text, not a floating box: a tooltip that follows the
+     pointer covers the candles it is describing. */
+  .jrnyhover { display:flex; gap:14px; flex-wrap:wrap; font-family:var(--mono);
+               font-size:11px; color:var(--muted); min-height:17px;
+               margin-top:6px; }
+  .jrnyhover b { color:var(--ink); font-weight:700; }
+  .jrnyhover .ph { color:var(--faint); }
+
+  .jrnynote { font-size:10.5px; color:var(--muted); line-height:1.5;
+              margin-top:10px; }
+
   .btn-test { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
   .btn-real { background:var(--bad); color:#fff; margin-top:10px; }
   .btn-small { width:auto; padding:8px 12px; font-size:12.5px; font-weight:500;
@@ -831,6 +935,11 @@
 </div>
 </div>
 
+<!-- TradingView Lightweight Charts, Apache 2.0. Vendored rather than
+     pulled from a CDN: this page loads no other external script and
+     works with no network beyond this backend, and a trading tool
+     should not depend on a third party being up to draw a chart. -->
+<script src="/ui/vendor/lightweight-charts.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const out = $("out");
@@ -902,8 +1011,12 @@ async function loadStatus() {
     strip.innerHTML = `
       <span class="pill ${canTrade ? "ok" : "no"}">
         <span class="k">Orders</span><span class="v">${canTrade ? "ENABLED" : "BLOCKED"}</span></span>
-      <span class="pill ${h.dry_run ? "wait" : "ok"}">
-        <span class="k">Dry run</span><span class="v">${h.dry_run ? "TRUE" : "FALSE"}</span></span>
+      <button type="button" class="armsw ${h.dry_run ? "safe" : "on"}" id="armswitch"
+              data-armed="${!h.dry_run}" role="switch" aria-checked="${!h.dry_run}"
+              title="${armTitle(h.dry_run)}">
+        <span class="sw-track"><span class="sw-knob"></span></span>
+        <span class="armsw-t">${h.dry_run ? "SAFE" : "ARMED"}</span>
+      </button>
       <span class="pill ${h.mode === "PAPER" ? "ok" : "no"}">
         <span class="k">Mode</span><span class="v">${h.mode}</span></span>
       <span class="pill"><span class="k">Account</span><span class="v">${h.account_masked}</span></span>
@@ -911,6 +1024,8 @@ async function loadStatus() {
 
     // The rail says whether this is armed, which is the one thing worth
     // knowing whatever you have scrolled to.
+    wireArmSwitch(h.dry_run);
+
     setRail(
       canTrade ? "Armed" : "Safe",
       h.mode === "PAPER" ? "Paper trading mode" : "LIVE account",
@@ -920,6 +1035,49 @@ async function loadStatus() {
     strip.innerHTML = `<span class="pill no"><span class="k">Server</span><span class="v">${e.message}</span></span>`;
     setRail("Unreachable", e.message, true);
   }
+}
+
+/* Built here rather than inline in the attribute: a multi-line ternary
+   inside title="..." ends the attribute at its own first quote, which left
+   the rest of the tag as stray text and collapsed the button. */
+function armTitle(dryRun) {
+  return dryRun
+    ? "SAFE - orders are priced and returned, nothing is sent. Click to arm."
+    : "ARMED - orders go to the broker. Click to make safe.";
+}
+
+/* The arming switch. It is DRY_RUN -- the same value every guard reads --
+   made flickable, so "do not trade for the first ten minutes" no longer
+   means killing the server and losing the caches with it.
+
+   Confirmed before arming, never before making safe: one of those
+   directions can spend money and the other cannot. */
+function wireArmSwitch(dryRun) {
+  const btn = $("armswitch");
+  if (!btn) return;
+
+  btn.onclick = async () => {
+    const arming = btn.dataset.armed !== "true";
+
+    if (arming && !confirm(
+        "Arm the switch?\n\nOrders will be sent to the broker from now on. " +
+        "Click Cancel to keep pricing them without sending.")) return;
+
+    btn.disabled = true;
+    try {
+      const r = await fetch("/trade/armed", {
+        method: "PUT", headers: hdrs(),
+        body: JSON.stringify({ armed: arming })
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      // Re-read rather than trust the click: loadStatus paints every pill
+      // from the server, so what is shown is what the server will do.
+      await loadStatus();
+    } catch (e) {
+      btn.disabled = false;
+      alert("Could not change the switch: " + e.message);
+    }
+  };
 }
 
 function setRail(title, sub, danger) {
@@ -2328,6 +2486,10 @@ function showOrder(o) {
 
   panel.dataset.panelKey = panelKey;
   panel.innerHTML = head +
+    // Its own container, filled asynchronously below. Kept OUT of the
+    // per-second repaint above: rebuilding it on that path would refetch
+    // the bars once a second and flicker the chart while being read.
+    `<div class="jrny" id="journey"></div>` +
     `<div class="banner ${banner[0]}">${banner[1]}</div>` + pnl +
     `<div id="quicksell"></div>` + `
     <table>
@@ -2366,6 +2528,459 @@ function showOrder(o) {
 
   // Priced from a live fetch, so the buttons land a moment after the panel.
   renderQuickSell(o);
+
+  // One fetch per trade, cached, so reopening a row costs nothing.
+  // The outcome comes from the history row, which already decided it. The
+  // journey payload does not carry it, and deriving it twice would let the
+  // badge disagree with the table beside it.
+  loadJourney(o.order_id_text, $("journey"), o.outcome);
+}
+
+/* ---------- the trade journey ----------------------------------------- */
+/* What happened to THIS trade, readable in two seconds.
+
+   The order of the panel is the order of the questions: what was the
+   verdict, what did the price do, where did I enter / peak / exit, and how
+   much of the profit I reached did I actually keep.
+
+   Everything is derived from the journey payload the backend already
+   returns plus the history row's outcome. Nothing is computed twice and
+   nothing is hardcoded. */
+
+const journeyCache = {};
+
+async function loadJourney(orderId, box, outcome) {
+  if (!orderId || !box) return;
+
+  const cached = journeyCache[orderId];
+  if (cached) { renderJourney(cached, box, outcome); return; }
+
+  box.innerHTML = `<div class="placeholder" style="padding:22px 0">Loading the chart…</div>`;
+  try {
+    const r = await fetch(`/orders/${encodeURIComponent(orderId)}/journey`, { headers: hdrs() });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    journeyCache[orderId] = d;
+    renderJourney(d, box, outcome);
+  } catch (e) {
+    box.innerHTML = `<div class="placeholder" style="padding:18px 0">No chart: ${e.message}</div>`;
+  }
+}
+
+function refreshJourney(orderId, outcome) {
+  delete journeyCache[orderId];
+  loadJourney(orderId, $("journey"), outcome);
+}
+
+function jrnyTime(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+function fmtNum(v) { return v == null ? "—" : Number(v).toFixed(2); }
+function fmtPct(v) { return v == null ? "" : (v >= 0 ? "+" : "") + Number(v).toFixed(2) + "%"; }
+function fmtMoney(v) { return v == null ? "—" : (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2); }
+
+/* A PUT gains when the premium rises, exactly as a CALL does: both are
+   BOUGHT here, so "favourable" is always up. If short positions are ever
+   added, this is the one place that has to learn the difference. */
+function jrnyIsLong() { return true; }
+
+/* The verdict, from the outcome the history row already decided. */
+function jrnyVerdict(d, outcome) {
+  const settled = d.is_open ? d.unrealised_pnl : d.realised_pnl;
+  const won = settled != null && settled > 0;
+
+  const map = {
+    TOOK_PROFIT:     ["win",  "TOOK PROFIT"],
+    STOPPED_OUT:     ["loss", "STOPPED OUT"],
+    CLOSED_MANUALLY: [won ? "win" : "loss", "CLOSED BY HAND"],
+    STILL_OPEN:      ["open", "STILL OPEN"],
+    EXPIRED:         ["flat", "EXPIRED"],
+  };
+  const hit = map[outcome];
+  if (hit) return { cls: hit[0], label: hit[1] };
+
+  if (d.is_open) return { cls: "open", label: "STILL OPEN" };
+  return { cls: won ? "win" : "loss", label: won ? "CLOSED UP" : "CLOSED DOWN" };
+}
+
+/* The one-line story. Built from the trade's own numbers, never fixed text.
+
+   The sentence worth telling is the gap between what the trade reached and
+   what it kept -- that is the thing a P&L figure alone cannot say. */
+function jrnyStory(d, verdict) {
+  const best = d.best;
+  const settled = d.is_open ? d.unrealised_pnl : d.realised_pnl;
+  const peakPct = best ? best.percent_from_entry : null;
+
+  const up = v => `<b class="pos">${v}</b>`;
+  const down = v => `<b class="neg">${v}</b>`;
+
+  if (!best) return "No minute bars, so what the price did in between is unknown.";
+
+  const reached = peakPct > 0
+    ? `Reached ${up(fmtPct(peakPct))} at ${jrnyTime(best.time_ms)}`
+    : `Never traded above the entry`;
+
+  if (verdict.cls === "open") {
+    const now = settled != null
+      ? ` and is ${settled >= 0 ? up(fmtMoney(settled)) : down(fmtMoney(settled))} right now`
+      : "";
+    return `${reached}${now}. Still open.`;
+  }
+
+  if (d.touched_take_profit) {
+    return `${reached} and hit the take profit. Kept ${
+      settled >= 0 ? up(fmtMoney(settled)) : down(fmtMoney(settled))}.`;
+  }
+
+  if (d.touched_stop_loss) {
+    const gave = (d.high_water_pnl != null && settled != null)
+      ? d.high_water_pnl - settled : null;
+    const tail = (gave != null && gave > 0.005 && peakPct > 0)
+      ? ` Gave back ${down("$" + gave.toFixed(2))}.`
+      : "";
+    return `${reached} before reversing and hitting the stop loss.${tail}`;
+  }
+
+  const closed = settled != null
+    ? ` Closed at ${settled >= 0 ? up(fmtMoney(settled)) : down(fmtMoney(settled))}.`
+    : "";
+  return `${reached}.${closed}`;
+}
+
+function renderJourney(d, box, outcome) {
+  if (!d || !d.bars || !d.bars.length) {
+    box.innerHTML = `<div class="placeholder" style="padding:18px 0">${
+      d && d.note ? d.note : "No minute bars for this trade."}</div>`;
+    return;
+  }
+
+  const verdict = jrnyVerdict(d, outcome);
+
+  box.innerHTML = `
+    <div class="jrnyhead">
+      <span class="jrnytitle">Trade journey</span>
+      <span class="jrnybadge ${verdict.cls}"><span class="dot"></span>${verdict.label}</span>
+      <button type="button" class="btn-small jrnyrefresh"
+              onclick="refreshJourney('${d.order_id}', '${outcome || ""}')">Refresh</button>
+    </div>
+    <p class="jrnystory">${jrnyStory(d, verdict)}</p>
+    ${jrnyChart(d)}
+    <div class="jrnyhover" id="jrnyhover">
+      <span class="ph">Hover the line for a minute's open, high, low and close.</span>
+    </div>
+    ${jrnyNotes(d)}`;
+
+  // After the box is in the document: the library measures the element.
+  jrnyDrawChart(d);
+}
+
+/* The chart. Three levels, bigger candles, and the peak as a marker rather
+   than a fourth line competing with them. */
+/* The chart, drawn by Lightweight Charts -- TradingView's own library, so
+   the zoom, pan and crosshair behave the way a trading chart is expected
+   to rather than the way I could hand-roll them in SVG.
+
+   One chart instance per open panel, torn down when another trade is
+   opened: the library holds a canvas and a resize observer, and leaking
+   one per click would accumulate all evening. */
+
+let jrnyLive = null;          // { chart, resize } for the panel on screen
+
+function jrnyDestroyChart() {
+  if (!jrnyLive) return;
+  try { window.removeEventListener("resize", jrnyLive.resize); } catch (_) {}
+  try { jrnyLive.chart.remove(); } catch (_) {}
+  jrnyLive = null;
+}
+
+/* Reads a CSS custom property, so the chart follows the page's theme
+   rather than carrying a second copy of the palette. */
+function jrnyCss(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name);
+  return (v || "").trim() || fallback;
+}
+
+function jrnyChart(d) {
+  // The box only. The library fills it once the element is in the document.
+  return `<div class="jrnychart" id="jrnychart"></div>`;
+}
+
+function jrnyDrawChart(d) {
+  const box = $("jrnychart");
+  if (!box || !window.LightweightCharts || !d.bars.length) return;
+
+  jrnyDestroyChart();
+
+  const ink   = jrnyCss("--ink", "#e2e7ef");
+  const muted = jrnyCss("--muted", "#96a0ae");
+  const line  = jrnyCss("--line", "#2a323d");
+  const good  = jrnyCss("--good", "#4fba93");
+  const bad   = jrnyCss("--bad", "#e2705d");
+  const accent = jrnyCss("--accent", "#7fa3e8");
+  const warn  = jrnyCss("--warn", "#d09a44");
+
+  const chart = LightweightCharts.createChart(box, {
+    width: box.clientWidth,
+    height: box.clientHeight,
+    layout: { background: { color: "transparent" }, textColor: muted, fontSize: 11 },
+    grid: { vertLines: { color: line }, horzLines: { color: line } },
+    rightPriceScale: { borderColor: line, scaleMargins: { top: 0.12, bottom: 0.12 } },
+    timeScale: {
+      borderColor: line,
+      timeVisible: true,      // minute bars, so the time matters
+      secondsVisible: false,
+      rightOffset: 2,
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: muted, width: 1, style: 2, labelBackgroundColor: accent },
+      horzLine: { color: muted, width: 1, style: 2, labelBackgroundColor: accent },
+    },
+    handleScroll: true,
+    handleScale: true,
+  });
+
+  /* Lightweight Charts renders a timestamp as UTC, with no option to pick
+     a zone. Everything else on this panel is local -- the story, the marks,
+     the hover -- so the axis read 13:46 beside a mark saying 07:19 PM.
+     
+     The fix is to shift the stamps by the local offset before handing them
+     over: the library then renders "UTC" values that are really local. The
+     offset is taken per bar, so a session spanning a daylight-saving change
+     does not slide by an hour halfway along.
+     
+     byTime below is keyed on the SAME shifted value, so the hover still
+     finds its bar. */
+  const toSec = ms => {
+    const at = new Date(ms);
+    return Math.floor((ms - at.getTimezoneOffset() * 60_000) / 1000);
+  };
+
+  /* A BASELINE series, split at the entry price: green where the trade was
+     in profit, red where it was under water, with the area filled either
+     side of that line.
+
+     This is why the library is worth having -- the split and its fill are
+     built in, and they stay correct through every zoom and pan. One colour
+     for the whole line only said how the trade ENDED; this says what it was
+     doing at every minute along the way. */
+  const series = chart.addBaselineSeries({
+    baseValue: { type: "price", price: d.entry_price },
+    topLineColor: good,
+    topFillColor1: good + "55",
+    topFillColor2: good + "10",
+    bottomLineColor: bad,
+    bottomFillColor1: bad + "10",
+    bottomFillColor2: bad + "55",
+    lineWidth: 2,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerRadius: 4,
+  });
+
+  // One point per minute. Duplicated stamps would be rejected by the
+  // library, so the set is de-duplicated and sorted first.
+  const seen = new Set();
+  const data = [];
+  d.bars.forEach(b => {
+    const t = toSec(b.t);
+    if (seen.has(t)) return;
+    seen.add(t);
+    data.push({ time: t, value: b.c });
+  });
+  data.sort((a, b) => a.time - b.time);
+
+  series.setData(data);
+
+  // The three levels, as price lines the library keeps pinned to the axis.
+  const level = (price, colour, title) => {
+    if (price == null) return;
+    series.createPriceLine({
+      price, color: colour, lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true, title,
+    });
+  };
+  level(d.take_profit_price, good, "TP");
+  level(d.entry_price, accent, "ENTRY");
+  level(d.stop_loss_price, bad, "SL");
+
+  const nearestSec = ms => {
+    let best = null, gap = Infinity;
+    data.forEach(pt => {
+      const g = Math.abs(pt.time - toSec(ms));
+      if (g < gap) { gap = g; best = pt.time; }
+    });
+    return best;
+  };
+
+  /* Entry, best and exit as filled dots sitting ON the line.
+
+     An overlay, not a series. Every series approach drew a stub of line
+     through the dot: the library strokes between a real point and its
+     neighbours, and point markers take the same colour as that line, so
+     there is no combination where the dot is coloured and the line is not.
+
+     The positions come from the chart's own coordinate API and are
+     recomputed whenever the visible range changes, so they track zoom and
+     pan exactly as a series would. */
+  const overlay = document.createElement("div");
+  overlay.className = "jrnydots";
+  box.appendChild(overlay);
+
+  const wanted = [];
+  if (d.entry_time_ms != null && d.entry_price != null) {
+    wanted.push({ t: nearestSec(d.entry_time_ms), v: d.entry_price, c: accent });
+  }
+  if (d.best) wanted.push({ t: nearestSec(d.best.time_ms), v: d.best.price, c: warn });
+  if (!d.is_open && d.exit_time_ms != null && d.exit_price != null) {
+    wanted.push({
+      t: nearestSec(d.exit_time_ms), v: d.exit_price,
+      c: d.touched_take_profit ? good : bad,
+    });
+  }
+
+  // The closing price of the minute each marker belongs to, so the stem
+  // knows where the line it is anchored to actually sits.
+  const closeAt = {};
+  data.forEach(pt => { closeAt[pt.time] = pt.value; });
+
+  const nodes = wanted.map(w => {
+    const el = document.createElement("div");
+    el.className = "jrnydot";
+    el.style.background = w.c;
+    overlay.appendChild(el);
+
+    const stem = document.createElement("div");
+    stem.className = "jrnydotstem";
+    stem.style.borderLeftColor = w.c;
+    overlay.appendChild(stem);
+
+    return { el, stem, w };
+  });
+
+  /* Each dot sits at the PRICE it marks.
+
+     This is not negotiable: the entry dot and the ENTRY level line are the
+     same number, and so are the exit dot and whichever of TP or SL it hit.
+     Drawing the dot anywhere else puts it visibly off its own line, which
+     is exactly the contradiction a reader spots first.
+
+     An earlier attempt pinned the dots to the closing line instead, because
+     a fill that landed mid-minute does not sit on a line of closes. That
+     traded one mismatch for a worse one -- the dot left the level it was
+     naming. The price is the anchor; the line is just where the price
+     happened to be at the end of each minute. */
+  const placeDots = () => {
+    nodes.forEach(({ el, stem, w }) => {
+      const x = chart.timeScale().timeToCoordinate(w.t);
+      const y = series.priceToCoordinate(w.v);
+      if (x == null || y == null) {
+        el.style.display = "none";
+        stem.style.display = "none";
+        return;
+      }
+      el.style.display = "";
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+
+      /* A hairline joining the dot to the closing line when the two are
+         apart. That gap is real -- a fill at 2.65 inside a minute that
+         closed at 2.48 is seventeen cents -- and the stem says "these
+         belong together" rather than leaving the dot looking stray. */
+      const close = closeAt[w.t];
+      const yClose = close != null ? series.priceToCoordinate(close) : null;
+      if (yClose == null || Math.abs(yClose - y) < 4) {
+        stem.style.display = "none";
+        return;
+      }
+      stem.style.display = "";
+      stem.style.left = x + "px";
+      stem.style.top = Math.min(y, yClose) + "px";
+      stem.style.height = Math.abs(yClose - y) + "px";
+    });
+  };
+
+  placeDots();
+  // Both ranges: the TIME range does not change when a zoom keeps the same
+  // first and last minute on screen, so subscribing to it alone left the
+  // dots behind on every scroll.
+  chart.timeScale().subscribeVisibleTimeRangeChange(placeDots);
+  chart.timeScale().subscribeVisibleLogicalRangeChange(placeDots);
+
+  /* The labels stay as markers: a dot alone does not say which is which,
+     and text drawn at the price would sit on the line it marks. */
+  const markers = [];
+  if (d.entry_time_ms != null) {
+    markers.push({
+      time: nearestSec(d.entry_time_ms), position: "belowBar",
+      color: accent, shape: "square", size: 0,
+      text: `ENTRY ${fmtNum(d.entry_price)}`,
+    });
+  }
+  if (d.best) {
+    markers.push({
+      time: nearestSec(d.best.time_ms), position: "aboveBar",
+      color: warn, shape: "square", size: 0,
+      text: `BEST ${fmtNum(d.best.price)} ${fmtPct(d.best.percent_from_entry)}`,
+    });
+  }
+  if (!d.is_open && d.exit_time_ms != null) {
+    markers.push({
+      time: nearestSec(d.exit_time_ms), position: "belowBar",
+      color: d.touched_take_profit ? good : bad, shape: "square", size: 0,
+      text: d.touched_take_profit ? "TAKE PROFIT" : (d.touched_stop_loss ? "STOP LOSS" : "EXIT"),
+    });
+  }
+  markers.sort((a, b) => a.time - b.time);
+  series.setMarkers(markers);
+
+  chart.timeScale().fitContent();
+
+  // The readout under the chart, driven by the library's own crosshair.
+  const out = $("jrnyhover");
+  const rest = `<span class="ph">Hover the line for a minute's open, high, low and close.</span>`;
+  const byTime = {};
+  d.bars.forEach(b => { byTime[toSec(b.t)] = b; });
+
+  chart.subscribeCrosshairMove(param => {
+    if (!out) return;
+    if (!param || !param.time || !byTime[param.time]) { out.innerHTML = rest; return; }
+    const b = byTime[param.time];
+    out.innerHTML =
+      `<span><b>${jrnyTime(b.t)}</b></span>`
+      + `<span>O <b>${b.o.toFixed(2)}</b></span>`
+      + `<span>H <b>${b.h.toFixed(2)}</b></span>`
+      + `<span>L <b>${b.l.toFixed(2)}</b></span>`
+      + `<span>C <b>${b.c.toFixed(2)}</b></span>`
+      + `<span>Vol <b>${b.v}</b></span>`;
+  });
+
+  const resize = () => {
+    if (!box.clientWidth) return;
+    chart.applyOptions({ width: box.clientWidth, height: box.clientHeight });
+    placeDots();
+  };
+  window.addEventListener("resize", resize);
+  // The series is kept on the handle too, so a test can ask the chart where
+  // a price lands and compare that against where a dot was placed.
+  jrnyLive = { chart, resize, series };
+
+}
+
+function jrnyNotes(d) {
+  const notes = ["One-minute bars: a spike inside a minute is in that bar's high, "
+               + "but a move between two bars is not recorded anywhere."];
+  if (d.touched_take_profit && d.exit_price != null
+      && d.take_profit_price != null && d.exit_price < d.take_profit_price) {
+    notes.push("A high at or above the take profit does not mean the leg failed: "
+             + "it rests with the broker and triggers on the quote the broker "
+             + "saw, which a one-minute high can outrun.");
+  }
+  if (d.truncated) notes.push("The chart is cut to the bar limit; the tail is missing, not the entry.");
+  if (d.note) notes.push(d.note);
+  return `<div class="jrnynote">${notes.join("<br>")}</div>`;
 }
 
 /* ---------- the request ---------- */

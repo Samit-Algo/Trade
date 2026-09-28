@@ -11,6 +11,7 @@ whole submission path.
 
 from __future__ import annotations
 
+from ..core import armed
 from ..core.broker import PLACE_ORDER_LIMITER
 from ..core.safety import assert_order_allowed
 from ..market import QuoteSnapshot
@@ -164,9 +165,14 @@ def _submit_option_order(
     )
 
     # THE GUARD. The last thing that happens before the wire, and the only
-    # place it needs to happen: settings is a frozen dataclass, so nothing
-    # between here and place_order can change the mode or the dry-run flag.
-    assert_order_allowed(settings.mode, settings.dry_run)
+    # place it needs to happen: nothing between here and place_order can
+    # change the mode or the switch.
+    #
+    # The dry-run state is read through armed.is_dry rather than off the
+    # frozen settings, because the page can flip it between requests. Read
+    # HERE, immediately before sending, so a switch thrown while a trade was
+    # being priced still stops it.
+    assert_order_allowed(settings.mode, armed.is_dry(settings))
 
     # Step 7 -- submit.
     print("-" * RULE_WIDTH)
@@ -359,7 +365,7 @@ def buy_option_with_bracket(
     )
 
     # THE GUARD -- the last thing before the wire. See the note above.
-    assert_order_allowed(settings.mode, settings.dry_run)
+    assert_order_allowed(settings.mode, armed.is_dry(settings))
 
     # Step 7 -- submit.
     print("-" * RULE_WIDTH)

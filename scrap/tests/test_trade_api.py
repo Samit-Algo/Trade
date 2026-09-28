@@ -419,13 +419,18 @@ class TestSafetyIsNotBypassed:
         assert "place_order" not in source
 
     def test_dry_run_returns_before_submitting(self):
-        """DRY_RUN is the switch: true means the route never reaches submit."""
+        """Dry run is the switch: true means the route never reaches submit.
+
+        Read through armed.is_dry rather than off the frozen settings, so
+        the page can flip it between requests -- but it is still the same
+        one value, checked before the send either way.
+        """
         import inspect
 
         from api.routes import trade
 
         source = inspect.getsource(trade.place_bracketed_trade)
-        assert source.index("if settings.dry_run:") < source.index(
+        assert source.index("if armed.is_dry(settings):") < source.index(
             "submit_and_record("
         )
 
