@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from backend.services.market import fetch_spot_price, list_expirations
-
 from ..schemas import ExpirationsResponse, ExpiryOut, SpotPriceResponse
 from ..errors import ApiError
-from ..shared import get_quote_client
+from ..shared import get_market
 
 router = APIRouter(tags=["market"])
 
@@ -27,8 +25,7 @@ def read_expirations(underlying: str) -> ExpirationsResponse:
     Returns:
         The expirations payload.
     """
-    quote_client = get_quote_client()
-    expiries = list_expirations(quote_client, underlying.upper())
+    expiries = get_market().expirations(underlying.upper())
 
     rows = []
     for expiry in expiries:
@@ -65,7 +62,7 @@ def read_spot_price(underlying: str) -> SpotPriceResponse:
     Raises:
         ApiError: 502 when no host would answer.
     """
-    spot = fetch_spot_price(underlying)
+    spot = get_market().spot_price(underlying)
 
     if spot is None:
         raise ApiError(

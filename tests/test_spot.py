@@ -148,6 +148,16 @@ class TestTheSecondHostIsTried:
         assert opened.call_count == len(QUOTE_HOSTS)
 
 
+class FakeMarket:
+    """A market whose spot price is whatever it was given."""
+
+    def __init__(self, spot):
+        self.spot = spot
+
+    def spot_price(self, _symbol):
+        return self.spot
+
+
 class TestTheEndpoint:
     def test_spot_is_registered(self):
         from backend.main import create_app
@@ -159,7 +169,7 @@ class TestTheEndpoint:
         from backend.api.errors import ApiError
         from backend.api.routes.market import read_spot_price
 
-        with patch("backend.api.routes.market.fetch_spot_price", return_value=None):
+        with patch("backend.api.routes.market.get_market", return_value=FakeMarket(None)):
             with pytest.raises(ApiError) as raised:
                 read_spot_price("AAPL")
 
@@ -170,7 +180,7 @@ class TestTheEndpoint:
         from backend.api.routes.market import read_spot_price
 
         fake = SpotPrice(symbol="AAPL", price=319.71, age_seconds=2.0)
-        with patch("backend.api.routes.market.fetch_spot_price", return_value=fake):
+        with patch("backend.api.routes.market.get_market", return_value=FakeMarket(fake)):
             response = read_spot_price("AAPL")
 
         assert response.is_live is True
@@ -180,7 +190,7 @@ class TestTheEndpoint:
         from backend.api.routes.market import read_spot_price
 
         fake = SpotPrice(symbol="AAPL", price=319.71, age_seconds=40000.0)
-        with patch("backend.api.routes.market.fetch_spot_price", return_value=fake):
+        with patch("backend.api.routes.market.get_market", return_value=FakeMarket(fake)):
             response = read_spot_price("AAPL")
 
         assert response.is_live is False

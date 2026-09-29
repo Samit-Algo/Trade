@@ -8,20 +8,15 @@ from fastapi import APIRouter, Query
 
 from backend.services.position import (
     DEFAULT_EXPIRY_WARNING_DAYS,
-    list_option_positions,
     value_position,
 )
-from tigeropen.common.consts import SecurityType
-
-from backend.core.broker import OPEN_ORDERS_LIMITER, ORDERS_LIMITER
 from backend.core.live_cache import CACHE, POSITIONS_MAX_AGE_SECONDS
 from backend.services.market import (
     BidSnapshot,
     QuoteSource,
-    fetch_recent_traded_price,
 )
 
-from ..shared import get_quote_client, get_settings, get_trade_client
+from ..shared import get_market, get_settings
 from ..errors import ApiError
 from ..schemas import (
     PositionDetailResponse,
@@ -101,7 +96,7 @@ def read_positions(
     # already has one.
     positions, _age = CACHE.get(
         "positions",
-        lambda: list_option_positions(get_trade_client()),
+        lambda: get_market().positions(),
         POSITIONS_MAX_AGE_SECONDS,
     )
 
@@ -183,33 +178,22 @@ def fetch_working_orders(identifier: str) -> list[WorkingOrderOut]:
     Returns:
         The open orders, each labelled with what it is for.
     """
-    settings = get_settings()
-    OPEN_ORDERS_LIMITER.wait()
-    raw = get_trade_client().get_open_orders(
-        account=settings.account, sec_type=SecurityType.OPT
-    )
-
     rows = []
-    for order in raw or []:
-        # Tiger renders the contract as "AAPL  260918C00360000/OPT/USD".
-        contract_text = str(getattr(order, "contract", "")).split("/")[0]
-        if contract_text != identifier:
+    for order in get_market().open_orders():
+        if order.identifier != identifier:
             continue
 
-        action = str(getattr(order, "action", "") or "")
-        order_type = getattr(order, "order_type", None)
         rows.append(
             WorkingOrderOut(
                 # A STRING on purpose. See HANDOVER 3g: these exceed 2^53 and
                 # a JavaScript client silently rounds them.
-                order_id_text=str(getattr(order, "id", "") or ""),
-                action=action,
-                order_type=str(order_type) if order_type else None,
-                price=getattr(order, "limit_price", None)
-                or getattr(order, "aux_price", None),
-                time_in_force=str(getattr(order, "time_in_force", "") or "") or None,
-                status=str(getattr(order, "status", "")).split(".")[-1] or None,
-                role=classify_working_order(action, str(order_type or "")),
+                order_id_text=str(order.id or ""),
+                action=order.action,
+                order_type=order.order_type or None,
+                price=order.limit_price or order.aux_price,
+                time_in_force=order.time_in_force,
+                status=order.status or None,
+                role=classify_working_order(order.action, order.order_type),
             )
         )
     return rows
@@ -229,25 +213,20 @@ def find_entry_fill_time(identifier: str) -> datetime | None:
     Returns:
         When the entry filled, or None when it cannot be determined.
     """
-    settings = get_settings()
-    ORDERS_LIMITER.wait()
     try:
-        raw = get_trade_client().get_orders(
-            account=settings.account, sec_type=SecurityType.OPT, limit=100
-        )
+        orders = get_market().orders(100)
     except Exception:  # noqa: BLE001 -- a missing clock must not hide a position
         return None
 
     newest = None
-    for order in raw or []:
-        contract_text = str(getattr(order, "contract", "")).split("/")[0]
-        if contract_text != identifier:
+    for order in orders:
+        if order.identifier != identifier:
             continue
-        if str(getattr(order, "action", "")).upper() != "BUY":
+        if order.action != "BUY":
             continue
-        if "FILLED" not in str(getattr(order, "status", "")).upper():
+        if "FILLED" not in order.status:
             continue
-        filled_ms = getattr(order, "trade_time", None)
+        filled_ms = order.trade_time
         if filled_ms and (newest is None or filled_ms > newest):
             newest = filled_ms
 
@@ -274,7 +253,8 @@ def read_position_detail(identifier: str) -> PositionDetailResponse:
     Raises:
         ApiError: 404 when the position is not held.
     """
-    positions = list_option_positions(get_trade_client())
+    market = get_market()
+    positions = market.positions()
     held = next((p for p in positions if p.identifier == identifier), None)
 
     if held is None:
@@ -284,7 +264,7 @@ def read_position_detail(identifier: str) -> PositionDetailResponse:
             message=f"No open position for {identifier!r}.",
         )
 
-    recent = fetch_recent_traded_price(get_quote_client(), identifier)
+    recent = market.recent_traded_price(identifier)
 
     cost_basis = held.average_cost * held.multiplier * held.quantity
     current_value = None

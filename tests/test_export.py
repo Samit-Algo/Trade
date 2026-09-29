@@ -277,7 +277,7 @@ class TestRealisedFromFills:
         from types import SimpleNamespace
 
         return SimpleNamespace(
-            contract=f"{contract}/OPT/USD",
+            identifier=contract,
             action=action,
             filled_cash_amount=amount,
             filled=quantity,
@@ -417,7 +417,7 @@ class TestAnOpenPositionIsNotALoss:
         self._clock = getattr(self, "_clock", 0) + 1000
         stamp = 1789740000000 + self._clock
         return SimpleNamespace(
-            contract=f"{contract}/OPT/USD",
+            identifier=contract,
             action=action,
             filled_cash_amount=amount,
             filled=quantity,

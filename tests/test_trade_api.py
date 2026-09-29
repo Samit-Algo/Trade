@@ -365,10 +365,14 @@ class TestTheEndpointIsRegisteredAndProtected:
 class TestSafetyIsNotBypassed:
     """The fast path must not have become a way around the locks."""
 
-    def test_the_route_reuses_the_library_submission_function(self):
+    def test_the_route_submits_through_the_market(self):
+        """The market's buy ends in submit.py, behind assert_order_allowed."""
+        import inspect
+
         from backend.api.routes import trade
 
-        assert hasattr(trade, "buy_option_with_bracket")
+        source = inspect.getsource(trade.submit_and_record)
+        assert "get_market().buy_option_with_bracket(" in source
 
     def test_the_route_contains_no_place_order_call_of_its_own(self):
         source = (

@@ -37,62 +37,56 @@ class FakePosition:
         self.expiry_compact = "20260914"
 
 
+class FakeMarket:
+    """A market holding exactly what it was given."""
+
+    def __init__(self, held):
+        self.held = held
+
+    def positions(self):
+        return self.held
+
+
 class TestFindPosition:
     """Closing something that is not held must never become a short sale."""
 
-    def test_a_held_position_is_found(self, monkeypatch):
+    def test_a_held_position_is_found(self):
         held = FakePosition("NVDA  260914C00215000")
-        monkeypatch.setattr(
-            "backend.api.routes.close.list_option_positions", lambda _client: [held]
-        )
 
-        found = find_position("NVDA  260914C00215000", None)
+        found = find_position("NVDA  260914C00215000", FakeMarket([held]))
 
         assert found is held
 
-    def test_surrounding_whitespace_is_ignored(self, monkeypatch):
+    def test_surrounding_whitespace_is_ignored(self):
         held = FakePosition("NVDA  260914C00215000")
-        monkeypatch.setattr(
-            "backend.api.routes.close.list_option_positions", lambda _client: [held]
-        )
 
-        assert find_position("  NVDA  260914C00215000  ", None) is held
+        assert find_position("  NVDA  260914C00215000  ", FakeMarket([held])) is held
 
-    def test_the_inner_spacing_must_match_exactly(self, monkeypatch):
+    def test_the_inner_spacing_must_match_exactly(self):
         """Tiger's identifiers carry meaningful padding -- one space is a
         different contract from two, so a near miss is refused rather than
         matched to whatever looks close."""
-        monkeypatch.setattr(
-            "backend.api.routes.close.list_option_positions",
-            lambda _client: [FakePosition("NVDA  260914C00215000")],
-        )
+        market = FakeMarket([FakePosition("NVDA  260914C00215000")])
 
         with pytest.raises(ApiError) as caught:
-            find_position("NVDA 260914C00215000", None)
+            find_position("NVDA 260914C00215000", market)
 
         assert caught.value.status_code == 404
         assert caught.value.error_code == "POSITION_NOT_HELD"
 
-    def test_nothing_held_is_refused_not_sold_short(self, monkeypatch):
-        monkeypatch.setattr(
-            "backend.api.routes.close.list_option_positions", lambda _client: []
-        )
-
+    def test_nothing_held_is_refused_not_sold_short(self):
         with pytest.raises(ApiError) as caught:
-            find_position("NVDA  260914C00215000", None)
+            find_position("NVDA  260914C00215000", FakeMarket([]))
 
         assert caught.value.status_code == 404
 
-    def test_a_different_contract_does_not_match(self, monkeypatch):
+    def test_a_different_contract_does_not_match(self):
         """Same underlying, different strike. Selling the wrong contract is
         worse than selling nothing."""
-        monkeypatch.setattr(
-            "backend.api.routes.close.list_option_positions",
-            lambda _client: [FakePosition("NVDA  260914C00220000")],
-        )
+        market = FakeMarket([FakePosition("NVDA  260914C00220000")])
 
         with pytest.raises(ApiError):
-            find_position("NVDA  260914C00215000", None)
+            find_position("NVDA  260914C00215000", market)
 
 
 class TestResolveSellLimit:
@@ -193,7 +187,7 @@ class TestNothingFailsAfterSubmission:
         building the response cannot raise.
         """
         source = self.source()
-        after_submission = source.split("outcome, estimate = sell_option(")[1]
+        after_submission = source.split("outcome, estimate = market.sell_option(")[1]
         response_block = after_submission.split("return ClosePositionResponse(")[1]
 
         assert "position." not in response_block
@@ -201,7 +195,7 @@ class TestNothingFailsAfterSubmission:
 
     def test_the_guards_run_before_the_sell(self):
         source = self.source()
-        sell_at = source.index("outcome, estimate = sell_option(")
+        sell_at = source.index("outcome, estimate = market.sell_option(")
 
         for guard in ("find_position(", "resolve_sell_limit(", "QUANTITY_EXCEEDS_POSITION"):
             assert source.index(guard) < sell_at, f"{guard} must run before the sell"

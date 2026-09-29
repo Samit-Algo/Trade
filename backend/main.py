@@ -35,10 +35,9 @@ from fastapi.responses import JSONResponse
 from backend.core.config import ConfigError
 from backend.core.live_cache import CACHE
 from backend.services.market.price_log import PriceRecorder
-from backend.services.position import list_option_positions
 
 from .api.errors import ApiError, classify_exception
-from .api.shared import get_settings, get_trade_client
+from .api.shared import get_market, get_settings
 from .api.routes import (
     armed, close, export, health, journey, market, orders, positions,
     symbol_settings,
@@ -71,7 +70,7 @@ def _held_positions(max_age_seconds: float):
     """
     return CACHE.get(
         "positions",
-        lambda: list_option_positions(get_trade_client()),
+        lambda: get_market().positions(),
         max_age_seconds,
     )
 

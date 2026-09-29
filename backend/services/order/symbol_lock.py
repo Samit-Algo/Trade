@@ -26,11 +26,6 @@ from __future__ import annotations
 
 import threading
 
-from tigeropen.common.consts import SecurityType
-
-from backend.core.broker import OPEN_ORDERS_LIMITER
-from backend.services.position import list_option_positions
-
 
 #: Underlyings currently inside place_bracketed_trade in THIS process, held
 #: from the moment the check passes until the request finishes. Without it two
@@ -44,56 +39,30 @@ class SymbolBusy(Exception):
     """Raised when the underlying already has a live order or position."""
 
 
-def _underlying_of(order) -> str:
-    """Read the underlying from an open order.
-
-    Tiger renders the contract as "QQQ  260918C00360000/OPT/USD". The
-    underlying is the first whitespace-separated token of the part before the
-    first slash.
-
-    Args:
-        order: One raw order from get_open_orders.
-
-    Returns:
-        The underlying symbol in upper case, or "" when it cannot be read.
-    """
-    contract_text = str(getattr(order, "contract", "")).split("/")[0]
-    return contract_text.strip().split(" ")[0].strip().upper()
-
-
-def find_open_orders_for(underlying: str, trade_client, account: str | None):
+def find_open_orders_for(underlying: str, market) -> list[str]:
     """List live orders on the broker's book for one underlying.
 
     Args:
         underlying: The underlying symbol.
-        trade_client: A tigeropen TradeClient.
-        account: Account ID, or None for the configured default.
+        market: The Market the trade is for.
 
     Returns:
         A list of short descriptions, one per live order.
     """
-    OPEN_ORDERS_LIMITER.wait()
-    raw = trade_client.get_open_orders(account=account, sec_type=SecurityType.OPT)
-
     wanted = underlying.strip().upper()
-    descriptions = []
-    for order in raw or []:
-        if _underlying_of(order) != wanted:
-            continue
-        contract_text = str(getattr(order, "contract", "")).split("/")[0]
-        status = str(getattr(order, "status", "")).split(".")[-1]
-        action = str(getattr(order, "action", "") or "")
-        descriptions.append(f"{contract_text} {action} ({status})")
-
-    return descriptions
+    return [
+        f"{order.identifier} {order.action} ({order.status})"
+        for order in market.open_orders()
+        if order.underlying == wanted
+    ]
 
 
-def find_positions_for(underlying: str, trade_client):
+def find_positions_for(underlying: str, market) -> list[str]:
     """List held option positions for one underlying.
 
     Args:
         underlying: The underlying symbol.
-        trade_client: A tigeropen TradeClient.
+        market: The Market the trade is for.
 
     Returns:
         A list of short descriptions, one per held position.
@@ -101,12 +70,12 @@ def find_positions_for(underlying: str, trade_client):
     wanted = underlying.strip().upper()
     return [
         f"{position.describe()} x{position.quantity:g}"
-        for position in list_option_positions(trade_client)
+        for position in market.positions()
         if position.underlying.strip().upper() == wanted
     ]
 
 
-def claim_symbol(underlying: str, trade_client, account: str | None) -> None:
+def claim_symbol(underlying: str, market) -> None:
     """Refuse the trade if this underlying is already busy, else reserve it.
 
     The local reservation is taken FIRST and the broker read happens inside
@@ -114,8 +83,7 @@ def claim_symbol(underlying: str, trade_client, account: str | None) -> None:
 
     Args:
         underlying: The underlying about to be traded.
-        trade_client: A tigeropen TradeClient.
-        account: Account ID, or None for the configured default.
+        market: The Market the trade is for.
 
     Raises:
         SymbolBusy: When an order or position for this underlying is live.
@@ -132,7 +100,7 @@ def claim_symbol(underlying: str, trade_client, account: str | None) -> None:
 
     # From here the reservation is held, so any failure must release it.
     try:
-        working = find_open_orders_for(wanted, trade_client, account)
+        working = find_open_orders_for(wanted, market)
         if working:
             raise SymbolBusy(
                 f"{wanted} already has an order on the book, so no new "
@@ -140,7 +108,7 @@ def claim_symbol(underlying: str, trade_client, account: str | None) -> None:
                 "Cancel it or wait for it to fill or be closed."
             )
 
-        held = find_positions_for(wanted, trade_client)
+        held = find_positions_for(wanted, market)
         if held:
             raise SymbolBusy(
                 f"{wanted} is already held, so no new {wanted} trade was "

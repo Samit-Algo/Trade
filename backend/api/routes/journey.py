@@ -17,13 +17,13 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter
 
-from backend.services.market.bars import MAX_BARS, fetch_minute_bars
+from backend.services.market.bars import MAX_BARS
 from backend.services.market.price_log import PRICE_LOG
 from backend.services.order import journey as journey_service
 
 from ..errors import ApiError
 from ..schemas import BarOut, ExtremeOut, JourneyResponse, PricePointOut
-from ..shared import get_quote_client
+from ..shared import get_market
 
 router = APIRouter(tags=["orders"])
 
@@ -175,9 +175,7 @@ def read_journey(order_id: int) -> JourneyResponse:
         )
 
     begin, end = _window(row)
-    bars = fetch_minute_bars(
-        get_quote_client(), row.identifier, begin=begin, end=end
-    )
+    bars = get_market().minute_bars(row.identifier, begin=begin, end=end)
 
     filled = _parse(row.filled_at)
     exited = _parse(row.exited_at)

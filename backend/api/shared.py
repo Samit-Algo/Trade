@@ -1,8 +1,8 @@
 """Shared plumbing: the objects and helpers every route needs.
 
-The Tiger clients are expensive to construct -- each one reads and parses the
-private key -- and the SDK's own docs recommend one module-level QuoteClient
-reused rather than many. So they are built lazily on first use and cached.
+Routes reach a broker only through a Market (`get_market`). Each market is
+built once and cached, and builds its own broker clients lazily -- they are
+expensive, each one reads and parses the private key.
 
 Nothing here contains business logic. It hands routes the same objects the
 CLI scripts build for themselves, so both entry points call the same library
@@ -21,19 +21,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.core import armed, paths
-from backend.core.broker import build_quote_client, build_trade_client
 from backend.core.config import Settings, load_settings
+from backend.markets.base import Market
 
 from .order_rules import IdempotencyStore
 
-# REENTRANT on purpose. get_quote_client() holds this lock and then calls
+# REENTRANT on purpose. get_market() holds this lock and then calls
 # get_settings(), which takes it again on the same thread. A plain Lock
 # deadlocks there -- and it deadlocks on the first real request, not at
 # import, so it looks like a hang rather than a crash.
 _lock = threading.RLock()
 _settings: Settings | None = None
-_quote_client = None
-_trade_client = None
+_markets: dict[str, Market] = {}
 _idempotency_store: IdempotencyStore | None = None
 _contract_cache: dict = {}
 
@@ -51,34 +50,31 @@ def get_settings() -> Settings:
         return _settings
 
 
-def get_quote_client():
-    """Return the shared QuoteClient.
-
-    Built with grab_permission=False, exactly as the CLI does: claiming market
-    data device access would take primary-device status away from whatever held
-    it, such as the Tiger app on a phone. Nothing here needs it.
-
-    Returns:
-        A tigeropen QuoteClient.
-    """
-    global _quote_client
-    with _lock:
-        if _quote_client is None:
-            _quote_client = build_quote_client(get_settings(), grab_permission=False)
-        return _quote_client
+#: The markets this service can trade. Only US so far.
+DEFAULT_MARKET = "US"
 
 
-def get_trade_client():
-    """Return the shared TradeClient.
+def get_market(market_id: str = DEFAULT_MARKET) -> Market:
+    """Return the market a request is about, built once.
+
+    Args:
+        market_id: Which market, e.g. "US".
 
     Returns:
-        A tigeropen TradeClient.
+        The Market. Its broker clients are built on first use, not here.
+
+    Raises:
+        KeyError: For a market this service does not trade.
     """
-    global _trade_client
+    wanted = market_id.strip().upper()
     with _lock:
-        if _trade_client is None:
-            _trade_client = build_trade_client(get_settings())
-        return _trade_client
+        if wanted not in _markets:
+            if wanted != "US":
+                raise KeyError(f"No market named {market_id!r}.")
+            from backend.markets.us import UsMarket
+
+            _markets[wanted] = UsMarket(get_settings())
+        return _markets[wanted]
 
 
 def get_idempotency_store() -> IdempotencyStore:
@@ -114,9 +110,8 @@ def get_cached_contract(key: tuple, build):
     Returns:
         The cached or freshly built contract.
     """
-    from backend.services.market import today_in_market_timezone
-
-    dated_key = (today_in_market_timezone().isoformat(),) + tuple(key)
+    market = get_market()
+    dated_key = (market.profile.id, market.profile.today().isoformat()) + tuple(key)
     with _lock:
         if dated_key in _contract_cache:
             return _contract_cache[dated_key]

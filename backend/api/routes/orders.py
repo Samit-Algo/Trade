@@ -14,25 +14,16 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Query
-from tigeropen.common.consts import SecurityType
 
-from backend.services.market import fetch_recent_traded_price
-from backend.core.broker import ORDERS_LIMITER
 from backend.services.export import realised_by_contract, realised_total
 from backend.core.live_cache import (
     CACHE,
     ORDERS_MAX_AGE_SECONDS,
     POSITIONS_MAX_AGE_SECONDS,
 )
-from backend.services.contract import parse_identifier
-from backend.services.position import list_option_positions
-from backend.services.order import (
-    get_attached_legs,
-    get_order_status,
-    normalise_status,
-)
+from backend.services.order import normalise_status
 
-from ..shared import get_quote_client, get_settings, get_trade_client
+from ..shared import get_market
 from ..errors import ApiError
 from ..schemas import (
     FillOutcomeOut,
@@ -87,8 +78,7 @@ def read_order_history(
     Returns:
         The orders, with an outcome and realised P&L on each.
     """
-    settings = get_settings()
-    ORDERS_LIMITER.wait()
+    market = get_market()
     if fresh:
         # Everything this endpoint reads: the order list, and the price of
         # every open position. Dropped together so one click gives one
@@ -101,9 +91,7 @@ def read_order_history(
     # see backend/core/live_cache.py.
     raw, _age = CACHE.get(
         f"orders:{limit}",
-        lambda: get_trade_client().get_orders(
-            account=settings.account, sec_type=SecurityType.OPT, limit=limit
-        ),
+        lambda: market.orders(limit),
         ORDERS_MAX_AGE_SECONDS,
     )
 
@@ -122,10 +110,8 @@ def read_order_history(
         # parent_id, so without this it would be listed as its OWN entry: a
         # "bought at" row showing the price it was SOLD at. It belongs to the
         # BUY it closes, which is matched by contract below.
-        action = str(getattr(order, "action", "") or "").upper()
-        if action == "SELL":
-            contract_text = str(getattr(order, "contract", "")).split("/")[0]
-            manual_sells.setdefault(contract_text, []).append(order)
+        if order.action == "SELL":
+            manual_sells.setdefault(order.identifier, []).append(order)
             continue
 
         parents.append(order)
@@ -134,9 +120,7 @@ def read_order_history(
     # is open. Read once for the whole listing rather than per row.
     try:
         positions, _age = CACHE.get(
-            "positions",
-            lambda: list_option_positions(get_trade_client()),
-            POSITIONS_MAX_AGE_SECONDS,
+            "positions", market.positions, POSITIONS_MAX_AGE_SECONDS
         )
         held_now = {p.identifier.strip() for p in positions or []}
         holdings_known = True
@@ -147,8 +131,8 @@ def read_order_history(
 
     rows = []
     for parent in parents:
-        legs = legs_by_parent.get(getattr(parent, "id", None), [])
-        identifier_for_match = str(getattr(parent, "contract", "")).split("/")[0]
+        legs = legs_by_parent.get(parent.id, [])
+        identifier_for_match = parent.identifier
         # AFTER this entry filled, not merely on the same contract. The same
         # strike and expiry is bought and sold repeatedly in a session, so
         # matching on the contract alone hands an old sell to a new BUY and
@@ -166,11 +150,9 @@ def read_order_history(
             parent, legs, closes, still_held=still_held
         )
 
-        identifier = str(getattr(parent, "contract", "")).split("/")[0]
-        # parse_identifier returns a 4-tuple, not an object. This is its
-        # first real caller -- it was written in Phase 3 and marked dormant.
+        identifier = parent.identifier
         try:
-            underlying, expiry_text, put_call, strike = parse_identifier(identifier)
+            underlying, expiry_text, put_call, strike = market.parse_identifier(identifier)
         except Exception:  # noqa: BLE001 - a malformed id must not hide the row
             underlying = identifier.split()[0] if identifier else "?"
             expiry_text = put_call = strike = None
@@ -350,7 +332,7 @@ def read_order(order_id: int) -> FillOutcomeOut:
     """
     from backend.services.order import calculate_actual_cash, classify_fill
 
-    order = get_order_status(get_trade_client(), order_id)
+    order = get_market().order(order_id)
     if order is None:
         raise ApiError(
             status_code=404,
@@ -358,14 +340,14 @@ def read_order(order_id: int) -> FillOutcomeOut:
             message=f"The broker returned nothing for order {order_id}.",
         )
 
-    requested = int(getattr(order, "quantity", 0) or 0)
-    filled = int(getattr(order, "filled", 0) or 0)
-    average = getattr(order, "avg_fill_price", None)
-    multiplier = float(getattr(getattr(order, "contract", None), "multiplier", 100) or 100)
+    requested = int(order.quantity)
+    filled = int(order.filled)
+    average = order.avg_fill_price
+    multiplier = order.multiplier or 100.0
 
     return FillOutcomeOut(
         order_id=order_id,
-        status=normalise_status(getattr(order, "status", None)),
+        status=normalise_status(order.status),
         outcome=classify_fill(requested, filled),
         requested_quantity=requested,
         filled_quantity=filled,
@@ -375,7 +357,7 @@ def read_order(order_id: int) -> FillOutcomeOut:
         ),
         settled=True,
         poll_attempts=1,
-        broker_reason=str(getattr(order, "reason", "") or "") or None,
+        broker_reason=order.reason,
     )
 
 
@@ -393,7 +375,7 @@ def read_order_legs(order_id: int) -> OrderLegsResponse:
     Returns:
         The attached legs.
     """
-    raw_legs = get_attached_legs(get_trade_client(), order_id)
+    raw_legs = get_market().attached_legs(order_id)
 
     rows = []
     for raw_leg in raw_legs:
@@ -448,7 +430,7 @@ def position_market_price(identifier: str) -> float | None:
     try:
         positions, _age = CACHE.get(
             "positions",
-            lambda: list_option_positions(get_trade_client()),
+            lambda: get_market().positions(),
             POSITIONS_MAX_AGE_SECONDS,
         )
     except Exception:  # noqa: BLE001 -- fall back to the bars
@@ -485,7 +467,7 @@ def live_price(identifier: str) -> tuple[float | None, float | None]:
     try:
         recent, _age = CACHE.get(
             f"price:{identifier}",
-            lambda: fetch_recent_traded_price(get_quote_client(), identifier),
+            lambda: get_market().recent_traded_price(identifier),
             POSITIONS_MAX_AGE_SECONDS,
         )
     except Exception:  # noqa: BLE001 -- a missing price must not hide the row
@@ -516,15 +498,10 @@ def _total_from_fills(rows) -> float | None:
         return 0.0
 
     try:
-        settings = get_settings()
-        ORDERS_LIMITER.wait()
-        filled = get_trade_client().get_filled_orders(
-            account=settings.account,
-            sec_type=SecurityType.OPT,
-            start_date=min(days).isoformat(),
-            # A day past the end: the broker treats end_date as exclusive in
-            # places, and the market-day filter does the real cutting.
-            end_date=(max(days) + timedelta(days=1)).isoformat(),
+        # A day past the end: the broker treats end_date as exclusive in
+        # places, and the market-day filter does the real cutting.
+        filled = get_market().filled_orders(
+            min(days), max(days) + timedelta(days=1)
         )
         return realised_total(realised_by_contract(filled, min(days), max(days)))
     except Exception:  # noqa: BLE001 -- see the docstring

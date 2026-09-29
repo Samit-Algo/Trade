@@ -38,27 +38,25 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from backend.services.contract import find_option_contract
 from backend.core.live_cache import CACHE
 from backend.core.safety import build_order_record, write_order_record
-from backend.services.order import cancel_order, sell_option, snap_down
-from backend.services.position import list_option_positions
+from backend.services.order import snap_down
 
 from ..errors import ApiError
 from ..order_rules import build_price_only_quote
 from ..schemas import ClosePositionRequest, ClosePositionResponse
-from ..shared import get_quote_client, get_settings, get_trade_client
+from ..shared import get_market, get_settings
 from .positions import fetch_working_orders
 
 router = APIRouter(tags=["positions"])
 
 
-def find_position(identifier: str, trade_client):
+def find_position(identifier: str, market):
     """Find the held position this identifier names.
 
     Args:
         identifier: The full option identifier.
-        trade_client: A tigeropen TradeClient.
+        market: The Market the position is held in.
 
     Returns:
         The OptionPosition.
@@ -70,7 +68,7 @@ def find_position(identifier: str, trade_client):
     """
     wanted = identifier.strip()
 
-    for position in list_option_positions(trade_client):
+    for position in market.positions():
         if position.identifier.strip() == wanted:
             return position
 
@@ -120,7 +118,7 @@ def resolve_sell_limit(requested: float, tick_size: float) -> float:
     return limit
 
 
-def cancel_resting_legs(identifier: str, trade_client) -> tuple[list, list]:
+def cancel_resting_legs(identifier: str, market) -> tuple[list, list]:
     """Cancel the bracket legs holding this position, so it can be sold.
 
     They reserve the whole position: with a take-profit and a stop-loss on the
@@ -134,7 +132,7 @@ def cancel_resting_legs(identifier: str, trade_client) -> tuple[list, list]:
 
     Args:
         identifier: The full option identifier.
-        trade_client: A tigeropen TradeClient.
+        market: The Market the position is held in.
 
     Returns:
         A pair of (what was cancelled, what would not cancel), each a list of
@@ -155,7 +153,7 @@ def cancel_resting_legs(identifier: str, trade_client) -> tuple[list, list]:
             continue
 
         try:
-            cancel_order(trade_client, order_id)
+            market.cancel_order(order_id)
             cancelled.append(description)
         except Exception as error:  # noqa: BLE001 -- the sell reports the truth
             stubborn.append(f"{description} ({error})")
@@ -184,11 +182,11 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
             the price is not usable.
     """
     settings = get_settings()
-    trade_client = get_trade_client()
+    market = get_market()
 
     # ---- everything that can fail goes here, BEFORE anything is sent -------
 
-    position = find_position(body.identifier, trade_client)
+    position = find_position(body.identifier, market)
     held = int(abs(position.quantity))
 
     quantity = body.quantity if body.quantity is not None else held
@@ -207,9 +205,7 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
 
     # The contract is rebuilt from the POSITION, not from the request, so a
     # mistyped identifier cannot sell something else.
-    contract = find_option_contract(
-        get_quote_client(),
-        trade_client,
+    contract = market.find_contract(
         position.underlying,
         position.put_call,
         position.strike,
@@ -252,7 +248,7 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
     # fills there is no stop on this position, which is the price of closing
     # it at all -- and it is why a failed sell below says so explicitly.
 
-    cancelled_legs, stubborn_legs = cancel_resting_legs(identifier, trade_client)
+    cancelled_legs, stubborn_legs = cancel_resting_legs(identifier, market)
 
     # ---- from here the order can reach the broker -------------------------
     #
@@ -261,8 +257,7 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
     # sells the position twice. So the only work left is reading values that
     # are already in hand.
 
-    outcome, estimate = sell_option(
-        trade_client=trade_client,
+    outcome, estimate = market.sell_option(
         settings=settings,
         contract=contract,
         quote=quote,

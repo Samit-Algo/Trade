@@ -47,15 +47,13 @@ MARKET_TIMEZONE = ZoneInfo("America/New_York")
 def contract_of(order) -> str:
     """The option identifier a fill belongs to.
 
-    Tiger renders the contract as "NVDA  260921C00220000/OPT/USD".
-
     Args:
-        order: One filled order.
+        order: One filled order, as a BrokerOrder.
 
     Returns:
-        The identifier, without the security type and currency.
+        The identifier, e.g. "NVDA  260921C00220000".
     """
-    return str(getattr(order, "contract", "")).split("/")[0].strip()
+    return str(getattr(order, "identifier", "")).strip()
 
 
 def market_day_of(order) -> date | None:

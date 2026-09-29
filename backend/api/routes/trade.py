@@ -49,22 +49,16 @@ from datetime import datetime
 
 from fastapi import APIRouter, Request
 
-from backend.services.contract import select_contract
 from backend.core import armed
 from backend.core.live_cache import CACHE
 from backend.core.safety import build_order_record, write_order_record
 from backend.core.symbol_settings import is_enabled, read_for
 from backend.core import time_bracket_settings
 from backend.core.time_brackets import resolve as resolve_window
-from backend.services.market import (
-    fetch_spot_price,
-    MAX_RECENT_TRADE_AGE_SECONDS,
-    fetch_recent_traded_price,
-)
+from backend.services.market import MAX_RECENT_TRADE_AGE_SECONDS
 from backend.services.order import (
     BracketError,
     TickError,
-    buy_option_with_bracket,
     calculate_bracket_from_percentages,
     resolve_buffer_ticks,
     resolve_quantity,
@@ -93,9 +87,8 @@ from ..schemas import (
 from ..shared import (
     get_cached_contract,
     get_idempotency_store,
-    get_quote_client,
+    get_market,
     get_settings,
-    get_trade_client,
     log_order_request,
 )
 
@@ -212,10 +205,8 @@ def find_contract(body: TradeRequest, settings, underlying_price: float):
     expiry = body.expiry or settings.trade_expiry_date
 
     def resolve():
-        """Ask Tiger. Called only when the cache misses."""
-        return select_contract(
-            get_quote_client(),
-            get_trade_client(),
+        """Ask the broker. Called only when the cache misses."""
+        return get_market().select_contract(
             body.symbol,
             body.option_type,
             underlying_price,
@@ -264,7 +255,7 @@ def resolve_underlying_price(body: TradeRequest) -> tuple[float, str]:
     if body.current_price is not None:
         return body.current_price, "supplied by the caller"
 
-    spot = fetch_spot_price(body.symbol)
+    spot = get_market().spot_price(body.symbol)
     if spot is None:
         raise ApiError(
             status_code=502,
@@ -303,7 +294,7 @@ def resolve_entry_price(contract, settings) -> tuple[float, PriceSource]:
         ApiError: 502 when no price could be fetched, 422 when the newest one
             is too old to trade on.
     """
-    recent = fetch_recent_traded_price(get_quote_client(), contract.identifier)
+    recent = get_market().recent_traded_price(contract.identifier)
 
     if recent is None:
         raise ApiError(
@@ -713,8 +704,7 @@ def submit_and_record(
         request, "trade", plan.contract.identifier, plan.estimate.total_cash
     )
 
-    outcome, final_estimate, legs = buy_option_with_bracket(
-        trade_client=get_trade_client(),
+    outcome, final_estimate, legs = get_market().buy_option_with_bracket(
         settings=settings,
         contract=plan.contract,
         quote=plan.quote,
@@ -845,7 +835,7 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
     #    second click during the seconds before a fill is refused too.
     settings = get_settings()
     try:
-        claim_symbol(body.symbol, get_trade_client(), settings.account)
+        claim_symbol(body.symbol, get_market())
     except SymbolBusy as error:
         release_request_id(body.client_order_id)
         raise ApiError(

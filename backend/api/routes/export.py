@@ -21,11 +21,9 @@ from fastapi import APIRouter, Query, Response
 
 from backend.services.export import build_workbook, realised_by_contract
 from backend.services.export.columns import MARKET_TIMEZONE
-from backend.core.broker import ORDERS_LIMITER
-from tigeropen.common.consts import SecurityType
 
 from ..errors import ApiError
-from ..shared import get_settings, get_trade_client
+from ..shared import get_market
 from .orders import read_order_history
 
 router = APIRouter(tags=["orders"])
@@ -162,16 +160,9 @@ def export_orders(
     # against a true +451 on one day. See backend/services/export/realised.py.
     by_contract = {}
     try:
-        settings = get_settings()
-        ORDERS_LIMITER.wait()
-        filled = get_trade_client().get_filled_orders(
-            account=settings.account,
-            sec_type=SecurityType.OPT,
-            start_date=first.isoformat(),
-            # The broker treats end_date as exclusive in places, so ask for a
-            # day past the range and let the market-day filter do the cutting.
-            end_date=(last + timedelta(days=1)).isoformat(),
-        )
+        # The broker treats end_date as exclusive in places, so ask for a
+        # day past the range and let the market-day filter do the cutting.
+        filled = get_market().filled_orders(first, last + timedelta(days=1))
         by_contract = realised_by_contract(filled, first, last)
     except Exception:  # noqa: BLE001 -- the file is still worth having
         by_contract = {}
