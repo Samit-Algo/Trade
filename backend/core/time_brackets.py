@@ -404,12 +404,17 @@ def session_end(
     Returns:
         The close, as an aware datetime.
     """
+    in_market = opened.astimezone(session.timezone)
+    close = datetime.combine(in_market.date(), session.closes, tzinfo=session.timezone)
     if start is None:
-        in_market = opened.astimezone(session.timezone)
-        return datetime.combine(
-            in_market.date(), session.closes, tzinfo=session.timezone
-        )
+        return close
 
+    # A fixed start still ends at the market's close -- 15:30 for NSE, not
+    # six and a half hours after a 09:30 start. Only a start placed after the
+    # close, which has no close of its own that day, falls back to a normal
+    # session's length.
+    if close > opened:
+        return close
     return opened + timedelta(minutes=FIXED_SESSION_MINUTES)
 
 

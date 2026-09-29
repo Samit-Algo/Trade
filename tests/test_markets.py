@@ -362,3 +362,23 @@ class TestAFailedCheckDoesNotStrandTheRequest:
             trade.place_bracketed_trade(body, SimpleNamespace(client=None))
 
         assert get_idempotency_store().claim("india-0000001") is None
+
+
+def test_a_0930_india_schedule_ends_at_the_1530_close():
+    """Seen on the page at 16:00: the last window still "running to the close"."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from backend.core.time_brackets import parse_start, parse_windows, resolve
+    from backend.markets.india.market import NSE_SESSION
+
+    kolkata = ZoneInfo("Asia/Kolkata")
+
+    def at(hour, minute):
+        return resolve(datetime(2026, 9, 29, hour, minute, tzinfo=kolkata),
+                       windows=parse_windows("45:20:20, *:5:10"), start=parse_start("09:30"),
+                       display_timezone=kolkata, session=NSE_SESSION)
+
+    assert at(15, 29).take_profit == 5
+    assert at(15, 30) is None
+    assert at(16, 0) is None
