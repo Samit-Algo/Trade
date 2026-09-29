@@ -119,7 +119,7 @@ class TestAnEmptyBarIsNotAPrice:
         return pandas.DataFrame(rows)
 
     def fetch(self, rows, monkeypatch):
-        from backend.services.market import data
+        from backend.markets.us import data
 
         class FakeClient:
             def get_option_bars(self, **kwargs):

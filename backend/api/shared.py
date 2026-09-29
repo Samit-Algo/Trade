@@ -71,7 +71,7 @@ def get_market(market_id: str = DEFAULT_MARKET) -> Market:
         if wanted not in _markets:
             if wanted != "US":
                 raise KeyError(f"No market named {market_id!r}.")
-            from backend.markets.us import UsMarket
+            from backend.markets.us.market import UsMarket
 
             _markets[wanted] = UsMarket(get_settings())
         return _markets[wanted]

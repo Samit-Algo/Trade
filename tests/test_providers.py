@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.services.contract import OptionContractInfo  # noqa: E402
+from backend.markets.us.contract import OptionContractInfo  # noqa: E402
 from backend.services.market import LastTrade  # noqa: E402
 # The seam itself, so this one test names the concrete class on purpose.
 from backend.services.market.quotes import ManualEntryProvider  # noqa: E402
@@ -90,9 +90,9 @@ class StubQuoteClientWithBars:
 
 def install_last_trade(monkeypatch, last_trade):
     """Make fetch_last_traded_close return a fixed value."""
-    # quotes.py imports this from data.py inside the function, so the patch
-    # has to land on data.py itself.
-    from backend.services.market import data
+    # quotes.py imports this from the US data module inside the function, so
+    # the patch has to land on that module itself.
+    from backend.markets.us import data
 
     monkeypatch.setattr(
         data, "fetch_last_traded_close", lambda quote_client, identifier: last_trade

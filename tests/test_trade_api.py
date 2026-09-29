@@ -22,11 +22,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.api.order_rules import IdempotencyStore, RequestInFlight  # noqa: E402
-from backend.services.contract import (  # noqa: E402
+from backend.markets.us.contract import (  # noqa: E402
     ExpiryNotListedError,
     StrikeNotFoundError,
 )
-from backend.services.contract import (  # noqa: E402
+from backend.markets.us.contract import (  # noqa: E402
     choose_expiry,
     find_closest_strike,
 )
@@ -34,7 +34,7 @@ from backend.services.contract import (  # noqa: E402
 
 def make_contract():
     """A verified contract, as find_option_contract would return one."""
-    from backend.services.contract import OptionContractInfo
+    from backend.markets.us.contract import OptionContractInfo
 
     return OptionContractInfo(
         identifier="TSLA  260909C00357500",
@@ -384,7 +384,7 @@ class TestSafetyIsNotBypassed:
         """The one gate that matters, in the only file that can spend money."""
         source = (
             PROJECT_ROOT
-            / "backend/services/order/submit.py"
+            / "backend/markets/us/submit.py"
         ).read_text(encoding="utf-8")
 
         lines = source.splitlines()
@@ -610,7 +610,7 @@ class TestOtmWholeStrikeSelection:
     SPOT = 371.79
 
     def pick(self, side, out=1, ladder=None, spot=None):
-        from backend.services.contract import find_otm_whole_strike
+        from backend.markets.us.contract import find_otm_whole_strike
 
         return find_otm_whole_strike(
             ladder if ladder is not None else self.LADDER,
@@ -657,7 +657,7 @@ class TestOtmWholeStrikeSelection:
         assert "NO WHOLE" in reason
 
     def test_nothing_out_of_the_money_is_refused(self):
-        from backend.services.contract import StrikeNotFoundError
+        from backend.markets.us.contract import StrikeNotFoundError
 
         with pytest.raises(StrikeNotFoundError, match="out of the money"):
             self.pick("CALL", 1, ladder=[300.0, 305.0], spot=400.0)
@@ -671,20 +671,20 @@ class TestWholeStrikeTest:
     """`% 5` would wipe out every strike on a cheap stock."""
 
     def test_round_numbers_are_whole(self):
-        from backend.services.contract import is_whole_strike
+        from backend.markets.us.contract import is_whole_strike
 
         assert is_whole_strike(375.0) is True
         assert is_whole_strike(41.0) is True
 
     def test_half_strikes_are_not(self):
-        from backend.services.contract import is_whole_strike
+        from backend.markets.us.contract import is_whole_strike
 
         assert is_whole_strike(377.5) is False
         assert is_whole_strike(40.5) is False
 
     def test_a_dollar_ladder_keeps_every_strike(self):
         """On a $30 stock the strikes are 29, 30, 31 -- filtering none."""
-        from backend.services.contract import is_whole_strike
+        from backend.markets.us.contract import is_whole_strike
 
         ladder = [29.0, 30.0, 31.0, 32.0]
         assert [k for k in ladder if is_whole_strike(k)] == ladder

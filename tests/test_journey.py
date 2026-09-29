@@ -19,7 +19,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.services.market.bars import Bar, _rows_to_bars  # noqa: E402
+from backend.markets.us.bars import _rows_to_bars  # noqa: E402
+from backend.services.market.bars import Bar  # noqa: E402
 from backend.services.order import journey  # noqa: E402
 
 #: 2026-09-24 20:11 UTC, the entry in the real trade this was built against.

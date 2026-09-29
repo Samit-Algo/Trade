@@ -22,12 +22,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.services.market.data import (  # noqa: E402
-    LIVE_WITHIN_SECONDS,
-    QUOTE_HOSTS,
-    SpotPrice,
-    fetch_spot_price,
-)
+from backend.markets.us.data import QUOTE_HOSTS, fetch_spot_price  # noqa: E402
+from backend.services.market.data import LIVE_WITHIN_SECONDS, SpotPrice  # noqa: E402
 
 
 def make_payload(price=319.71, stamped_at=None):

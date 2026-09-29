@@ -170,13 +170,16 @@ is actually placed. A live paper order is the real check.
 
   backend/                 the service
     main.py                app construction, the API-key middleware
-    api/routes/            one file per endpoint group
+    api/routes/            one file per endpoint group -- they ask a Market,
+                           never a broker
     api/schemas.py         request and response models
-    core/                  config, broker clients, the locks, the audit log
-    services/market/       prices, the calendar; quotes.py is the provider seam
-    services/order/        pricing rules, cost, brackets, submission
-    services/contract.py   which exact contract are we talking about
-    services/position.py   what is held, and what it is worth
+    core/                  config, the locks, the audit log, rate limiting
+    services/              the maths and the shapes, for every market:
+                           pricing rules, cost, brackets, P&L, the export
+    markets/base.py        what every market must provide
+    markets/us/            US options through Tiger -- the ONLY folder that
+                           talks to Tiger. submit.py in it is the only file
+                           that can place an order.
 
   tests/                   the test suite
   scripts/                 standalone diagnostics, and callOrderAPI.user.js

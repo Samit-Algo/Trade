@@ -18,15 +18,17 @@ from backend.services.position import (  # noqa: E402
     DEFAULT_EXPIRY_WARNING_DAYS,
     OptionPosition,
     build_expiry_warning,
-    build_option_position,
     calculate_assignment_exposure,
     calculate_cost_basis,
     calculate_current_value,
     calculate_pnl_percent,
     calculate_unrealised_pnl,
     is_expiring_soon,
-    read_position_quantity,
     value_position,
+)
+from backend.markets.us.positions import (  # noqa: E402
+    build_option_position,
+    read_position_quantity,
 )
 from backend.services.market import BidSnapshot, QuoteSource  # noqa: E402
 

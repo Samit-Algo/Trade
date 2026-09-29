@@ -19,19 +19,23 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.services.contract import OptionContractInfo  # noqa: E402
+from backend.markets.us.contract import OptionContractInfo  # noqa: E402
 from backend.services.order import (  # noqa: E402
     FULLY_FILLED,
     NOTHING_FILLED,
     PARTIALLY_FILLED,
-    build_cash_confirmation_phrase,
-    build_option_order,
     calculate_actual_cash,
     classify_fill,
-    confirm_cash_amount,
     is_terminal_status,
-    normalise_status,
+)
+from backend.markets.us.orders import (  # noqa: E402
+    build_option_order,
+    normalise_tiger_status,
     poll_until_settled,
+)
+from backend.markets.us.submit import (  # noqa: E402
+    build_cash_confirmation_phrase,
+    confirm_cash_amount,
 )
 from backend.services.order import estimate_cost  # noqa: E402
 from backend.services.market import QuoteSnapshot, QuoteSource  # noqa: E402
@@ -89,16 +93,16 @@ class StubTradeClient:
 class TestNormaliseStatus:
     def test_enum_value_maps_back_to_its_name(self):
         """OrderStatus.REJECTED is the string 'Inactive'. Not obvious."""
-        assert normalise_status("Inactive") == "REJECTED"
+        assert normalise_tiger_status("Inactive") == "REJECTED"
 
     def test_new_is_the_string_initial(self):
-        assert normalise_status("Initial") == "NEW"
+        assert normalise_tiger_status("Initial") == "NEW"
 
     def test_a_plain_name_passes_through(self):
-        assert normalise_status("FILLED") == "FILLED"
+        assert normalise_tiger_status("FILLED") == "FILLED"
 
     def test_none_is_unknown_not_a_crash(self):
-        assert normalise_status(None) == "UNKNOWN"
+        assert normalise_tiger_status(None) == "UNKNOWN"
 
 
 class TestTerminalStatus:

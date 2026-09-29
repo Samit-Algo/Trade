@@ -30,13 +30,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.core.audit import build_order_record, write_order_record  # noqa: E402
-from backend.core.broker import (  # noqa: E402
+from backend.markets.us.broker import (  # noqa: E402
     ClientSetupError,
     build_quote_client,
     build_trade_client,
 )
 from backend.core.config import ConfigError, load_settings  # noqa: E402
-from backend.services.contract import ContractError, find_option_contract  # noqa: E402
+from backend.markets.us.contract import ContractError, find_option_contract  # noqa: E402
 from backend.services.market import (  # noqa: E402
     DEFAULT_LIQUIDITY_THRESHOLD,
     fetch_underlying_price_safely,
@@ -57,7 +57,7 @@ from backend.services.order import (  # noqa: E402
     print_fill_outcome,
     sell_option,
 )
-from backend.services.position import fetch_cash_available  # noqa: E402
+from backend.markets.us.positions import fetch_cash_available  # noqa: E402
 from backend.services.order import PricingError  # noqa: E402
 from backend.services.market import (  # noqa: E402
     DEFAULT_MAX_QUOTE_AGE_SECONDS,

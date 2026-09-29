@@ -3,23 +3,15 @@
 The legs attach to a parent order and are sent with it in one call. Tiger's
 own `preview_order` cannot validate them, so the checks in this file are the
 ONLY thing standing between a typo and a live bracket.
+
+Building the bracketed order object itself is broker work, and lives with the
+market: backend/markets/us/orders.py.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tigeropen.common.util.contract_utils import option_contract
-from tigeropen.common.util.order_utils import (
-    limit_order,
-    limit_order_with_legs,
-    order_leg,
-)
-from backend.core.broker import ORDERS_LIMITER
-from ..market import QuoteSnapshot
-from .build import DEFAULT_TIME_IN_FORCE, RULE_WIDTH, format_money
-from .build import CostEstimate
-from .status import get_order_status, normalise_status
 from .pricing_rules import TickError, apply_buffer, snap_down, snap_nearest, snap_up
 
 # ---------------------------------------------------------------------------
@@ -63,9 +55,6 @@ from .pricing_rules import TickError, apply_buffer, snap_down, snap_nearest, sna
 # practical purposes, a fixed toll per order.
 COMMISSION_BASE = 2.985
 COMMISSION_PER_CONTRACT = 0.035
-
-LEG_PROFIT = "PROFIT"
-LEG_LOSS = "LOSS"
 
 
 class BracketError(Exception):
@@ -226,138 +215,6 @@ def calculate_intended_risk(
     price_risk = (entry_limit_price - stop_loss_price) * multiplier * quantity
     commission = estimate_round_trip_commission(quantity)
     return round(price_risk + commission, 2)
-
-
-def build_option_order_with_bracket(
-    settings,
-    contract,
-    action: str,
-    quantity: int,
-    limit_price: float,
-    take_profit_price: float,
-    stop_loss_price: float,
-    leg_time_in_force: str = DEFAULT_TIME_IN_FORCE,
-    time_in_force: str = DEFAULT_TIME_IN_FORCE,
-):
-    """Construct a limit order with take-profit and stop-loss legs attached.
-
-    Builds and returns. Does not submit.
-
-    Both legs go in one list. The SDK encodes that as attach_type='BRACKETS',
-    which the documented appendix lists as a valid attach type -- so the "only
-    one sub-order" limit described in Tiger's app help does not apply to the
-    API.
-
-    Args:
-        settings: Validated configuration, for the account number.
-        contract: An OptionContractInfo, already verified.
-        action: "BUY" or "SELL".
-        quantity: Number of contracts.
-        limit_price: The parent's limit price.
-        take_profit_price: Where the profit leg sells.
-        stop_loss_price: Where the stop leg sells.
-        leg_time_in_force: Time in force for the LEGS. Parameterised because
-            whether a paper account accepts GTC on a leg is undocumented and
-            could not be established without submitting; DAY is the SDK's own
-            default and the conservative choice.
-        time_in_force: Time in force for the parent. Paper rejects GTC.
-
-    Returns:
-        The SDK Order object, unsent, with both legs attached.
-    """
-    order_contract = option_contract(
-        identifier=contract.identifier,
-        multiplier=contract.multiplier,
-    )
-
-    take_profit_leg = order_leg(
-        LEG_PROFIT,
-        take_profit_price,
-        time_in_force=leg_time_in_force,
-        outside_rth=False,
-    )
-    stop_loss_leg = order_leg(
-        LEG_LOSS,
-        stop_loss_price,
-        time_in_force=leg_time_in_force,
-        outside_rth=False,
-    )
-
-    order = limit_order_with_legs(
-        account=settings.account,
-        contract=order_contract,
-        action=action,
-        quantity=quantity,
-        limit_price=limit_price,
-        order_legs=[take_profit_leg, stop_loss_leg],
-        time_in_force=time_in_force,
-    )
-
-    # Extended hours off, as everywhere else in this project.
-    order.outside_rth = False
-
-    return order
-
-
-def get_attached_legs(trade_client, parent_order_id: int) -> list:
-    """Find the legs attached to a parent order.
-
-    Tried two ways, because which one carries the legs is not documented:
-    the parent's own `order_legs` attribute, and any order reporting this one
-    as its `parent_id`.
-
-    Args:
-        trade_client: A tigeropen TradeClient.
-        parent_order_id: The parent order's global ID.
-
-    Returns:
-        A list of dicts describing what was found, empty if nothing was.
-    """
-    from tigeropen.common.consts import Market
-
-    found = []
-
-    parent = get_order_status(trade_client, parent_order_id)
-    if parent is not None:
-        for leg in getattr(parent, "order_legs", None) or []:
-            found.append(
-                {
-                    "source": "parent.order_legs",
-                    "leg_type": getattr(leg, "leg_type", None),
-                    "price": getattr(leg, "price", None),
-                    "time_in_force": getattr(leg, "time_in_force", None),
-                    "outside_rth": getattr(leg, "outside_rth", None),
-                }
-            )
-
-    ORDERS_LIMITER.wait()
-    try:
-        recent_orders = trade_client.get_orders(limit=50, market=Market.US)
-    except Exception:
-        recent_orders = None
-
-    for candidate in recent_orders or []:
-        if getattr(candidate, "parent_id", None) == parent_order_id:
-            found.append(
-                {
-                    "source": "child order",
-                    "id": getattr(candidate, "id", None),
-                    "order_type": getattr(candidate, "order_type", None),
-                    "action": getattr(candidate, "action", None),
-                    "quantity": getattr(candidate, "quantity", None),
-                    "limit_price": getattr(candidate, "limit_price", None),
-                    "aux_price": getattr(candidate, "aux_price", None),
-                    "time_in_force": getattr(candidate, "time_in_force", None),
-                    "status": normalise_status(getattr(candidate, "status", None)),
-                    # What the leg actually sold at. A stop becomes a MARKET
-                    # order once triggered, so this can differ from aux_price
-                    # -- and that difference is the realised slippage.
-                    "avg_fill_price": getattr(candidate, "avg_fill_price", None),
-                    "filled": getattr(candidate, "filled", None),
-                }
-            )
-
-    return found
 
 
 # ---------------------------------------------------------------------------

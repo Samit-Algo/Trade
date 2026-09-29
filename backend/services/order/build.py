@@ -1,7 +1,10 @@
-"""What an order would cost, and the order object itself.
+"""What an order would cost. Pure arithmetic: nothing here reaches a broker.
 
-    Cost      cash required, break-even, maximum loss -- pure arithmetic
-    Build     the tigeropen order object, with its limit price
+    Cost      cash required, break-even, maximum loss
+    Preview   the same numbers, printed for a human to confirm
+
+The broker's order object is built by each market -- the US one in
+backend/markets/us/orders.py.
 
 The number this exists to produce is CASH REQUIRED. quantity=1 means one
 contract, and one contract is 100 shares of exposure, so a $5.20 premium is
@@ -11,8 +14,6 @@ $520 of cash. A mistyped quantity is the most expensive bug available here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from tigeropen.common.util.contract_utils import option_contract
-from tigeropen.common.util.order_utils import limit_order
 from ..market import QuoteSnapshot, calculate_spread
 
 
@@ -353,58 +354,6 @@ RULE_WIDTH = 60
 
 #: Paper accounts do not support GTC, and this is the SDK's own default.
 DEFAULT_TIME_IN_FORCE = "DAY"
-
-
-def build_option_order(
-    settings,
-    contract,
-    action: str,
-    quantity: int,
-    limit_price: float,
-    time_in_force: str = DEFAULT_TIME_IN_FORCE,
-):
-    """Construct the SDK order object for one option order.
-
-    Builds and returns. Does not submit, and cannot: no submission call is
-    imported here.
-
-    The contract object is rebuilt from the identifier that Phase 3 already
-    verified against Tiger. option_contract() is a pure local constructor that
-    validates nothing, which is exactly right here -- verification happened
-    earlier, and this step is assembly.
-
-    Args:
-        settings: Validated configuration, for the account number.
-        contract: An OptionContractInfo, already verified.
-        action: "BUY" or "SELL".
-        quantity: Number of contracts.
-        limit_price: The limit price to place at.
-        time_in_force: Defaults to DAY. Paper accounts do not support GTC.
-
-    Returns:
-        The SDK Order object, unsent.
-    """
-    order_contract = option_contract(
-        identifier=contract.identifier,
-        multiplier=contract.multiplier,
-    )
-
-    # Market orders are deliberately not offered. Option spreads are wide and
-    # thin contracts fill badly, so a market order here is a foot-gun.
-    order = limit_order(
-        account=settings.account,
-        contract=order_contract,
-        action=action,
-        quantity=quantity,
-        limit_price=limit_price,
-        time_in_force=time_in_force,
-    )
-
-    # Extended hours are deliberately off. Option liquidity outside regular
-    # hours is far worse, and market and stop orders do not support it anyway.
-    order.outside_rth = False
-
-    return order
 
 
 def format_money(value: float | None) -> str:

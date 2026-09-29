@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.core.broker import ClientSetupError, build_trade_client  # noqa: E402
+from backend.markets.us.broker import ClientSetupError, build_trade_client  # noqa: E402
 from backend.core.config import ConfigError, Settings, load_settings  # noqa: E402
 from backend.core.safety import (  # noqa: E402
     LiveTradingBlocked,

@@ -12,20 +12,21 @@ whole submission path.
 from __future__ import annotations
 
 from backend.core import armed
-from backend.core.broker import PLACE_ORDER_LIMITER
 from backend.core.safety import assert_order_allowed
-from ..market import QuoteSnapshot
-from .bracket import (
-    BracketLegs, build_option_order_with_bracket,
-    validate_bracket_prices,
+from backend.services.market import QuoteSnapshot
+from backend.services.order.bracket import BracketLegs, validate_bracket_prices
+from backend.services.order.build import (
+    DEFAULT_TIME_IN_FORCE, RULE_WIDTH, format_money,
 )
-from .build import (
-    DEFAULT_TIME_IN_FORCE, RULE_WIDTH, build_option_order, format_money,
-)
-from .build import CostEstimate, compare_to_available_cash, estimate_cost
-from .status import (
+from backend.services.order.build import CostEstimate, compare_to_available_cash, estimate_cost
+from backend.services.order.status import (
     DEFAULT_POLL_ATTEMPTS, DEFAULT_POLL_DELAY_SECONDS, FillOutcome,
-    OrderSubmissionError, poll_until_settled,
+    OrderSubmissionError,
+)
+
+from .broker import PLACE_ORDER_LIMITER
+from .orders import (
+    build_option_order, build_option_order_with_bracket, poll_until_settled,
 )
 
 
@@ -143,8 +144,6 @@ def _submit_option_order(
         ask=quote.ask,
         limit_price=quote.limit_price,
     )
-
-    from .build import compare_to_available_cash
 
     cash_warning = None
     if estimate.is_buy:
@@ -322,8 +321,6 @@ def buy_option_with_bracket(
         LiveTradingBlocked: If the safety guard refuses the order.
         OrderSubmissionError: If the human declines, or submission fails.
     """
-    from .build import compare_to_available_cash
-
     estimate = estimate_cost(
         contract=contract,
         action="BUY",

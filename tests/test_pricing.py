@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.services.contract import OptionContractInfo  # noqa: E402
+from backend.markets.us.contract import OptionContractInfo  # noqa: E402
 from backend.services.order import (  # noqa: E402
     PricingError,
     calculate_break_even,

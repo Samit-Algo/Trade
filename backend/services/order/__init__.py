@@ -1,77 +1,62 @@
-"""Everything about an order, from arithmetic to the wire.
+"""Everything about an order that is arithmetic rather than a broker call.
 
-    cost.py       What will this cost me?          pure maths, no network
-    build.py      Build it, and show it to a human  builds nothing live
-    bracket.py    Take-profit and stop-loss legs
-    status.py  Status, fills, cancelling  <- cancel_order lives here
-    submit.py     THE ONLY FILE THAT CAN SPEND MONEY
+    pricing_rules.py  the tick grid, buffer tiers, quantity tiers
+    build.py          what an order will cost -- pure maths, no network
+    bracket.py        the take-profit and stop-loss prices, and commission
+    status.py         what a fill means: filled, part-filled, nothing
+    journey.py        what a contract did between entry and exit
+    symbol_lock.py    one trade per underlying at a time
 
-Read `submit.py` if you are reviewing safety. Every `place_order` call in the
-project is in it, each preceded immediately by `assert_order_allowed`.
+Building, sending and cancelling a real order is the market's job. For US
+options that is backend/markets/us/ -- and its submit.py is the only file in
+the project that can spend money.
 """
 
 from __future__ import annotations
 
-from .pricing_rules import resolve_buffer_ticks
-from .pricing_rules import resolve_quantity
+from .pricing_rules import (
+    MEASURED_TICK_SIZE, TICK_SOURCE_NOTE, TickError, apply_buffer, is_on_tick,
+    snap_down, snap_nearest, snap_up, resolve_buffer_ticks, resolve_quantity,
+)
 from .build import (
     BUY, SELL, VALID_ACTIONS, PricingError, CostEstimate, validate_action,
     validate_quantity, choose_price, calculate_total_cash,
     calculate_break_even, calculate_maximum_loss, estimate_cost,
-    normalise_limit_price, compare_to_available_cash
-)
-from .build import (
-    RULE_WIDTH, DEFAULT_TIME_IN_FORCE, build_option_order, format_money
-)
-from .pricing_rules import (
-    MEASURED_TICK_SIZE, TICK_SOURCE_NOTE, TickError, apply_buffer, is_on_tick,
-    snap_down, snap_nearest, snap_up,
+    normalise_limit_price, compare_to_available_cash,
+    RULE_WIDTH, DEFAULT_TIME_IN_FORCE, format_money,
 )
 from .bracket import (
-    COMMISSION_BASE, COMMISSION_PER_CONTRACT, LEG_PROFIT, LEG_LOSS,
+    COMMISSION_BASE, COMMISSION_PER_CONTRACT,
     BracketCalculation, BracketError, BracketLegs,
     calculate_bracket_from_percentages, estimate_commission_per_order,
     estimate_commission_per_share, estimate_round_trip_commission,
     is_take_profit_a_losing_exit, validate_bracket_prices,
-    calculate_intended_risk, build_option_order_with_bracket,
-    get_attached_legs
+    calculate_intended_risk,
 )
 from .status import (
     DEFAULT_POLL_ATTEMPTS, DEFAULT_POLL_DELAY_SECONDS, NOTHING_FILLED,
     PARTIALLY_FILLED, FULLY_FILLED, TERMINAL_STATUSES, FillOutcome,
     OrderSubmissionError, normalise_status, is_terminal_status,
-    classify_fill, calculate_actual_cash, get_order_status,
-    poll_until_settled, cancel_order
-)
-from .submit import (
-    build_cash_confirmation_phrase, confirm_cash_amount, buy_option,
-    sell_option, buy_option_with_bracket
+    classify_fill, calculate_actual_cash,
 )
 
 __all__ = [
-    "MEASURED_TICK_SIZE", "TICK_SOURCE_NOTE", "TickError", "snap_up", "snap_down",
-    "snap_nearest", "apply_buffer", "is_on_tick", "BracketCalculation",
-    "calculate_bracket_from_percentages",
+    "MEASURED_TICK_SIZE", "TICK_SOURCE_NOTE", "TickError", "apply_buffer",
+    "is_on_tick", "snap_down", "snap_nearest", "snap_up",
+    "resolve_buffer_ticks", "resolve_quantity",
     "BUY", "SELL", "VALID_ACTIONS", "PricingError", "CostEstimate",
     "validate_action", "validate_quantity", "choose_price",
     "calculate_total_cash", "calculate_break_even",
     "calculate_maximum_loss", "estimate_cost", "normalise_limit_price",
     "compare_to_available_cash", "RULE_WIDTH", "DEFAULT_TIME_IN_FORCE",
-    "build_option_order", "format_money", "print_manual_data_banner",
-    "print_order_preview", "simulate_order", "COMMISSION_BASE",
-    "COMMISSION_PER_CONTRACT", "LEG_PROFIT", "LEG_LOSS", "BracketError",
-    "BracketLegs", "estimate_commission_per_order",
-    "estimate_commission_per_share", "estimate_round_trip_commission",
-    "is_take_profit_a_losing_exit", "validate_bracket_prices",
-    "calculate_intended_risk", "build_option_order_with_bracket",
-    "print_bracket_preview", "get_attached_legs", "print_attached_legs",
+    "format_money",
+    "COMMISSION_BASE", "COMMISSION_PER_CONTRACT", "BracketCalculation",
+    "BracketError", "BracketLegs", "calculate_bracket_from_percentages",
+    "estimate_commission_per_order", "estimate_commission_per_share",
+    "estimate_round_trip_commission", "is_take_profit_a_losing_exit",
+    "validate_bracket_prices", "calculate_intended_risk",
     "DEFAULT_POLL_ATTEMPTS", "DEFAULT_POLL_DELAY_SECONDS", "NOTHING_FILLED",
     "PARTIALLY_FILLED", "FULLY_FILLED", "TERMINAL_STATUSES", "FillOutcome",
     "OrderSubmissionError", "normalise_status", "is_terminal_status",
-    "classify_fill", "calculate_actual_cash", "get_order_status",
-    "poll_until_settled", "print_fill_outcome", "cancel_order",
-    "build_cash_confirmation_phrase", "confirm_cash_amount", "buy_option",
-    "sell_option", "buy_option_with_bracket"
-    "resolve_buffer_ticks",
-    "resolve_quantity",
+    "classify_fill", "calculate_actual_cash",
 ]

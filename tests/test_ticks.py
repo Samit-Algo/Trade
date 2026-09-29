@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.services.contract import (  # noqa: E402
+from backend.markets.us.contract import (  # noqa: E402
     DEFAULT_MIN_DAYS_TO_EXPIRY,
 )
 from backend.core import config  # noqa: E402

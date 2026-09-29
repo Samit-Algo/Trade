@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.services import contract as contracts  # noqa: E402
-from backend.services.contract import (  # noqa: E402
+from backend.markets.us.contract import (  # noqa: E402
     ContractError,
     ExpiredContractError,
     ExpiryNotListedError,
@@ -198,7 +198,7 @@ class TestResolveExpiry:
         # Patch the name where the lookup HAPPENS: the contract module holds
         # its own reference to the imported function, so patching the market
         # module it came from would not be seen here.
-        from backend.services import contract
+        from backend.markets.us import contract
 
         monkeypatch.setattr(
             contract, "list_expirations", lambda quote_client, underlying: expiries

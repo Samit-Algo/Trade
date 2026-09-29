@@ -39,14 +39,14 @@ from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.core.broker import (  # noqa: E402
+from backend.markets.us.broker import (  # noqa: E402
     ClientSetupError,
     build_quote_client,
     build_trade_client,
 )
 from backend.core.config import ConfigError, load_settings  # noqa: E402
 from backend.core.safety import LiveTradingBlocked, print_startup_banner  # noqa: E402
-from backend.core.broker import (  # noqa: E402
+from backend.markets.us.broker import (  # noqa: E402
     BARS_LIMITER,
     CHAIN_LIMITER,
     DELAYED_STOCK_BRIEFS_LIMITER,

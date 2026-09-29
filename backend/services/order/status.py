@@ -6,12 +6,8 @@ only -- nothing in this file can open a position.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 
-from backend.core.broker import ORDERS_LIMITER
-from .build import RULE_WIDTH, format_money
-from .build import CostEstimate
 
 
 #: How many times to ask the broker what happened before giving up.
@@ -69,42 +65,24 @@ class OrderSubmissionError(Exception):
 
 
 def normalise_status(raw_status) -> str:
-    """Turn whatever the SDK reports as a status into an uppercase name.
+    """Tidy a status into an upper-case name: FILLED, CANCELLED and so on.
 
-    The status arrives as an OrderStatus enum, its name, or its value, and the
-    values are not the names -- OrderStatus.REJECTED is the string 'Inactive'
-    and OrderStatus.NEW is 'Initial'. Comparing against the wrong one of those
-    silently never matches, so everything is funnelled through here.
-
-    This is for display and for deciding when to stop polling. It is never
-    what determines whether anything filled.
+    Each market translates its own broker's spellings first -- Tiger's, where
+    REJECTED arrives as 'Inactive', in backend/markets/us/orders.py -- so what
+    reaches this is already a name, or an enum carrying one.
 
     Args:
-        raw_status: Whatever the Order object carried.
+        raw_status: A status name, or an enum with a `name`.
 
     Returns:
         An uppercase status name, or "UNKNOWN".
     """
     if raw_status is None:
         return "UNKNOWN"
-
     name = getattr(raw_status, "name", None)
     if name:
         return str(name).upper()
-
-    text = str(raw_status).strip()
-
-    # Map an enum *value* back to its name, e.g. 'Inactive' -> 'REJECTED'.
-    try:
-        from tigeropen.common.consts import OrderStatus
-
-        for member in OrderStatus:
-            if str(member.value).lower() == text.lower():
-                return member.name.upper()
-    except Exception:
-        pass
-
-    return text.upper().replace(" ", "_")
+    return str(raw_status).strip().upper().replace(" ", "_")
 
 
 def is_terminal_status(status: str) -> bool:
@@ -163,158 +141,3 @@ def calculate_actual_cash(
         return None
     return round(average_fill_price * filled_quantity * multiplier, 2)
 
-
-def _read_number(order, field_name: str, default=None):
-    """Read a numeric attribute off an Order, tolerating absence."""
-    value = getattr(order, field_name, None)
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def get_order_status(trade_client, order_id: int):
-    """Fetch one order's current state from the broker.
-
-    Args:
-        trade_client: A tigeropen TradeClient.
-        order_id: The global order ID returned at submission.
-
-    Returns:
-        The Order object, or None if the broker returned nothing.
-    """
-    # get_order and get_orders share one wire method and one 120/min limit.
-    ORDERS_LIMITER.wait()
-    return trade_client.get_order(id=order_id)
-
-
-def poll_until_settled(
-    trade_client,
-    order_id: int,
-    requested_quantity: int,
-    contract_multiplier: float,
-    poll_attempts: int = DEFAULT_POLL_ATTEMPTS,
-    poll_delay_seconds: float = DEFAULT_POLL_DELAY_SECONDS,
-    announce: bool = True,
-) -> FillOutcome:
-    """Ask the broker what happened, repeatedly, until it stops changing.
-
-    This exists because an order ID means the order was accepted for
-    processing and nothing more. Between submission and settlement it may
-    fill, part-fill, be rejected, or expire.
-
-    Polling stops on a terminal status or when the attempts run out. Running
-    out is reported honestly as "still working" -- not as failure, and
-    certainly not as success.
-
-    Args:
-        trade_client: A tigeropen TradeClient.
-        order_id: The order to watch.
-        requested_quantity: Contracts asked for.
-        contract_multiplier: Shares per contract.
-        poll_attempts: Maximum checks.
-        poll_delay_seconds: Seconds between checks.
-        announce: Whether to print progress.
-
-    Returns:
-        What the order actually did.
-    """
-    status = "UNKNOWN"
-    filled_quantity = 0
-    average_fill_price = None
-    reason = ""
-    attempts_used = 0
-    reached_terminal = False
-
-    for attempt in range(1, poll_attempts + 1):
-        attempts_used = attempt
-
-        if attempt > 1:
-            time.sleep(poll_delay_seconds)
-
-        order = get_order_status(trade_client, order_id)
-        if order is None:
-            if announce:
-                print(f"  poll {attempt}/{poll_attempts}: broker returned nothing yet")
-            continue
-
-        status = normalise_status(getattr(order, "status", None))
-        filled_quantity = int(_read_number(order, "filled", 0) or 0)
-        average_fill_price = _read_number(order, "avg_fill_price", None)
-        reason = str(getattr(order, "reason", "") or "")
-
-        if announce:
-            print(
-                f"  poll {attempt}/{poll_attempts}: status={status} "
-                f"filled={filled_quantity}/{requested_quantity}"
-            )
-
-        if is_terminal_status(status):
-            reached_terminal = True
-            break
-
-    outcome = classify_fill(requested_quantity, filled_quantity)
-    actual_cash = calculate_actual_cash(
-        average_fill_price, filled_quantity, contract_multiplier
-    )
-
-    return FillOutcome(
-        order_id=order_id,
-        status=status,
-        requested_quantity=requested_quantity,
-        filled_quantity=filled_quantity,
-        average_fill_price=average_fill_price,
-        actual_cash=actual_cash,
-        outcome=outcome,
-        poll_attempts=attempts_used,
-        reached_terminal_status=reached_terminal,
-        reason=reason,
-    )
-
-
-def cancel_order(
-    trade_client,
-    order_id: int,
-    requested_quantity: int = 0,
-    contract_multiplier: float = 100.0,
-    poll_attempts: int = DEFAULT_POLL_ATTEMPTS,
-    poll_delay_seconds: float = DEFAULT_POLL_DELAY_SECONDS,
-) -> FillOutcome:
-    """Ask the broker to cancel an order, then find out whether it did.
-
-    Cancellation is asynchronous, exactly like submission. A successful return
-    confirms the request was accepted, not that the order is cancelled, so this
-    polls afterwards rather than announcing success.
-
-    A cancelled order may still have filled in part before it stopped. The
-    outcome returned says how much.
-
-    Args:
-        trade_client: A tigeropen TradeClient.
-        order_id: The order to cancel.
-        requested_quantity: The original quantity, for classifying the fill.
-        contract_multiplier: Shares per contract, for the cash figure.
-        poll_attempts: How many times to check the result.
-        poll_delay_seconds: Seconds between checks.
-
-    Returns:
-        What the order ended up doing.
-    """
-    from backend.core.broker import CANCEL_ORDER_LIMITER
-
-    CANCEL_ORDER_LIMITER.wait()
-    trade_client.cancel_order(id=order_id)
-
-    print("  Cancel request accepted. That is not the same as cancelled.")
-    print("  Asking the broker what actually happened...")
-
-    return poll_until_settled(
-        trade_client=trade_client,
-        order_id=order_id,
-        requested_quantity=requested_quantity,
-        contract_multiplier=contract_multiplier,
-        poll_attempts=poll_attempts,
-        poll_delay_seconds=poll_delay_seconds,
-    )

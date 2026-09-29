@@ -481,7 +481,10 @@ class ManualEntryProvider(MarketDataProvider):
             )
             return None
 
-        from .data import fetch_last_traded_close
+        # The one place a service reaches into a market: this provider is
+        # the CLI's typed-quote check, and the close it compares against is
+        # Tiger's. The HTTP service never builds one.
+        from backend.markets.us.data import fetch_last_traded_close
 
         last_trade = fetch_last_traded_close(self.quote_client, contract.identifier)
 

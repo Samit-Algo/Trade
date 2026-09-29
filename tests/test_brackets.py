@@ -18,7 +18,6 @@ from backend.services.order import (  # noqa: E402
     COMMISSION_PER_CONTRACT,
     BracketError,
     BracketLegs,
-    build_option_order_with_bracket,
     calculate_intended_risk,
     estimate_commission_per_order,
     estimate_commission_per_share,
@@ -26,6 +25,7 @@ from backend.services.order import (  # noqa: E402
     is_take_profit_a_losing_exit,
     validate_bracket_prices,
 )
+from backend.markets.us.orders import build_option_order_with_bracket  # noqa: E402
 from tests.test_orders import make_contract  # noqa: E402
 
 

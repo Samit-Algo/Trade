@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.core.broker import (  # noqa: E402
+from backend.markets.us.broker import (  # noqa: E402
     ClientSetupError,
     build_quote_client,
     build_trade_client,
@@ -32,9 +32,9 @@ from backend.services.position import (  # noqa: E402
     PositionValuation,
     build_expiry_warning,
     is_expiring_soon,
-    list_option_positions,
     value_position,
 )
+from backend.markets.us.positions import list_option_positions  # noqa: E402
 from backend.services.market import (  # noqa: E402
     DEFAULT_MAX_QUOTE_AGE_SECONDS,
     QuoteEntryError,

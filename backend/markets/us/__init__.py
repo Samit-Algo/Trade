@@ -1,5 +1,9 @@
-"""US options, through Tiger Brokers. See market.py."""
+"""US options, through Tiger Brokers.
 
-from .market import UsMarket
+    market.py    UsMarket -- the Market the routes talk to
+    broker.py    the Tiger clients, and one rate limiter per endpoint
 
-__all__ = ["UsMarket"]
+Nothing is imported here on purpose: the files in this folder import each
+other and the services, and an eager import in a package's __init__ is how
+that turns into a circular import.
+"""

@@ -16,39 +16,30 @@ it, such as the Tiger app on a phone.
 from __future__ import annotations
 
 import threading
-from datetime import date, datetime
+from datetime import date
 from zoneinfo import ZoneInfo
 
 from tigeropen.common.consts import SecurityType
 
-from backend.core.broker import (
+from backend.markets.us.broker import (
     OPEN_ORDERS_LIMITER,
     ORDERS_LIMITER,
     build_quote_client,
     build_trade_client,
 )
-from backend.services.contract import (
-    find_option_contract,
-    parse_identifier,
-    select_contract,
-)
-from backend.services.market import (
-    fetch_recent_traded_price,
-    fetch_spot_price,
-    list_expirations,
-)
-from backend.services.market.bars import fetch_minute_bars
-from backend.services.order import (
-    buy_option_with_bracket,
+
+from ..base import BrokerOrder, Market, MarketProfile
+from .bars import fetch_minute_bars
+from .contract import find_option_contract, parse_identifier, select_contract
+from .data import fetch_recent_traded_price, fetch_spot_price, list_expirations
+from .orders import (
     cancel_order,
     get_attached_legs,
     get_order_status,
-    normalise_status,
-    sell_option,
+    normalise_tiger_status,
 )
-from backend.services.position import list_option_positions
-
-from ..base import BrokerOrder, Market, MarketProfile
+from .positions import list_option_positions
+from .submit import buy_option_with_bracket, sell_option
 
 PROFILE = MarketProfile(
     id="US",
@@ -83,7 +74,7 @@ def to_broker_order(raw) -> BrokerOrder:
         identifier=identifier,
         underlying=identifier.strip().split(" ")[0].strip().upper(),
         action=str(getattr(raw, "action", "") or "").upper(),
-        status=normalise_status(getattr(raw, "status", None)),
+        status=normalise_tiger_status(getattr(raw, "status", None)),
         order_type=str(order_type) if order_type else "",
         quantity=float(getattr(raw, "quantity", 0) or 0),
         filled=float(getattr(raw, "filled", 0) or 0),
@@ -211,7 +202,7 @@ class UsMarket(Market):
 
     # -- sending ------------------------------------------------------------
     #
-    # Each of these ends in backend/services/order/submit.py, where
+    # Each of these ends in submit.py, beside this file, where
     # assert_order_allowed runs immediately before place_order.
 
     def cancel_order(self, order_id):

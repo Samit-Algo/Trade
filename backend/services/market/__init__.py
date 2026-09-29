@@ -1,13 +1,12 @@
-"""Market data: what exists, what it last traded at, what it is worth now.
+"""Market data: the shapes a market answers in, and where a quote comes from.
 
-    data.py      Reading, the calendar, spot, and traded prices
-    quotes.py    THE SEAM -- where bid and ask come from
+    data.py       the shapes -- expiry, spot, recent trade -- and date maths
+    bars.py       one minute of trading, as a Bar
+    quotes.py     THE SEAM -- where bid and ask come from
+    price_log.py  a held contract's price, recorded every couple of seconds
 
-`quotes.py` is the only file allowed to name a concrete provider. Today the
-only one is the manual-entry provider: you type the bid and the ask. When
-the market-data entitlement is bought, a fetched-quote provider replaces it
-and one line of `.env` changes -- nothing else needs touching, which stays
-true only while no other file names either class.
+Nothing here calls a broker. Each market fetches in its own way and answers
+in these shapes: the US one is backend/markets/us/.
 """
 
 from __future__ import annotations
@@ -16,14 +15,10 @@ from .data import (
     MarketDataError,
     MARKET_TIMEZONE, OptionExpiry, today_in_market_timezone,
     milliseconds_to_date, parse_expiry_date, days_until_expiry,
-    list_expirations,
-    SpotPrice, fetch_spot_price,
-    MAX_RECENT_TRADE_AGE_SECONDS, RecentTrade, fetch_recent_traded_price,
+    SpotPrice,
+    MAX_RECENT_TRADE_AGE_SECONDS, RecentTrade,
     DEFAULT_LIQUIDITY_THRESHOLD, UnderlyingPrice, LastTrade, ContractQuote,
-    calculate_spread, is_low_liquidity, fetch_underlying_price,
-    fetch_contract_quote, fetch_last_traded_close,
-
-    fetch_underlying_price_safely
+    calculate_spread, is_low_liquidity,
 )
 from .quotes import (
     DEFAULT_MAX_QUOTE_AGE_SECONDS, DECIMAL_SLIP_HIGH_RATIO,
@@ -36,14 +31,12 @@ from .quotes import (
 )
 
 __all__ = [
-    "RecentTrade", "fetch_recent_traded_price",
-    "MAX_RECENT_TRADE_AGE_SECONDS",
+    "RecentTrade", "MAX_RECENT_TRADE_AGE_SECONDS",
     "MarketDataError", "MARKET_TIMEZONE", "OptionExpiry",
     "today_in_market_timezone", "milliseconds_to_date", "parse_expiry_date",
-    "days_until_expiry", "list_expirations", "DEFAULT_LIQUIDITY_THRESHOLD",
+    "days_until_expiry", "DEFAULT_LIQUIDITY_THRESHOLD",
     "UnderlyingPrice", "LastTrade", "ContractQuote", "calculate_spread",
-    "is_low_liquidity", "fetch_underlying_price", "fetch_contract_quote",
-    "fetch_last_traded_close", "fetch_underlying_price_safely",
+    "is_low_liquidity",
     "DEFAULT_MAX_QUOTE_AGE_SECONDS", "DECIMAL_SLIP_HIGH_RATIO",
     "DECIMAL_SLIP_LOW_RATIO", "WIDE_SPREAD_FRACTION", "QuoteSource",
     "QuoteEntryError", "QuoteSnapshot", "BidSnapshot", "MarketDataProvider",
@@ -51,5 +44,5 @@ __all__ = [
     "is_spread_suspiciously_wide", "is_limit_outside_spread",
     "decimal_slip_ratio", "is_decimal_slip", "build_override_phrase",
     "build_market_data_provider",
-    "SpotPrice", "fetch_spot_price",
+    "SpotPrice",
 ]
