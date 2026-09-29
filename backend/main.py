@@ -1,0 +1,299 @@
+"""The web server: the API key lock, error handling, and startup.
+
+A second entry point over `backend/services`, not a rewrite. The CLI scripts in
+`scripts/` call the same library functions, and neither doorway holds logic of
+its own.
+
+This file has two jobs:
+
+  1. **The API key lock.** An HTTP port that can place orders is a different
+     risk from a CLI, so every route except /health needs a matching
+     `X-API-Key` header, the service refuses to start without one configured,
+     and it binds to 127.0.0.1 by default.
+  2. **Startup.** Building the app and running it under uvicorn.
+
+Two things deliberately do NOT live here, because this file is the root of the
+import graph and nothing may import it back: the exception-to-status table is
+in `errors.py`, and request logging is in `shared.py`. Both are needed by the
+low-level modules that `main.py` itself imports.
+
+The three original safety locks are untouched, and `assert_order_allowed`
+still runs twice on every order path inside `orders.py`.
+"""
+
+
+from __future__ import annotations
+
+import secrets
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
+
+from backend.core.config import ConfigError
+from backend.core.live_cache import CACHE
+from backend.services.market.price_log import PriceRecorder
+from backend.services.position import list_option_positions
+
+from .api.errors import ApiError, classify_exception
+from .api.shared import get_settings, get_trade_client
+from .api.routes import (
+    armed, close, export, health, journey, market, orders, positions,
+    symbol_settings,
+    time_brackets, trade, ui
+)
+
+#: Paths reachable without a key. Deliberately tiny: only the liveness check,
+#: the docs, which describe the API without exposing account data, and the
+#: hand-testing form, which is static HTML holding no secrets. The form still
+#: cannot place anything: the key it sends with POST /trade is typed in by
+#: whoever is using it, and that request is checked like any other.
+UNPROTECTED_PATHS = frozenset(
+    {"/health", "/docs", "/redoc", "/openapi.json", "/ui"}
+)
+
+#: The form's own scripts. A separate prefix rather than a member of the set
+#: above, because it is the one place a PREFIX is allowed rather than an
+#: exact path -- and the route itself refuses any name that resolves outside
+#: the vendor folder, so the prefix cannot be walked out of.
+UNPROTECTED_PREFIX = "/ui/vendor/"
+
+API_KEY_HEADER = "X-API-Key"
+
+
+def _held_positions(max_age_seconds: float):
+    """What is held, through the display cache the history page reads.
+
+    The SAME key as the page, so its one-second poll is served from what the
+    price recorder fetched rather than costing get_positions calls of its own.
+    """
+    return CACHE.get(
+        "positions",
+        lambda: list_option_positions(get_trade_client()),
+        max_age_seconds,
+    )
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Run the price recorder for as long as the server is up.
+
+    Here rather than in create_app: building the app -- which the tests do,
+    to read the OpenAPI spec -- must not start a thread that calls the broker.
+    """
+    recorder = PriceRecorder(_held_positions)
+    recorder.start()
+    try:
+        yield
+    finally:
+        recorder.stop()
+
+
+def create_app() -> FastAPI:
+    """Build the application.
+
+    Returns:
+        The configured FastAPI app.
+
+    Raises:
+        ConfigError: If no API key is configured. The service refuses to start
+            rather than serve an unauthenticated order endpoint.
+    """
+    settings = get_settings()
+
+    if not settings.api_key:
+        raise ConfigError(
+            "TIGER_API_KEY is not set, so this service will not start.\n"
+            "An HTTP endpoint that can place orders must not be reachable "
+            "without a key. Add a long random TIGER_API_KEY to .env."
+        )
+
+    app = FastAPI(
+        title="Tiger Options Backend",
+        version="8.0",
+        description=(
+            "HTTP access to the Tiger options backend. Order placement is "
+            "guarded by four locks: the account allowlist, the live opt-in, "
+            "DRY_RUN, and this API key. Orders are two-step: preview for a "
+            "token, then submit with that token and the exact cash figure."
+        ),
+        swagger_ui_parameters={"persistAuthorization": True},
+        lifespan=lifespan,
+    )
+
+    register_middleware(app)
+    register_error_handlers(app)
+    register_openapi(app)
+
+    app.include_router(health.router)
+    app.include_router(market.router)
+    app.include_router(positions.router)
+    # Before orders: /orders/{order_id} would otherwise match
+    # /orders/export and try to read "export" as an integer.
+    app.include_router(export.router)
+    app.include_router(orders.router)
+    app.include_router(journey.router)
+    app.include_router(trade.router)
+    app.include_router(close.router)
+    app.include_router(symbol_settings.router)
+    app.include_router(armed.router)
+    app.include_router(time_brackets.router)
+    app.include_router(ui.router)
+
+    return app
+
+
+def register_middleware(app: FastAPI) -> None:
+    """Attach the API key check in front of every protected route.
+
+    Args:
+        app: The application.
+    """
+
+    @app.middleware("http")
+    async def require_api_key(request: Request, call_next):
+        """Refuse anything without a matching key.
+
+        Compared with secrets.compare_digest so that a wrong key takes the
+        same time to reject as a right one.
+        """
+        if (request.url.path in UNPROTECTED_PATHS
+                or request.url.path.startswith(UNPROTECTED_PREFIX)):
+            return await call_next(request)
+
+        supplied_key = request.headers.get(API_KEY_HEADER, "")
+        expected_key = get_settings().api_key or ""
+
+        if not supplied_key or not secrets.compare_digest(supplied_key, expected_key):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error_code": "UNAUTHORIZED",
+                    "message": (
+                        f"This endpoint requires a valid {API_KEY_HEADER} header. "
+                        "The key is TIGER_API_KEY from .env."
+                    ),
+                    "detail": None,
+                },
+            )
+
+        return await call_next(request)
+
+
+def register_openapi(app: FastAPI) -> None:
+    """Declare the API key in OpenAPI so /docs shows Authorize.
+
+    Enforcement stays in middleware. This only tells Swagger to send
+    ``X-API-Key`` on Try it out. /health and the docs themselves stay
+    unmarked so they match UNPROTECTED_PATHS.
+    """
+
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        schema.setdefault("components", {})["securitySchemes"] = {
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": API_KEY_HEADER,
+            }
+        }
+        for path, operations in schema.get("paths", {}).items():
+            if path in UNPROTECTED_PATHS:
+                continue
+            for operation in operations.values():
+                if isinstance(operation, dict):
+                    operation["security"] = [{"ApiKeyAuth": []}]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = custom_openapi
+
+
+def register_error_handlers(app: FastAPI) -> None:
+    """Turn exceptions into the single documented error shape.
+
+    Args:
+        app: The application.
+    """
+
+    @app.exception_handler(ApiError)
+    async def handle_api_error(_request: Request, error: ApiError) -> JSONResponse:
+        """Return an error raised deliberately by a route."""
+        return JSONResponse(
+            status_code=error.status_code,
+            content={
+                "error_code": error.error_code,
+                "message": error.message,
+                "detail": error.detail,
+            },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(
+        _request: Request, error: RequestValidationError
+    ) -> JSONResponse:
+        """Return a body that failed Pydantic validation, in our error shape."""
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error_code": "REQUEST_INVALID",
+                "message": "The request body did not match what this endpoint "
+                           "expects. See detail for the offending fields.",
+                "detail": {"errors": error.errors()},
+            },
+        )
+
+    @app.exception_handler(Exception)
+    async def handle_library_error(_request: Request, error: Exception) -> JSONResponse:
+        """Map any library exception onto its documented status and code."""
+        api_error = classify_exception(error)
+        return JSONResponse(
+            status_code=api_error.status_code,
+            content={
+                "error_code": api_error.error_code,
+                "message": api_error.message,
+                "detail": api_error.detail,
+            },
+        )
+
+
+def run() -> None:
+    """Run the service with uvicorn, bound to the configured address.
+
+    Defaults to 127.0.0.1: only this machine can reach it. Exposing an
+    order-placing service to a network should be a decision someone makes on
+    purpose, by editing API_HOST.
+    """
+    import uvicorn
+
+    settings = get_settings()
+
+    print("=" * 60)
+    print("  TIGER OPTIONS BACKEND - HTTP API")
+    print(f"  Account : {settings.masked_account}")
+    print(f"  Mode    : {settings.mode}")
+    print(f"  Dry run : {'TRUE' if settings.dry_run else 'FALSE'}")
+    print(f"  Binding : http://{settings.api_host}:{settings.api_port}")
+    if settings.api_host not in ("127.0.0.1", "localhost"):
+        print("  *** NOT bound to localhost. This port can place orders. ***")
+    print("=" * 60)
+
+    uvicorn.run(
+        create_app(),
+        host=settings.api_host,
+        port=settings.api_port,
+        log_level="info",
+    )
+
+
+if __name__ == "__main__":
+    run()

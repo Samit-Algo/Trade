@@ -26,12 +26,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 
-[tool.setuptools]
-packages = ["api"]
+[tool.setuptools.packages.find]
+include = ["backend*"]
 
 [tool.pytest.ini_options]
 # Where the tests live. Without this you must type the path every time.
-testpaths = ["scrap/tests"]
+testpaths = ["tests"]
 
 # Show the reason a test was skipped, and make an unexpected pass a failure
 # rather than a quiet success.

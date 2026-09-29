@@ -47,7 +47,7 @@ you a .properties file, copy the value after private_key_pk8= into the .pem.
 -------------------------------------------------------------------------------
 
   vnv\Scripts\activate
-  python -m api.main
+  python -m backend.main
 
 It prints a banner first -- account, mode, dry-run state, and the address it
 bound to. READ IT. That banner is the last thing between you and a real order:
@@ -64,11 +64,11 @@ Stop it with Ctrl+C.
 
 Alternative, if you want auto-reload while editing code:
 
-  uvicorn "api.main:create_app" --factory --port 8000 --reload
+  uvicorn "backend.main:create_app" --factory --port 8000 --reload
 
 Note the --factory flag. There is no module-level `app` object: the app is
 built by create_app(), which validates settings first and REFUSES TO START if
-something is wrong. `uvicorn api.main:app` will not work.
+something is wrong. `uvicorn backend.main:app` will not work.
 
 --reload picks up CODE changes only. A change to .env needs a full restart,
 because settings are read once at startup and cached.
@@ -156,7 +156,7 @@ money -- comes from .env. See GET /trade/settings for what is in force.
 -------------------------------------------------------------------------------
 
   vnv\Scripts\activate
-  pytest scrap/tests
+  pytest
 
 431 tests. They need no network and no Tiger credentials.
 
@@ -168,24 +168,25 @@ is actually placed. A live paper order is the real check.
  7. WHERE THINGS ARE
 -------------------------------------------------------------------------------
 
-  api/                     the service
+  backend/                 the service
     main.py                app construction, the API-key middleware
-    routes/                one file per endpoint group
-    schemas.py             request and response models
-    service/core/          config, broker clients, the locks, the audit log
-    service/market/        prices, the calendar; quotes.py is the provider seam
-    service/order/         pricing rules, cost, brackets, submission
-    service/contract.py    which exact contract are we talking about
-    service/position.py    what is held, and what it is worth
+    api/routes/            one file per endpoint group
+    api/schemas.py         request and response models
+    core/                  config, broker clients, the locks, the audit log
+    services/market/       prices, the calendar; quotes.py is the provider seam
+    services/order/        pricing rules, cost, brackets, submission
+    services/contract.py   which exact contract are we talking about
+    services/position.py   what is held, and what it is worth
 
-  scrap/                   everything not needed to run the service
-    HANDOVER.md            the project bible -- measured evidence for the
-                           decisions, and the traps found the hard way
-    ARCHITECTURE.md        how the pieces fit
-    tests/                 the test suite
-    scripts/               standalone diagnostics
-    callOrderAPI.user.js   Tampermonkey userscript for TradingView
+  tests/                   the test suite
+  scripts/                 standalone diagnostics, and callOrderAPI.user.js
+                           (the Tampermonkey userscript for TradingView)
+  docs/                    HANDOVER.md (the project bible -- measured evidence
+                           for the decisions, and the traps found the hard
+                           way), ARCHITECTURE.md, the specs
 
+  state/                   what the page saved: symbol settings, the time
+                           bracket schedule, the SAFE/ARMED switch. Gitignored.
   secrets/                 your private key. Gitignored.
   logs/                    request and order audit logs. Gitignored.
 

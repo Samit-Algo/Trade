@@ -21,15 +21,12 @@ tiger_openapi_token.properties
 logs/
 *.log
 
-# Per-symbol enable/disable and bracket overrides, set from the page. This
-# machine's operating state, like .env -- not part of the project.
-symbol_settings.json
-
-# The clock-following bracket schedule, when changed from the page.
-time_bracket_settings.json
-
-# The arming switch, when flipped from the page.
-armed_settings.json
+# What the page saved: this machine's operating state, like .env -- not part
+# of the project. All of it lives in state/:
+#   symbol_settings.json        per-symbol enable/disable and brackets
+#   time_bracket_settings.json  the clock-following bracket schedule
+#   armed_settings.json         the SAFE/ARMED switch
+state/
 
 # ---------------------------------------------------------------------------
 # Python
