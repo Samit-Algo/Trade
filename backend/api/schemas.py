@@ -1125,6 +1125,7 @@ class OrderHistoryRow(BaseModel):
 
     outcome: Literal[
         "TOOK_PROFIT", "STOPPED_OUT", "CLOSED_MANUALLY", "CLOSED",
+        "EXPIRED_WORTHLESS",
         "STILL_OPEN", "NOT_FILLED", "CANCELLED", "EXPIRED", "UNKNOWN",
     ]
     outcome_note: str = Field(description="One sentence a human can read.")

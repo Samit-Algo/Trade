@@ -148,10 +148,6 @@ def read_order_history(
         still_held = (
             identifier_for_match.strip() in held_now if holdings_known else True
         )
-        outcome, note, exit_price = describe_outcome(
-            parent, legs, closes, still_held=still_held
-        )
-
         identifier = parent.identifier
         try:
             underlying, expiry_text, put_call, strike = market.parse_identifier(identifier)
@@ -159,12 +155,22 @@ def read_order_history(
             underlying = identifier.split()[0] if identifier else "?"
             expiry_text = put_call = strike = None
 
+        outcome, note, exit_price = describe_outcome(
+            parent, legs, closes, still_held=still_held,
+            expired=has_expired(expiry_text, market.profile.today()),
+        )
+
         entry = getattr(parent, "avg_fill_price", None)
         quantity = float(getattr(parent, "quantity", 0) or 0)
         multiplier = parent.multiplier or market.profile.contract_multiplier
 
         pnl = pnl_percent = None
-        if entry and exit_price:
+        if entry and outcome == "EXPIRED_WORTHLESS":
+            # Nothing was sold: what was paid for what actually filled is gone.
+            lost = float(getattr(parent, "filled", 0) or 0) or quantity
+            pnl = round(-entry * multiplier * lost, 2)
+            pnl_percent = -100.0
+        elif entry and exit_price:
             pnl = round((exit_price - entry) * multiplier * quantity, 2)
             pnl_percent = round((exit_price - entry) / entry * 100, 2)
 
@@ -307,6 +313,12 @@ def read_order_history(
     total_realised = _total_from_fills(rows, market)
     if total_realised is None:
         total_realised = round(sum(r.realised_pnl or 0 for r in rows), 2)
+    else:
+        # An option that expired unsold left no fill to count, so its loss
+        # is added here -- otherwise the total would read better than it was.
+        total_realised = round(total_realised + sum(
+            r.realised_pnl or 0 for r in rows if r.outcome == "EXPIRED_WORTHLESS"
+        ), 2)
 
     return OrderHistoryResponse(
         orders=rows,
@@ -549,7 +561,25 @@ def closed_after(parent, sell) -> bool:
     return sell_placed >= entry_filled
 
 
-def describe_outcome(parent, legs, closes=(), still_held=True) -> tuple[str, str, float | None]:
+def has_expired(expiry_text, today) -> bool:
+    """Whether a contract's expiry day is over, on the market's own calendar.
+
+    Strictly BEFORE today: on the expiry day itself a position that is gone
+    may have been sold from the broker's app at a price nobody recorded here.
+    """
+    if not expiry_text:
+        return False
+    try:
+        from datetime import date
+
+        return date.fromisoformat(str(expiry_text)) < today
+    except ValueError:
+        return False
+
+
+def describe_outcome(
+    parent, legs, closes=(), still_held=True, expired=False
+) -> tuple[str, str, float | None]:
     """Work out what became of one bracketed order.
 
     Tiger never says "the stop fired". It reports a status per order, and the
@@ -570,6 +600,8 @@ def describe_outcome(parent, legs, closes=(), still_held=True) -> tuple[str, str
         still_held: Whether the BROKER reports this contract as held. False
             means the position is gone however it left, so no branch below may
             answer STILL_OPEN -- see the note on it.
+        expired: Whether the contract's expiry day is over. A position that
+            is gone, with no sale found, after its expiry, expired unsold.
 
     Returns:
         A triple of (outcome code, a readable sentence, the exit fill price).
@@ -633,6 +665,16 @@ def describe_outcome(parent, legs, closes=(), still_held=True) -> tuple[str, str
     # get_positions is not a reconstruction. It is what is held. So it decides
     # this one thing, and the order records are left to explain HOW a position
     # closed rather than WHETHER it did.
+    if not still_held and expired:
+        return (
+            "EXPIRED_WORTHLESS",
+            "Expired with neither exit filled. The broker no longer holds it and "
+            "no sale was found, so the whole cost is counted as lost. If it "
+            "expired IN the money it may have been exercised instead -- the "
+            "broker's statement has the final word.",
+            0.0,
+        )
+
     if not still_held:
         return (
             "CLOSED",

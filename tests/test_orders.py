@@ -460,3 +460,84 @@ class TestTheBrokerDecidesWhatIsOpen:
         outcome, _, _ = describe_outcome(self.order(), legs=[], closes=())
 
         assert outcome == "STILL_OPEN"
+
+
+class TestAnOptionThatExpiredUnsold:
+    """Seen on QQQ 735 P: bought minutes before its own expiry, neither exit
+    filled, and the broker dropped it. It is not "still open", and its loss
+    is not unknown -- the whole cost is gone."""
+
+    def order(self, **fields):
+        from types import SimpleNamespace
+
+        base = dict(status="FILLED", filled=5, avg_fill_price=0.13,
+                    trade_time=1_790_625_260_000, order_time=1_790_625_260_000)
+        return SimpleNamespace(**{**base, **fields})
+
+    def expired_legs(self):
+        from types import SimpleNamespace
+
+        return [SimpleNamespace(status="EXPIRED", filled=0, order_type="STP", aux_price=0.13,
+                                avg_fill_price=None, limit_price=None, trade_time=None),
+                SimpleNamespace(status="EXPIRED", filled=0, order_type="LMT", limit_price=0.16,
+                                avg_fill_price=None, aux_price=None, trade_time=None)]
+
+    def test_gone_after_its_expiry_is_expired_worthless(self):
+        from backend.api.routes.orders import describe_outcome
+
+        outcome, note, exit_price = describe_outcome(
+            self.order(), self.expired_legs(), still_held=False, expired=True)
+
+        assert outcome == "EXPIRED_WORTHLESS"
+        assert exit_price == 0.0
+        assert "exercised" in note   # says what the assumption is
+
+    def test_gone_before_its_expiry_is_only_closed(self):
+        """It may have been sold from the broker's app at an unrecorded price."""
+        from backend.api.routes.orders import describe_outcome
+
+        outcome, _, exit_price = describe_outcome(
+            self.order(), self.expired_legs(), still_held=False, expired=False)
+
+        assert outcome == "CLOSED"
+        assert exit_price is None
+
+    def test_still_held_is_still_open_whatever_the_date(self):
+        from backend.api.routes.orders import describe_outcome
+
+        outcome, _, _ = describe_outcome(
+            self.order(), self.expired_legs(), still_held=True, expired=True)
+        assert outcome == "STILL_OPEN"
+
+    def test_expiry_is_over_only_after_its_day(self):
+        from datetime import date
+
+        from backend.api.routes.orders import has_expired
+
+        assert has_expired("2026-09-28", date(2026, 9, 29)) is True
+        assert has_expired("2026-09-28", date(2026, 9, 28)) is False
+        assert has_expired(None, date(2026, 9, 29)) is False
+        assert has_expired("not a date", date(2026, 9, 29)) is False
+
+
+def test_the_chart_takes_open_from_the_history_not_from_a_missing_exit(source_of):
+    """A missing exit price is what made an expired option read STILL OPEN."""
+    source = source_of("backend.api.routes.journey")
+
+    assert 'is_open=row.outcome == "STILL_OPEN"' in source
+    assert "is_open=row.exited_at is None" not in source
+
+
+def test_every_outcome_the_history_can_produce_is_accepted_by_the_api(source_of):
+    """A new outcome the response model does not list fails the WHOLE page --
+    found live, not by a test, when EXPIRED_WORTHLESS was added."""
+    import re
+    import typing
+
+    from backend.api.schemas import OrderHistoryRow
+
+    allowed = set(typing.get_args(OrderHistoryRow.model_fields["outcome"].annotation))
+    produced = set(re.findall(r'return \(?\s*"([A-Z_]+)"', source_of("backend.api.routes.orders")))
+
+    assert produced, "found no outcomes -- has describe_outcome changed shape?"
+    assert produced <= allowed, f"not accepted by the API: {sorted(produced - allowed)}"

@@ -40,7 +40,9 @@ HEADER_FONT = Font(color="FFFFFF", bold=True, size=10)
 
 #: The outcomes that count as a closed trade with a number attached. Used for
 #: the win rate, which is meaningless over orders that never filled.
-DECIDED_OUTCOMES = ("TOOK_PROFIT", "STOPPED_OUT", "CLOSED_MANUALLY", "CLOSED")
+DECIDED_OUTCOMES = (
+    "TOOK_PROFIT", "STOPPED_OUT", "CLOSED_MANUALLY", "CLOSED", "EXPIRED_WORTHLESS",
+)
 
 
 def _write_header(sheet, columns) -> None:

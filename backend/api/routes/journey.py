@@ -229,7 +229,10 @@ def read_journey(
         stop_loss_price=row.stop_loss_price,
         entry_time_ms=entry_ms,
         exit_time_ms=int(exited.timestamp() * 1000) if exited else None,
-        is_open=row.exited_at is None,
+        # The history's verdict, not "no exit price": an option that expired
+        # unsold, or was closed from the broker's app, has no exit price and
+        # is not open.
+        is_open=row.outcome == "STILL_OPEN",
         # Every bar fetched, for the hover's open/high/low/close. The line
         # itself is `path` and `lead`.
         bars=[

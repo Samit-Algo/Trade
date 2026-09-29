@@ -1418,6 +1418,7 @@ function outcomeTag(o) {
     STOPPED_OUT: ["t-stop", "STOP LOSS"],
     CLOSED_MANUALLY: ["t-stop", "CLOSED BY HAND"],
     CLOSED:      ["t-none", "CLOSED"],
+    EXPIRED_WORTHLESS: ["t-stop", "EXPIRED WORTHLESS"],
     STILL_OPEN:  ["t-open", "OPEN"],
     NOT_FILLED:  ["t-none", "NOT FILLED"],
     CANCELLED:   ["t-none", "CANCELLED"],
@@ -2477,6 +2478,7 @@ function showOrder(o) {
     STOPPED_OUT: ["b-bad",  "STOP LOSS TRIGGERED"],
     CLOSED_MANUALLY: ["b-bad", "CLOSED BY HAND — not by either exit leg"],
     CLOSED:      ["b-warn", "CLOSED — no longer held"],
+    EXPIRED_WORTHLESS: ["b-bad", "EXPIRED WORTHLESS — neither exit filled before expiry"],
     STILL_OPEN:  ["b-warn", "STILL OPEN — neither exit has fired"],
     NOT_FILLED:  ["b-warn", "NOT FILLED — nothing was bought"],
     CANCELLED:   ["b-warn", "CANCELLED"],
@@ -2682,6 +2684,8 @@ function jrnyVerdict(d, outcome) {
     CLOSED_MANUALLY: [won ? "win" : "loss", "CLOSED BY HAND"],
     STILL_OPEN:      ["open", "STILL OPEN"],
     EXPIRED:         ["flat", "EXPIRED"],
+    EXPIRED_WORTHLESS: ["loss", "EXPIRED WORTHLESS"],
+    CLOSED:          ["flat", "CLOSED"],
   };
   const hit = map[outcome];
   if (hit) return { cls: hit[0], label: hit[1] };
