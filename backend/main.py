@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import secrets
 from contextlib import asynccontextmanager
+from functools import partial
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -37,7 +38,7 @@ from backend.core.live_cache import CACHE
 from backend.services.market.price_log import PriceRecorder
 
 from .api.errors import ApiError, classify_exception
-from .api.shared import get_market, get_settings
+from .api.shared import available_markets, get_market, get_settings
 from .api.routes import (
     armed, close, export, health, journey, market, orders, positions,
     symbol_settings,
@@ -62,32 +63,39 @@ UNPROTECTED_PREFIX = "/ui/vendor/"
 API_KEY_HEADER = "X-API-Key"
 
 
-def _held_positions(max_age_seconds: float):
-    """What is held, through the display cache the history page reads.
+def _held_positions(max_age_seconds: float, market_id: str = "US"):
+    """What one market holds, through the display cache the history page reads.
 
     The SAME key as the page, so its one-second poll is served from what the
     price recorder fetched rather than costing get_positions calls of its own.
     """
     return CACHE.get(
-        "positions",
-        lambda: get_market().positions(),
+        f"{market_id}:positions",
+        lambda: get_market(market_id).positions(),
         max_age_seconds,
     )
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Run the price recorder for as long as the server is up.
+    """Run a price recorder per tradable market for as long as the server is up.
 
     Here rather than in create_app: building the app -- which the tests do,
     to read the OpenAPI spec -- must not start a thread that calls the broker.
+    A market that cannot trade yet has nothing to record.
     """
-    recorder = PriceRecorder(_held_positions)
-    recorder.start()
+    recorders = [
+        PriceRecorder(partial(_held_positions, market_id=market_id))
+        for market_id in available_markets()
+        if get_market(market_id).ready
+    ]
+    for recorder in recorders:
+        recorder.start()
     try:
         yield
     finally:
-        recorder.stop()
+        for recorder in recorders:
+            recorder.stop()
 
 
 def create_app() -> FastAPI:
@@ -108,6 +116,11 @@ def create_app() -> FastAPI:
             "An HTTP endpoint that can place orders must not be reachable "
             "without a key. Add a long random TIGER_API_KEY to .env."
         )
+
+    # Every market's settings, checked now: a mistake in config/india.env
+    # refuses to boot rather than surfacing on the first India request.
+    for market_id in available_markets():
+        get_market(market_id)
 
     app = FastAPI(
         title="Tiger Options Backend",

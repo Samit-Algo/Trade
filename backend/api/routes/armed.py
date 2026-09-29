@@ -14,23 +14,23 @@ exactly the moment you most need out.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from backend.core import armed
 
 from ..schemas import ArmedSettingIn, ArmedSettingOut
-from ..shared import get_settings
+from ..shared import get_market
 
 router = APIRouter(tags=["settings"])
 
 
-def describe() -> ArmedSettingOut:
+def describe(market) -> ArmedSettingOut:
     """Build the switch's row, saying which way it is and who set it.
 
     Returns:
         The row.
     """
-    settings = get_settings()
+    settings = market.settings
     dry_run, source = armed.describe(settings)
 
     return ArmedSettingOut(
@@ -48,13 +48,15 @@ def describe() -> ArmedSettingOut:
 
 
 @router.get("/trade/armed", response_model=ArmedSettingOut)
-def read_armed() -> ArmedSettingOut:
+def read_armed(market: str | None = Query(default=None, description="US or IN. Omitted means US.")) -> ArmedSettingOut:
     """Return whether orders may currently reach the broker."""
-    return describe()
+    return describe(get_market(market))
 
 
 @router.put("/trade/armed", response_model=ArmedSettingOut)
-def write_armed(body: ArmedSettingIn) -> ArmedSettingOut:
+def write_armed(
+    body: ArmedSettingIn, market: str | None = Query(default=None, description="US or IN. Omitted means US.")
+) -> ArmedSettingOut:
     """Flip the switch, overriding .env until it is cleared.
 
     Args:
@@ -63,12 +65,14 @@ def write_armed(body: ArmedSettingIn) -> ArmedSettingOut:
     Returns:
         The row as it now stands.
     """
-    armed.save(dry_run=not body.armed)
-    return describe()
+    chosen = get_market(market)
+    armed.save(dry_run=not body.armed, market_id=chosen.profile.id)
+    return describe(chosen)
 
 
 @router.delete("/trade/armed", response_model=ArmedSettingOut)
-def clear_armed() -> ArmedSettingOut:
+def clear_armed(market: str | None = Query(default=None, description="US or IN. Omitted means US.")) -> ArmedSettingOut:
     """Forget the switch, so DRY_RUN in .env decides again."""
-    armed.clear()
-    return describe()
+    chosen = get_market(market)
+    armed.clear(chosen.profile.id)
+    return describe(chosen)

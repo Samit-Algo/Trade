@@ -304,3 +304,59 @@ class TestIndiasOpeningHours:
         assert (at(10, 14).take_profit, at(10, 14).stop_loss) == (20, 20)
         assert (at(10, 15).take_profit, at(10, 15).stop_loss) == (5, 10)
         assert (at(14, 0).take_profit, at(14, 0).stop_loss) == (5, 10)
+
+
+class TestAFailedCheckDoesNotStrandTheRequest:
+    """A symbol check that cannot read the broker sent nothing.
+
+    So the caller's client_order_id must be given back. Keeping it answered
+    every retry with REQUEST_IN_FLIGHT for a request nothing was working on.
+    """
+
+    def test_the_id_is_released_when_the_broker_cannot_be_read(
+        self, fake_env, state, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        from backend.api.routes import trade
+        from backend.api.schemas import TradeRequest
+        from backend.api.shared import get_idempotency_store, get_market
+
+        class Unreachable:
+            ready = True
+            profile = get_market("US").profile
+            settings = get_market("US").settings
+
+            def open_orders(self):
+                raise ConnectionError("broker unreachable")
+
+        monkeypatch.setattr(trade, "get_market", lambda _market=None: Unreachable())
+        body = TradeRequest(
+            client_order_id="retry-me-0001", symbol="TSLA", option_type="CALL"
+        )
+
+        with pytest.raises(ConnectionError):
+            trade.place_bracketed_trade(body, SimpleNamespace(client=None))
+
+        # Free to be claimed again: nothing is holding it.
+        assert get_idempotency_store().claim("retry-me-0001") is None
+
+    def test_a_market_that_cannot_trade_is_refused_before_claiming(
+        self, india_on, state
+    ):
+        from types import SimpleNamespace
+
+        from backend.api.routes import trade
+        from backend.api.schemas import TradeRequest
+        from backend.api.shared import get_idempotency_store
+        from backend.markets.base import MarketNotReady
+
+        body = TradeRequest(
+            client_order_id="india-0000001", symbol="NIFTY",
+            option_type="CALL", market="IN",
+        )
+
+        with pytest.raises(MarketNotReady):
+            trade.place_bracketed_trade(body, SimpleNamespace(client=None))
+
+        assert get_idempotency_store().claim("india-0000001") is None

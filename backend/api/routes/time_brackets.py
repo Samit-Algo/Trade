@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from backend.core import time_bracket_settings
 from backend.core.time_brackets import (
@@ -32,27 +32,30 @@ from ..schemas import (
     TimeBracketSettingOut,
     TimeBracketWindowOut,
 )
-from ..shared import get_settings
+from ..shared import get_market
 
 router = APIRouter(tags=["settings"])
 
 
-def describe(settings) -> TimeBracketSettingOut:
+def describe(market) -> TimeBracketSettingOut:
     """Build the schedule row, including what it means at this moment.
 
     The active window is resolved the same way prepare_trade resolves it, so
     the page shows the bracket a trade placed now would really use.
 
     Args:
-        settings: The loaded configuration.
+        market: Whose schedule, and whose MARKET_OPEN.
 
     Returns:
         The row.
     """
+    settings = market.settings
     schedule = time_bracket_settings.effective(settings)
 
     now = datetime.now(schedule.timezone)
-    opened = session_start(now, schedule.start).astimezone(schedule.timezone)
+    opened = session_start(
+        now, schedule.start, market.profile.session
+    ).astimezone(schedule.timezone)
 
     active = (
         resolve(
@@ -60,6 +63,7 @@ def describe(settings) -> TimeBracketSettingOut:
             windows=schedule.windows,
             start=schedule.start,
             display_timezone=schedule.timezone,
+            session=market.profile.session,
         )
         if schedule.enabled
         else None
@@ -117,18 +121,20 @@ def describe(settings) -> TimeBracketSettingOut:
 
 
 @router.get("/trade/time-brackets", response_model=TimeBracketSettingOut)
-def read_time_brackets() -> TimeBracketSettingOut:
+def read_time_brackets(market: str | None = Query(default=None, description="US or IN. Omitted means US.")) -> TimeBracketSettingOut:
     """Return the schedule in force and what it means right now.
 
     Returns:
         The saved schedule if there is one, otherwise the .env one, with the
         active window resolved for this moment.
     """
-    return describe(get_settings())
+    return describe(get_market(market))
 
 
 @router.put("/trade/time-brackets", response_model=TimeBracketSettingOut)
-def write_time_brackets(body: TimeBracketSettingIn) -> TimeBracketSettingOut:
+def write_time_brackets(
+    body: TimeBracketSettingIn, market: str | None = Query(default=None, description="US or IN. Omitted means US.")
+) -> TimeBracketSettingOut:
     """Store the schedule, overriding .env until it is cleared.
 
     Args:
@@ -142,12 +148,14 @@ def write_time_brackets(body: TimeBracketSettingIn) -> TimeBracketSettingOut:
         ApiError: 422 when the timezone, start or windows cannot be used.
             Nothing is written in that case.
     """
+    chosen = get_market(market)
     try:
         time_bracket_settings.save(
             enabled=body.enabled,
             timezone_name=body.timezone,
             start_text=body.start,
             windows_text=body.windows,
+            market_id=chosen.profile.id,
         )
     except TimeBracketError as error:
         raise ApiError(
@@ -156,11 +164,11 @@ def write_time_brackets(body: TimeBracketSettingIn) -> TimeBracketSettingOut:
             message=str(error),
         ) from error
 
-    return describe(get_settings())
+    return describe(chosen)
 
 
 @router.delete("/trade/time-brackets", response_model=TimeBracketSettingOut)
-def clear_time_brackets() -> TimeBracketSettingOut:
+def clear_time_brackets(market: str | None = Query(default=None, description="US or IN. Omitted means US.")) -> TimeBracketSettingOut:
     """Forget the saved schedule, so the .env one comes back.
 
     Deleting rather than saving a copy of .env is deliberate: it restores
@@ -169,5 +177,6 @@ def clear_time_brackets() -> TimeBracketSettingOut:
     Returns:
         The row as it now stands, which is the .env schedule.
     """
-    time_bracket_settings.clear()
-    return describe(get_settings())
+    chosen = get_market(market)
+    time_bracket_settings.clear(chosen.profile.id)
+    return describe(chosen)

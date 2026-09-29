@@ -16,7 +16,7 @@ from backend.services.market import (
     QuoteSource,
 )
 
-from ..shared import get_market, get_settings
+from ..shared import get_market
 from ..errors import ApiError
 from ..schemas import (
     PositionDetailResponse,
@@ -78,6 +78,7 @@ def read_positions(
         default=DEFAULT_EXPIRY_WARNING_DAYS,
         description="Flag positions with this many days left or fewer.",
     ),
+    market: str | None = Query(default=None, description="US or IN. Omitted means US."),
 ) -> PositionsResponse:
     """List option positions, valuing any for which a bid was supplied.
 
@@ -88,15 +89,16 @@ def read_positions(
     Returns:
         The positions payload.
     """
-    settings = get_settings()
+    chosen = get_market(market)
+    settings = chosen.settings
     supplied_bids = parse_bid_arguments(bid)
     # Cached for DISPLAY only. The guards that decide whether an order may be
     # placed call list_option_positions directly and always read live -- a
     # stale read there could let a second position open on a symbol that
     # already has one.
     positions, _age = CACHE.get(
-        "positions",
-        lambda: get_market().positions(),
+        f"{chosen.profile.id}:positions",
+        chosen.positions,
         POSITIONS_MAX_AGE_SECONDS,
     )
 
@@ -169,17 +171,18 @@ def classify_working_order(action: str, order_type: str) -> str:
     return "OTHER"
 
 
-def fetch_working_orders(identifier: str) -> list[WorkingOrderOut]:
+def fetch_working_orders(identifier: str, market) -> list[WorkingOrderOut]:
     """List every order still live on the broker's book for one contract.
 
     Args:
         identifier: The full option identifier.
+        market: The market it is held in.
 
     Returns:
         The open orders, each labelled with what it is for.
     """
     rows = []
-    for order in get_market().open_orders():
+    for order in market.open_orders():
         if order.identifier != identifier:
             continue
 
@@ -199,7 +202,7 @@ def fetch_working_orders(identifier: str) -> list[WorkingOrderOut]:
     return rows
 
 
-def find_entry_fill_time(identifier: str) -> datetime | None:
+def find_entry_fill_time(identifier: str, market) -> datetime | None:
     """Find when the BUY that opened this position filled.
 
     The hold clock starts at the fill, not at submission, so this reads
@@ -209,12 +212,13 @@ def find_entry_fill_time(identifier: str) -> datetime | None:
 
     Args:
         identifier: The full option identifier.
+        market: The market it is held in.
 
     Returns:
         When the entry filled, or None when it cannot be determined.
     """
     try:
-        orders = get_market().orders(100)
+        orders = market.orders(100)
     except Exception:  # noqa: BLE001 -- a missing clock must not hide a position
         return None
 
@@ -236,7 +240,9 @@ def find_entry_fill_time(identifier: str) -> datetime | None:
 
 
 @router.get("/positions/detail", response_model=PositionDetailResponse)
-def read_position_detail(identifier: str) -> PositionDetailResponse:
+def read_position_detail(
+    identifier: str, market: str | None = Query(default=None, description="US or IN. Omitted means US.")
+) -> PositionDetailResponse:
     """Price one held position live and report what is protecting it.
 
     Answers the question the positions list cannot: is there actually a stop
@@ -253,7 +259,7 @@ def read_position_detail(identifier: str) -> PositionDetailResponse:
     Raises:
         ApiError: 404 when the position is not held.
     """
-    market = get_market()
+    market = get_market(market)
     positions = market.positions()
     held = next((p for p in positions if p.identifier == identifier), None)
 
@@ -275,7 +281,7 @@ def read_position_detail(identifier: str) -> PositionDetailResponse:
         pnl = round(current_value - cost_basis, 2)
         pnl_percent = round(pnl / cost_basis * 100, 2) if cost_basis else None
 
-    working = fetch_working_orders(identifier)
+    working = fetch_working_orders(identifier, market)
     has_stop = any(o.role == "STOP_LOSS" for o in working)
     has_target = any(o.role == "TAKE_PROFIT" for o in working)
 
@@ -292,7 +298,7 @@ def read_position_detail(identifier: str) -> PositionDetailResponse:
         )
 
     # When did this position open, and how far is it from each exit?
-    entry_filled_at = find_entry_fill_time(identifier)
+    entry_filled_at = find_entry_fill_time(identifier, market)
     held_seconds = (
         round((datetime.now(timezone.utc) - entry_filled_at).total_seconds(), 1)
         if entry_filled_at

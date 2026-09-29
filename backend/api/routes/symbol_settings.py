@@ -11,7 +11,7 @@ entry for a symbol no longer in .env is simply not listed.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from backend.core.symbol_settings import (
     SymbolSettingsError,
@@ -25,7 +25,7 @@ from ..schemas import (
     SymbolSettingOut,
     SymbolSettingsResponse,
 )
-from ..shared import get_settings
+from ..shared import get_market
 
 router = APIRouter(tags=["settings"])
 
@@ -44,7 +44,7 @@ def describe(symbol: str, settings) -> SymbolSettingOut:
     Returns:
         The row.
     """
-    stored = read_for(symbol)
+    stored = read_for(symbol, settings.market_id)
 
     take_profit = stored.get("take_profit")
     if take_profit is not None:
@@ -77,13 +77,13 @@ def describe(symbol: str, settings) -> SymbolSettingOut:
 
 
 @router.get("/trade/symbols", response_model=SymbolSettingsResponse)
-def read_symbol_settings() -> SymbolSettingsResponse:
+def read_symbol_settings(market: str | None = Query(default=None, description="US or IN. Omitted means US.")) -> SymbolSettingsResponse:
     """List every tradable symbol and how it is configured.
 
     Returns:
         One row per symbol in TRADE_SYMBOLS, in the order .env lists them.
     """
-    settings = get_settings()
+    settings = get_market(market).settings
 
     return SymbolSettingsResponse(
         symbols=[describe(symbol, settings) for symbol in settings.trade_symbols],
@@ -93,7 +93,9 @@ def read_symbol_settings() -> SymbolSettingsResponse:
 
 
 @router.put("/trade/symbols/{symbol}", response_model=SymbolSettingOut)
-def write_symbol_settings(symbol: str, body: SymbolSettingIn) -> SymbolSettingOut:
+def write_symbol_settings(
+    symbol: str, body: SymbolSettingIn, market: str | None = Query(default=None, description="US or IN. Omitted means US.")
+) -> SymbolSettingOut:
     """Store one symbol's settings.
 
     Args:
@@ -108,7 +110,7 @@ def write_symbol_settings(symbol: str, body: SymbolSettingIn) -> SymbolSettingOu
         ApiError: 404 when the symbol is not configured for trading, 422 when
             a percentage is not usable.
     """
-    settings = get_settings()
+    settings = get_market(market).settings
     wanted = symbol.strip().upper()
 
     if wanted not in settings.trade_symbols:
@@ -129,6 +131,7 @@ def write_symbol_settings(symbol: str, body: SymbolSettingIn) -> SymbolSettingOu
             enabled=body.enabled,
             take_profit=body.take_profit,
             stop_loss=body.stop_loss,
+            market_id=settings.market_id,
         )
     except SymbolSettingsError as error:
         raise ApiError(

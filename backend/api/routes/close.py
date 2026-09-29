@@ -45,7 +45,7 @@ from backend.services.order import snap_down
 from ..errors import ApiError
 from ..order_rules import build_price_only_quote
 from ..schemas import ClosePositionRequest, ClosePositionResponse
-from ..shared import get_market, get_settings
+from ..shared import get_market
 from .positions import fetch_working_orders
 
 router = APIRouter(tags=["positions"])
@@ -140,7 +140,7 @@ def cancel_resting_legs(identifier: str, market) -> tuple[list, list]:
     """
     cancelled, stubborn = [], []
 
-    for leg in fetch_working_orders(identifier):
+    for leg in fetch_working_orders(identifier, market):
         if leg.role not in ("TAKE_PROFIT", "STOP_LOSS"):
             continue
 
@@ -181,8 +181,8 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
         ApiError: 404 if not held, 422 if the quantity exceeds the position or
             the price is not usable.
     """
-    settings = get_settings()
-    market = get_market()
+    market = get_market(body.market)
+    settings = market.settings
 
     # ---- everything that can fail goes here, BEFORE anything is sent -------
 
@@ -238,6 +238,7 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
             legs=None,
         )
         record["submitted"] = True
+        record["market"] = market.profile.id
         record["source"] = "api:/positions/close"
         record["client_host"] = request.client.host if request.client else None
         write_order_record(record)
@@ -265,7 +266,7 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
         # There is no interactive prompt over HTTP, so the library's typed
         # confirmation is answered programmatically -- the same way the buy
         # path does. assert_order_allowed still runs before place_order.
-        input_function=lambda _prompt: f"{limit_price * quantity * 100:.2f}",
+        input_function=lambda _prompt: f"{limit_price * quantity * contract.multiplier:.2f}",
         on_submitted=record_submission,
     )
 

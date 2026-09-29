@@ -79,14 +79,15 @@ LEG_COLUMNS: tuple[tuple[str, int], ...] = (
 )
 
 
-def _market_time(stamp) -> datetime | None:
+def _market_time(stamp, timezone: ZoneInfo = MARKET_TIMEZONE) -> datetime | None:
     """Parse an ISO stamp from the API and move it to market time.
 
     Args:
         stamp: A datetime, or an ISO-8601 string, or None.
+        timezone: The market's clock. New York unless another is named.
 
     Returns:
-        A timezone-aware datetime in New York, or None.
+        A timezone-aware datetime in the market's zone, or None.
     """
     if not stamp:
         return None
@@ -99,7 +100,7 @@ def _market_time(stamp) -> datetime | None:
         except ValueError:
             return None
 
-    return moment.astimezone(MARKET_TIMEZONE)
+    return moment.astimezone(timezone)
 
 
 def _percent_away(from_price, to_price):
@@ -121,18 +122,24 @@ def _percent_away(from_price, to_price):
     return round((to_price - from_price) / from_price * 100, 2)
 
 
-def build_order_row(order: dict) -> list:
+def build_order_row(
+    order: dict,
+    timezone: ZoneInfo = MARKET_TIMEZONE,
+    multiplier: float = CONTRACT_MULTIPLIER,
+) -> list:
     """Flatten one order into its spreadsheet row.
 
     Args:
         order: One entry from GET /orders/history.
+        timezone: The market's clock.
+        multiplier: Units per contract; 1 where quantity is already units.
 
     Returns:
         The values, in ORDER_COLUMNS order.
     """
-    placed = _market_time(order.get("placed_at"))
-    filled = _market_time(order.get("filled_at"))
-    exited = _market_time(order.get("exited_at"))
+    placed = _market_time(order.get("placed_at"), timezone)
+    filled = _market_time(order.get("filled_at"), timezone)
+    exited = _market_time(order.get("exited_at"), timezone)
 
     fill_price = order.get("fill_price")
     limit_price = order.get("limit_price")
@@ -147,7 +154,7 @@ def build_order_row(order: dict) -> list:
     )
 
     cash_in = (
-        round(fill_price * quantity * CONTRACT_MULTIPLIER, 2)
+        round(fill_price * quantity * multiplier, 2)
         if fill_price is not None and quantity is not None
         else None
     )
@@ -190,7 +197,7 @@ def build_order_row(order: dict) -> list:
     ]
 
 
-def build_leg_rows(order: dict) -> list[list]:
+def build_leg_rows(order: dict, timezone: ZoneInfo = MARKET_TIMEZONE) -> list[list]:
     """Flatten one order's bracket legs into their own rows.
 
     Kept on a separate sheet rather than widened onto the order row: an order
@@ -199,11 +206,12 @@ def build_leg_rows(order: dict) -> list[list]:
 
     Args:
         order: One entry from GET /orders/history.
+        timezone: The market's clock.
 
     Returns:
         A list of rows, in LEG_COLUMNS order. Empty when there are no legs.
     """
-    placed = _market_time(order.get("placed_at"))
+    placed = _market_time(order.get("placed_at"), timezone)
 
     return [
         [

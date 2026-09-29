@@ -47,10 +47,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 
 from backend.core import armed
 from backend.core.live_cache import CACHE
+from backend.markets.base import MarketNotReady
 from backend.core.safety import build_order_record, write_order_record
 from backend.core.symbol_settings import is_enabled, read_for
 from backend.core import time_bracket_settings
@@ -88,11 +89,14 @@ from ..shared import (
     get_cached_contract,
     get_idempotency_store,
     get_market,
-    get_settings,
     log_order_request,
 )
 
 router = APIRouter(tags=["trade"])
+
+#: ?market=US or ?market=IN. Omitted means the US, so every caller written
+#: before there was a second market keeps meaning what it meant.
+MARKET_QUERY = Query(default=None, description="US or IN. Omitted means US.")
 
 LEGS_NOTE = (
     "Legs are reported AS SENT. They attach to the parent and activate only "
@@ -190,12 +194,13 @@ def remember_and_return(
 # ---------------------------------------------------------------------------
 
 
-def find_contract(body: TradeRequest, settings, underlying_price: float):
+def find_contract(body: TradeRequest, settings, underlying_price: float, market):
     """Choose and verify the contract, reusing today's answer where possible.
 
     Args:
         body: The request, for symbol, side and the underlying's price.
         settings: For the expiry, the strike distance and the expiry floor.
+        market: The market being traded.
 
     Returns:
         A triple of (contract, why this expiry, why this strike).
@@ -206,7 +211,7 @@ def find_contract(body: TradeRequest, settings, underlying_price: float):
 
     def resolve():
         """Ask the broker. Called only when the cache misses."""
-        return get_market().select_contract(
+        return market.select_contract(
             body.symbol,
             body.option_type,
             underlying_price,
@@ -225,10 +230,10 @@ def find_contract(body: TradeRequest, settings, underlying_price: float):
         expiry or "auto",
         settings.trade_strikes_out,
     )
-    return get_cached_contract(key, resolve)
+    return get_cached_contract(key, resolve, market)
 
 
-def resolve_underlying_price(body: TradeRequest) -> tuple[float, str]:
+def resolve_underlying_price(body: TradeRequest, market) -> tuple[float, str]:
     """Return the underlying price that will choose the strike, and its source.
 
     The caller may supply it, or omit it and have it fetched here. Supplying
@@ -243,6 +248,7 @@ def resolve_underlying_price(body: TradeRequest) -> tuple[float, str]:
 
     Args:
         body: The validated request.
+        market: The market being traded.
 
     Returns:
         The price, and a sentence naming where it came from.
@@ -255,7 +261,7 @@ def resolve_underlying_price(body: TradeRequest) -> tuple[float, str]:
     if body.current_price is not None:
         return body.current_price, "supplied by the caller"
 
-    spot = get_market().spot_price(body.symbol)
+    spot = market.spot_price(body.symbol)
     if spot is None:
         raise ApiError(
             status_code=502,
@@ -274,7 +280,7 @@ def resolve_underlying_price(body: TradeRequest) -> tuple[float, str]:
     return spot.price, f"fetched from {spot.source} ({freshness})"
 
 
-def resolve_entry_price(contract, settings) -> tuple[float, PriceSource]:
+def resolve_entry_price(contract, settings, market) -> tuple[float, PriceSource]:
     """Fetch the last price the contract traded at.
 
     The fetch is FREE -- one-minute bars need no market data entitlement. What
@@ -286,6 +292,7 @@ def resolve_entry_price(contract, settings) -> tuple[float, PriceSource]:
     Args:
         contract: The resolved contract, for its identifier.
         settings: For REQUIRE_LIVE_TRADING.
+        market: The market being traded.
 
     Returns:
         A pair of (price to trade at, where it came from).
@@ -294,7 +301,7 @@ def resolve_entry_price(contract, settings) -> tuple[float, PriceSource]:
         ApiError: 502 when no price could be fetched, 422 when the newest one
             is too old to trade on.
     """
-    recent = get_market().recent_traded_price(contract.identifier)
+    recent = market.recent_traded_price(contract.identifier)
 
     if recent is None:
         raise ApiError(
@@ -357,7 +364,7 @@ def resolve_entry_price(contract, settings) -> tuple[float, PriceSource]:
     )
 
 
-def resolve_time_window(moment: datetime | None = None):
+def resolve_time_window(moment: datetime | None = None, market=None):
     """Find the schedule window this order falls in, if any.
 
     Reads the page's saved schedule if there is one, otherwise .env. Both
@@ -368,13 +375,15 @@ def resolve_time_window(moment: datetime | None = None):
     Args:
         moment: When to resolve for. Defaults to now; passed explicitly by
             the tests and by the page's status line.
+        market: Whose schedule, and whose MARKET_OPEN. Defaults to the US.
 
     Returns:
         The active window and the schedule's timezone name, or (None, "")
         when the schedule is off, unusable, or the moment is before it
         starts.
     """
-    settings = get_settings()
+    market = market or get_market()
+    settings = market.settings
 
     try:
         schedule = time_bracket_settings.effective(settings)
@@ -391,13 +400,14 @@ def resolve_time_window(moment: datetime | None = None):
         windows=schedule.windows,
         start=schedule.start,
         display_timezone=schedule.timezone,
+        session=market.profile.session,
     )
     return window, schedule.timezone_name
 
 
 def resolve_bracket_percent(
     *, supplied, symbol: str, per_symbol: dict, default: float, name: str,
-    active_window=None, timezone_name: str = "",
+    active_window=None, timezone_name: str = "", market_id: str = "US",
 ) -> tuple[float, str]:
     """Return the bracket percentage to use, and say where it came from.
 
@@ -423,6 +433,7 @@ def resolve_bracket_percent(
         active_window: The window this order falls in, or None when the
             schedule is off or the order is outside it.
         timezone_name: The schedule's timezone, for the reason string.
+        market_id: The market being traded, whose page settings apply.
 
     Returns:
         The percentage, and a sentence naming its source.
@@ -434,7 +445,7 @@ def resolve_bracket_percent(
 
     # Set in the page, which is editable between trades. .env needs a restart,
     # so this sits above it -- the more recently changed value wins.
-    stored = read_for(wanted).get(name.replace(" ", "_"))
+    stored = read_for(wanted, market_id).get(name.replace(" ", "_"))
     if stored is not None:
         return stored, f"{stored:g}% {name}, set for {wanted} in the UI"
 
@@ -456,7 +467,7 @@ def resolve_bracket_percent(
     return default, f"{default:g}% {name}, the configured default"
 
 
-def prepare_trade(body: TradeRequest) -> TradePlan:
+def prepare_trade(body: TradeRequest, market=None) -> TradePlan:
     """Resolve the contract and work out all three prices.
 
     THIS FUNCTION CANNOT PLACE AN ORDER. It imports nothing that can, which is
@@ -464,6 +475,7 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
 
     Args:
         body: The validated request.
+        market: The market being traded. Defaults to the one the request names.
 
     Returns:
         Everything the next step needs.
@@ -471,16 +483,17 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
     Raises:
         ApiError: 404 or 422, depending on what was wrong.
     """
-    settings = get_settings()
+    market = market or get_market(body.market)
+    settings = market.settings
 
     # The strike is chosen from this, so it is settled before anything else.
     # Supplied by the caller, or fetched here -- see resolve_underlying_price.
-    underlying_price, underlying_price_source = resolve_underlying_price(body)
+    underlying_price, underlying_price_source = resolve_underlying_price(body, market)
 
     contract, expiry_reason, strike_reason = find_contract(
-        body, settings, underlying_price
+        body, settings, underlying_price, market
     )
-    entry_price, price_source = resolve_entry_price(contract, settings)
+    entry_price, price_source = resolve_entry_price(contract, settings, market)
 
     # OPTIONAL: a bracket that follows the clock, wide just after the open
     # and tight afterwards. See core/time_brackets.py -- this is None when
@@ -489,7 +502,7 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
     # The clock is read ONCE, here, and the same instant decides both legs.
     # Reading it twice would let an order placed on a window boundary take
     # its take-profit from one window and its stop-loss from the next.
-    active_window, timezone_name = resolve_time_window()
+    active_window, timezone_name = resolve_time_window(market=market)
 
     # Five levels, highest wins: what the request supplied, this symbol's
     # page setting, this symbol's own .env setting, the active time window,
@@ -504,6 +517,7 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
         name="take profit",
         active_window=active_window,
         timezone_name=timezone_name,
+        market_id=market.profile.id,
     )
     stop_loss_percent, stop_loss_source = resolve_bracket_percent(
         supplied=body.stop_loss_percent,
@@ -513,6 +527,7 @@ def prepare_trade(body: TradeRequest) -> TradePlan:
         name="stop loss",
         active_window=active_window,
         timezone_name=timezone_name,
+        market_id=market.profile.id,
     )
 
     # OPTIONAL: scale the buy buffer to the premium instead of using a flat
@@ -684,7 +699,7 @@ def describe_only(plan: TradePlan, settings) -> TradeResponse:
 
 
 def submit_and_record(
-    plan: TradePlan, body: TradeRequest, settings, request: Request
+    plan: TradePlan, body: TradeRequest, settings, request: Request, market
 ) -> TradeResponse:
     """Send the bracketed order, write the audit record, and report back.
 
@@ -696,6 +711,7 @@ def submit_and_record(
         body: The original request, for the client_order_id in the audit log.
         settings: The loaded configuration.
         request: For the client address in the audit log.
+        market: The market the order goes to.
 
     Returns:
         What the order actually did.
@@ -704,7 +720,7 @@ def submit_and_record(
         request, "trade", plan.contract.identifier, plan.estimate.total_cash
     )
 
-    outcome, final_estimate, legs = get_market().buy_option_with_bracket(
+    outcome, final_estimate, legs = market.buy_option_with_bracket(
         settings=settings,
         contract=plan.contract,
         quote=plan.quote,
@@ -732,6 +748,7 @@ def submit_and_record(
         legs=legs,
     )
     record["submitted"] = True
+    record["market"] = market.profile.id
     record["source"] = "api:/trade"
     record["client_order_id"] = body.client_order_id
     record["client_host"] = request.client.host if request.client else None
@@ -756,18 +773,26 @@ def submit_and_record(
 
 
 @router.get("/trade/settings")
-def read_trade_settings() -> dict:
+def read_trade_settings(market: str | None = MARKET_QUERY) -> dict:
     """Report the .env decisions POST /trade will apply, so they are visible.
 
     A four-field form that places real orders would otherwise hide the numbers
     that matter most -- how many contracts, and where the exits sit. No secret
     is included.
 
+    Args:
+        market: Whose settings. Omitted means the US.
+
     Returns:
         The trading settings, and whether an order would actually be sent.
     """
-    settings = get_settings()
+    chosen = get_market(market)
+    settings = chosen.settings
     return {
+        "market": chosen.profile.id,
+        "market_name": chosen.profile.name,
+        "market_ready": chosen.ready,
+        "currency_symbol": chosen.profile.currency_symbol,
         "dry_run": armed.is_dry(settings),
         "mode": settings.mode,
         "quantity": settings.trade_quantity,
@@ -808,6 +833,17 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
     Raises:
         ApiError: For any refusal; the error_code says which.
     """
+    # 0. Which market? An unknown one -- or one that cannot trade yet -- is
+    #    refused before anything is claimed, so a retry is not left waiting
+    #    on an id that nothing is using.
+    market = get_market(body.market)
+    settings = market.settings
+    market_id = market.profile.id
+    if not market.ready:
+        raise MarketNotReady(
+            f"{market.profile.name} cannot trade yet. Nothing was sent."
+        )
+
     # 1. Seen this request before?
     replay = claim_request_id(body.client_order_id)
     if replay is not None:
@@ -818,7 +854,7 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
     #    every caller -- a script or a curl included. Closing is deliberately
     #    NOT gated on this: a symbol you have stopped opening trades on must
     #    still be one you can sell.
-    if not is_enabled(body.symbol):
+    if not is_enabled(body.symbol, market_id):
         release_request_id(body.client_order_id)
         raise ApiError(
             status_code=409,
@@ -833,9 +869,8 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
     # 3. Is this underlying already busy? One trade per symbol at a time --
     #    an order still on the book counts, not just a filled position, so a
     #    second click during the seconds before a fill is refused too.
-    settings = get_settings()
     try:
-        claim_symbol(body.symbol, get_market())
+        claim_symbol(body.symbol, market)
     except SymbolBusy as error:
         release_request_id(body.client_order_id)
         raise ApiError(
@@ -843,13 +878,20 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
             error_code="SYMBOL_ALREADY_OPEN",
             message=str(error),
         ) from error
+    except Exception:
+        # The check itself failed -- the broker could not be read. It only
+        # READS, so nothing was sent and the id can go back. Keeping it would
+        # answer every retry for the next few minutes with REQUEST_IN_FLIGHT
+        # for a request that is not in flight at all.
+        release_request_id(body.client_order_id)
+        raise
 
     # 3. Work it all out. Nothing here can reach the broker, so a failure is
     #    safe to retry and both the id and the symbol go back.
     try:
-        plan = prepare_trade(body)
+        plan = prepare_trade(body, market)
     except Exception:
-        release_symbol(body.symbol)
+        release_symbol(body.symbol, market_id)
         release_request_id(body.client_order_id)
         raise
 
@@ -859,14 +901,15 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
     #    the DRY_RUN branch so a dry run reports the same refusal a live trade
     #    would, rather than describing an order that could never be placed.
     if plan.estimate.total_cash > settings.max_trade_cash:
-        release_symbol(body.symbol)
+        release_symbol(body.symbol, market_id)
         release_request_id(body.client_order_id)
         raise ApiError(
             status_code=422,
             error_code="TRADE_TOO_EXPENSIVE",
             message=(
-                f"This order needs ${plan.estimate.total_cash:,.2f}, which is "
-                f"over the ${settings.max_trade_cash:,.2f} MAX_TRADE_CASH "
+                f"This order needs {market.profile.money(plan.estimate.total_cash)}, "
+                f"which is over the {market.profile.money(settings.max_trade_cash)} "
+                f"MAX_TRADE_CASH "
                 f"limit. Nothing was sent. "
                 f"{plan.contract.identifier} at "
                 f"{plan.calculation.entry_actual:.2f} x "
@@ -880,7 +923,7 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
     #    Read live, so flipping the switch takes effect on the next trade
     #    rather than at the next restart.
     if armed.is_dry(settings):
-        release_symbol(body.symbol)
+        release_symbol(body.symbol, market_id)
         return remember_and_return(
             body.client_order_id, describe_only(plan, settings)
         )
@@ -891,10 +934,11 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
     #    which the next request will read.
     try:
         return remember_and_return(
-            body.client_order_id, submit_and_record(plan, body, settings, request)
+            body.client_order_id,
+            submit_and_record(plan, body, settings, request, market),
         )
     finally:
-        release_symbol(body.symbol)
+        release_symbol(body.symbol, market_id)
         # The account just changed. Drop the display cache so the page shows
         # the new order at once rather than the old picture for a few seconds.
         CACHE.invalidate()

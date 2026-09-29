@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from backend.services.market.bars import MAX_BARS
 from backend.services.market.price_log import PRICE_LOG
@@ -116,7 +116,7 @@ def _window(row) -> tuple[datetime, datetime]:
     return begin, end
 
 
-def _find_row(order_id: int):
+def _find_row(order_id: int, market_id: str):
     """Find one order in the history the rest of the page already reads.
 
     Args:
@@ -130,7 +130,7 @@ def _find_row(order_id: int):
     """
     from .orders import read_order_history
 
-    history = read_order_history(limit=300)
+    history = read_order_history(limit=300, fresh=False, market=market_id)
 
     for row in history.orders:
         if str(row.order_id_text) == str(order_id):
@@ -147,7 +147,9 @@ def _find_row(order_id: int):
 
 
 @router.get("/orders/{order_id}/journey", response_model=JourneyResponse)
-def read_journey(order_id: int) -> JourneyResponse:
+def read_journey(
+    order_id: int, market: str | None = Query(default=None, description="US or IN. Omitted means US.")
+) -> JourneyResponse:
     """Return one trade's minute bars and what they say about it.
 
     Args:
@@ -159,7 +161,8 @@ def read_journey(order_id: int) -> JourneyResponse:
     Raises:
         ApiError: 404 when the order is not in the history.
     """
-    row = _find_row(order_id)
+    chosen = get_market(market)
+    row = _find_row(order_id, chosen.profile.id)
 
     entry = row.fill_price or row.limit_price
     if not entry:
@@ -175,7 +178,7 @@ def read_journey(order_id: int) -> JourneyResponse:
         )
 
     begin, end = _window(row)
-    bars = get_market().minute_bars(row.identifier, begin=begin, end=end)
+    bars = chosen.minute_bars(row.identifier, begin=begin, end=end)
 
     filled = _parse(row.filled_at)
     exited = _parse(row.exited_at)
@@ -208,7 +211,7 @@ def read_journey(order_id: int) -> JourneyResponse:
         journey_service.path_as_bars(path),
         entry_price=entry,
         quantity=row.quantity or 1,
-        multiplier=100.0,
+        multiplier=chosen.profile.contract_multiplier,
         take_profit_price=row.take_profit_price,
         stop_loss_price=row.stop_loss_price,
     )

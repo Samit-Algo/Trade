@@ -61,6 +61,7 @@ def read_order_history(
         "or the cache that keeps a 1s page inside a 60-per-minute broker "
         "limit stops doing anything.",
     ),
+    market: str | None = Query(default=None, description="US or IN. Omitted means US."),
 ):
     """List every order placed, newest first, saying what became of each.
 
@@ -78,7 +79,8 @@ def read_order_history(
     Returns:
         The orders, with an outcome and realised P&L on each.
     """
-    market = get_market()
+    market = get_market(market)
+    market_id = market.profile.id
     if fresh:
         # Everything this endpoint reads: the order list, and the price of
         # every open position. Dropped together so one click gives one
@@ -90,7 +92,7 @@ def read_order_history(
     # between refreshes, so the poll rate stops deciding the broker load --
     # see backend/core/live_cache.py.
     raw, _age = CACHE.get(
-        f"orders:{limit}",
+        f"{market_id}:orders:{limit}",
         lambda: market.orders(limit),
         ORDERS_MAX_AGE_SECONDS,
     )
@@ -120,7 +122,7 @@ def read_order_history(
     # is open. Read once for the whole listing rather than per row.
     try:
         positions, _age = CACHE.get(
-            "positions", market.positions, POSITIONS_MAX_AGE_SECONDS
+            f"{market_id}:positions", market.positions, POSITIONS_MAX_AGE_SECONDS
         )
         held_now = {p.identifier.strip() for p in positions or []}
         holdings_known = True
@@ -159,7 +161,7 @@ def read_order_history(
 
         entry = getattr(parent, "avg_fill_price", None)
         quantity = float(getattr(parent, "quantity", 0) or 0)
-        multiplier = 100.0
+        multiplier = parent.multiplier or market.profile.contract_multiplier
 
         pnl = pnl_percent = None
         if entry and exit_price:
@@ -226,10 +228,10 @@ def read_order_history(
             # The broker's own price first -- it tracks continuously. The
             # traded-bar price is the fallback, and it is what carries an
             # age, because a bar says when it happened.
-            current_price = position_market_price(identifier)
+            current_price = position_market_price(identifier, market_id)
             current_price_age = None
             if current_price is None:
-                current_price, current_price_age = live_price(identifier)
+                current_price, current_price_age = live_price(identifier, market_id)
             if current_price is not None and entry:
                 unrealised_pnl = round(
                     (current_price - entry) * multiplier * quantity, 2
@@ -302,7 +304,7 @@ def read_order_history(
     # Cash in from sells minus cash out for buys needs no pairing and cannot
     # be fooled. It is what the broker computes and what its Daily P&L shows.
     # See backend/services/export/realised.py.
-    total_realised = _total_from_fills(rows)
+    total_realised = _total_from_fills(rows, market)
     if total_realised is None:
         total_realised = round(sum(r.realised_pnl or 0 for r in rows), 2)
 
@@ -317,7 +319,7 @@ def read_order_history(
 
 
 @router.get("/orders/{order_id}", response_model=FillOutcomeOut)
-def read_order(order_id: int) -> FillOutcomeOut:
+def read_order(order_id: int, market: str | None = Query(default=None, description="US or IN. Omitted means US.")) -> FillOutcomeOut:
     """Report one order's current state.
 
     The status alone does not say what filled: an order marked CANCELLED or
@@ -332,7 +334,8 @@ def read_order(order_id: int) -> FillOutcomeOut:
     """
     from backend.services.order import calculate_actual_cash, classify_fill
 
-    order = get_market().order(order_id)
+    chosen = get_market(market)
+    order = chosen.order(order_id)
     if order is None:
         raise ApiError(
             status_code=404,
@@ -343,7 +346,7 @@ def read_order(order_id: int) -> FillOutcomeOut:
     requested = int(order.quantity)
     filled = int(order.filled)
     average = order.avg_fill_price
-    multiplier = order.multiplier or 100.0
+    multiplier = order.multiplier or chosen.profile.contract_multiplier
 
     return FillOutcomeOut(
         order_id=order_id,
@@ -362,7 +365,9 @@ def read_order(order_id: int) -> FillOutcomeOut:
 
 
 @router.get("/orders/{order_id}/legs", response_model=OrderLegsResponse)
-def read_order_legs(order_id: int) -> OrderLegsResponse:
+def read_order_legs(
+    order_id: int, market: str | None = Query(default=None, description="US or IN. Omitted means US.")
+) -> OrderLegsResponse:
     """Report the legs attached to a parent order.
 
     Legs are child orders carrying parent_id, not entries on the parent's
@@ -375,7 +380,7 @@ def read_order_legs(order_id: int) -> OrderLegsResponse:
     Returns:
         The attached legs.
     """
-    raw_legs = get_market().attached_legs(order_id)
+    raw_legs = get_market(market).attached_legs(order_id)
 
     rows = []
     for raw_leg in raw_legs:
@@ -404,7 +409,7 @@ def read_leg_price(order) -> float | None:
     return getattr(order, "limit_price", None) or getattr(order, "aux_price", None)
 
 
-def position_market_price(identifier: str) -> float | None:
+def position_market_price(identifier: str, market_id: str = "US") -> float | None:
     """The broker's own price for a contract currently held.
 
     PREFERRED over the one-minute bars. get_option_bars can sit minutes behind
@@ -420,6 +425,7 @@ def position_market_price(identifier: str) -> float | None:
 
     Args:
         identifier: The full option identifier.
+        market_id: The market it is held in.
 
     Returns:
         The broker's market price, or None when the contract is not held or
@@ -429,8 +435,8 @@ def position_market_price(identifier: str) -> float | None:
 
     try:
         positions, _age = CACHE.get(
-            "positions",
-            lambda: get_market().positions(),
+            f"{market_id}:positions",
+            lambda: get_market(market_id).positions(),
             POSITIONS_MAX_AGE_SECONDS,
         )
     except Exception:  # noqa: BLE001 -- fall back to the bars
@@ -443,7 +449,9 @@ def position_market_price(identifier: str) -> float | None:
     return None
 
 
-def live_price(identifier: str) -> tuple[float | None, float | None]:
+def live_price(
+    identifier: str, market_id: str = "US"
+) -> tuple[float | None, float | None]:
     """What this contract last traded at, cached.
 
     The history page polls every second so its clocks move. Without a cache
@@ -453,6 +461,7 @@ def live_price(identifier: str) -> tuple[float | None, float | None]:
 
     Args:
         identifier: The full option identifier.
+        market_id: The market it trades in.
 
     Returns:
         A pair of (last traded price, how many seconds ago it traded), or
@@ -466,8 +475,8 @@ def live_price(identifier: str) -> tuple[float | None, float | None]:
     """
     try:
         recent, _age = CACHE.get(
-            f"price:{identifier}",
-            lambda: get_market().recent_traded_price(identifier),
+            f"{market_id}:price:{identifier}",
+            lambda: get_market(market_id).recent_traded_price(identifier),
             POSITIONS_MAX_AGE_SECONDS,
         )
     except Exception:  # noqa: BLE001 -- a missing price must not hide the row
@@ -479,7 +488,7 @@ def live_price(identifier: str) -> tuple[float | None, float | None]:
     return recent.price, recent.age_seconds
 
 
-def _total_from_fills(rows) -> float | None:
+def _total_from_fills(rows, market) -> float | None:
     """Total the period's P&L the way the broker does, from the fills.
 
     Covers the days the listed orders span, so the number under a filtered
@@ -487,6 +496,7 @@ def _total_from_fills(rows) -> float | None:
 
     Args:
         rows: The shaped history rows, used only for their date range.
+        market: Whose fills, and whose trading day.
 
     Returns:
         The total, gross of charges, or None when the fills cannot be read --
@@ -500,10 +510,12 @@ def _total_from_fills(rows) -> float | None:
     try:
         # A day past the end: the broker treats end_date as exclusive in
         # places, and the market-day filter does the real cutting.
-        filled = get_market().filled_orders(
-            min(days), max(days) + timedelta(days=1)
+        filled = market.filled_orders(min(days), max(days) + timedelta(days=1))
+        return realised_total(
+            realised_by_contract(
+                filled, min(days), max(days), timezone=market.profile.timezone
+            )
         )
-        return realised_total(realised_by_contract(filled, min(days), max(days)))
     except Exception:  # noqa: BLE001 -- see the docstring
         return None
 

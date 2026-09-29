@@ -123,7 +123,7 @@ def get_idempotency_store() -> IdempotencyStore:
         return _idempotency_store
 
 
-def get_cached_contract(key: tuple, build):
+def get_cached_contract(key: tuple, build, market=None):
     """Return a resolved contract, resolving it at most once per market day.
 
     An OptionContractInfo is stable for the day: identifier, contract_id,
@@ -137,11 +137,12 @@ def get_cached_contract(key: tuple, build):
     Args:
         key: Whatever identifies the contract, e.g. (symbol, expiry, strike, side).
         build: Called with no arguments to resolve it on a miss.
+        market: Whose contract. Its id and its trading day are in the key.
 
     Returns:
         The cached or freshly built contract.
     """
-    market = get_market()
+    market = market or get_market()
     dated_key = (market.profile.id, market.profile.today().isoformat()) + tuple(key)
     with _lock:
         if dated_key in _contract_cache:

@@ -56,7 +56,7 @@ def contract_of(order) -> str:
     return str(getattr(order, "identifier", "")).strip()
 
 
-def market_day_of(order) -> date | None:
+def market_day_of(order, timezone: ZoneInfo = MARKET_TIMEZONE) -> date | None:
     """The market day a fill happened on.
 
     Measured from the FILL, not the submission: an order placed before the
@@ -64,18 +64,21 @@ def market_day_of(order) -> date | None:
 
     Args:
         order: One filled order.
+        timezone: The market's clock. New York unless another is named.
 
     Returns:
-        The date in New York, or None when it carries no timestamp.
+        The date on that clock, or None when it carries no timestamp.
     """
     stamp = getattr(order, "trade_time", None) or getattr(order, "order_time", None)
     if not stamp:
         return None
 
-    return datetime.fromtimestamp(stamp / 1000, MARKET_TIMEZONE).date()
+    return datetime.fromtimestamp(stamp / 1000, timezone).date()
 
 
-def realised_by_contract(filled_orders, start: date, end: date) -> dict:
+def realised_by_contract(
+    filled_orders, start: date, end: date, timezone: ZoneInfo = MARKET_TIMEZONE
+) -> dict:
     """Total what each contract made over a period, from its fills.
 
     Args:
@@ -117,7 +120,8 @@ def realised_by_contract(filled_orders, start: date, end: date) -> dict:
         (
             order
             for order in filled_orders or []
-            if (day := market_day_of(order)) is not None and start <= day <= end
+            if (day := market_day_of(order, timezone)) is not None
+            and start <= day <= end
         ),
         key=lambda order: (
             getattr(order, "trade_time", None)

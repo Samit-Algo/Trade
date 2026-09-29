@@ -31,7 +31,7 @@ import threading
 #: from the moment the check passes until the request finishes. Without it two
 #: near-simultaneous requests both read "nothing open" from the broker before
 #: either has submitted, and both proceed.
-_in_flight: set[str] = set()
+_in_flight: set[tuple[str, str]] = set()
 _in_flight_guard = threading.Lock()
 
 
@@ -89,14 +89,15 @@ def claim_symbol(underlying: str, market) -> None:
         SymbolBusy: When an order or position for this underlying is live.
     """
     wanted = underlying.strip().upper()
+    key = (market.profile.id, wanted)
 
     with _in_flight_guard:
-        if wanted in _in_flight:
+        if key in _in_flight:
             raise SymbolBusy(
                 f"Another {wanted} trade is being placed right now. "
                 "Wait for it to finish."
             )
-        _in_flight.add(wanted)
+        _in_flight.add(key)
 
     # From here the reservation is held, so any failure must release it.
     try:
@@ -115,11 +116,11 @@ def claim_symbol(underlying: str, market) -> None:
                 f"placed: {'; '.join(held)}. Close it first."
             )
     except Exception:
-        release_symbol(wanted)
+        release_symbol(wanted, market.profile.id)
         raise
 
 
-def release_symbol(underlying: str) -> None:
+def release_symbol(underlying: str, market_id: str = "US") -> None:
     """Give the underlying back, so a later request may trade it.
 
     Releases only the local in-process reservation. An order that actually
@@ -128,6 +129,7 @@ def release_symbol(underlying: str) -> None:
 
     Args:
         underlying: The underlying to release.
+        market_id: The market it was claimed in.
     """
     with _in_flight_guard:
-        _in_flight.discard(underlying.strip().upper())
+        _in_flight.discard((market_id, underlying.strip().upper()))

@@ -372,7 +372,7 @@ class TestSafetyIsNotBypassed:
         from backend.api.routes import trade
 
         source = inspect.getsource(trade.submit_and_record)
-        assert "get_market().buy_option_with_bracket(" in source
+        assert "market.buy_option_with_bracket(" in source
 
     def test_the_route_contains_no_place_order_call_of_its_own(self):
         source = (

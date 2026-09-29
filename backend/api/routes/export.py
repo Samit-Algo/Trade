@@ -73,15 +73,16 @@ def parse_day(value: str | None, name: str) -> date | None:
         ) from error
 
 
-def market_day_of(stamp) -> date | None:
+def market_day_of(stamp, timezone=MARKET_TIMEZONE) -> date | None:
     """The market day an order belongs to.
 
     Args:
         stamp: A datetime, or an ISO-8601 string, or None. model_dump
             leaves datetimes as datetimes, so both arrive here.
+        timezone: The market's clock. New York unless another is named.
 
     Returns:
-        The date in New York, or None.
+        The date on that clock, or None.
     """
     if not stamp:
         return None
@@ -94,7 +95,7 @@ def market_day_of(stamp) -> date | None:
         except ValueError:
             return None
 
-    return moment.astimezone(MARKET_TIMEZONE).date()
+    return moment.astimezone(timezone).date()
 
 
 @router.get("/orders/export")
@@ -108,6 +109,7 @@ def export_orders(
         default=None,
         description="Last day to include, YYYY-MM-DD. Omit for a single day.",
     ),
+    market: str | None = Query(default=None, description="US or IN. Omitted means US."),
 ) -> Response:
     """Download the order history for a period as an .xlsx file.
 
@@ -124,9 +126,12 @@ def export_orders(
     first = parse_day(start, "start")
     last = parse_day(end, "end")
 
+    chosen = get_market(market)
+    clock = chosen.profile.timezone
+
     # Today in MARKET time, which is the day these orders belong to -- not the
     # day it happens to be wherever the reader is sitting.
-    today = datetime.now(MARKET_TIMEZONE).date()
+    today = datetime.now(clock).date()
 
     if first is None:
         first = today
@@ -145,12 +150,14 @@ def export_orders(
 
     # Always fresh. An export is a deliberate act, and a file built from a
     # few-second-old cache would be a strange thing to hand someone.
-    history = read_order_history(limit=EXPORT_ORDER_LIMIT, fresh=True)
+    history = read_order_history(
+        limit=EXPORT_ORDER_LIMIT, fresh=True, market=chosen.profile.id
+    )
 
     orders = [
         order
         for order in history.model_dump().get("orders", [])
-        if (day := market_day_of(order.get("placed_at"))) is not None
+        if (day := market_day_of(order.get("placed_at"), clock)) is not None
         and first <= day <= last
     ]
 
@@ -162,12 +169,15 @@ def export_orders(
     try:
         # The broker treats end_date as exclusive in places, so ask for a
         # day past the range and let the market-day filter do the cutting.
-        filled = get_market().filled_orders(first, last + timedelta(days=1))
-        by_contract = realised_by_contract(filled, first, last)
+        filled = chosen.filled_orders(first, last + timedelta(days=1))
+        by_contract = realised_by_contract(filled, first, last, timezone=clock)
     except Exception:  # noqa: BLE001 -- the file is still worth having
         by_contract = {}
 
-    content = build_workbook(orders, first, last, by_contract)
+    content = build_workbook(
+        orders, first, last, by_contract,
+        timezone=clock, multiplier=chosen.profile.contract_multiplier,
+    )
 
     name = (
         f"orders-{first}.xlsx" if first == last

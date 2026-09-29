@@ -18,12 +18,20 @@ from __future__ import annotations
 
 import io
 from datetime import date
+from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .columns import LEG_COLUMNS, ORDER_COLUMNS, build_leg_rows, build_order_row
+from .columns import (
+    CONTRACT_MULTIPLIER,
+    LEG_COLUMNS,
+    MARKET_TIMEZONE,
+    ORDER_COLUMNS,
+    build_leg_rows,
+    build_order_row,
+)
 from .realised import realised_total
 
 #: Dark enough for white text, and it survives printing in greyscale.
@@ -142,7 +150,12 @@ def _summary_rows(
 
 
 def build_workbook(
-    orders: list[dict], start: date, end: date, by_contract: dict | None = None
+    orders: list[dict],
+    start: date,
+    end: date,
+    by_contract: dict | None = None,
+    timezone: ZoneInfo = MARKET_TIMEZONE,
+    multiplier: float = CONTRACT_MULTIPLIER,
 ) -> bytes:
     """Build the spreadsheet for a period.
 
@@ -170,7 +183,7 @@ def build_workbook(
     # forwards. The page shows newest first because a screen is read from the
     # top and the newest order is the one being watched.
     for order in reversed(orders):
-        sheet.append(build_order_row(order))
+        sheet.append(build_order_row(order, timezone, multiplier))
 
     # --- Summary --------------------------------------------------------
     summary = book.create_sheet("Summary")
@@ -214,7 +227,7 @@ def build_workbook(
     _write_header(legs_sheet, LEG_COLUMNS)
 
     for order in reversed(orders):
-        for leg_row in build_leg_rows(order):
+        for leg_row in build_leg_rows(order, timezone):
             legs_sheet.append(leg_row)
 
     stream = io.BytesIO()

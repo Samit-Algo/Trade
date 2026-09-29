@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from ..schemas import ExpirationsResponse, ExpiryOut, SpotPriceResponse
 from ..errors import ApiError
@@ -12,7 +12,9 @@ router = APIRouter(tags=["market"])
 
 
 @router.get("/expirations/{underlying}", response_model=ExpirationsResponse)
-def read_expirations(underlying: str) -> ExpirationsResponse:
+def read_expirations(
+    underlying: str, market: str | None = Query(default=None, description="US or IN. Omitted means US.")
+) -> ExpirationsResponse:
     """List every expiration date Tiger reports for an underlying.
 
     Nothing here constructs a date. Tiger returns recently expired dates in
@@ -25,7 +27,7 @@ def read_expirations(underlying: str) -> ExpirationsResponse:
     Returns:
         The expirations payload.
     """
-    expiries = get_market().expirations(underlying.upper())
+    expiries = get_market(market).expirations(underlying.upper())
 
     rows = []
     for expiry in expiries:
@@ -42,7 +44,9 @@ def read_expirations(underlying: str) -> ExpirationsResponse:
 
 
 @router.get("/spot/{underlying}", response_model=SpotPriceResponse)
-def read_spot_price(underlying: str) -> SpotPriceResponse:
+def read_spot_price(
+    underlying: str, market: str | None = Query(default=None, description="US or IN. Omitted means US.")
+) -> SpotPriceResponse:
     """Fetch the underlying's live share price, for choosing a strike.
 
     NOT from Tiger. This account holds no usStockQuote entitlement, so Tiger's
@@ -62,7 +66,7 @@ def read_spot_price(underlying: str) -> SpotPriceResponse:
     Raises:
         ApiError: 502 when no host would answer.
     """
-    spot = get_market().spot_price(underlying)
+    spot = get_market(market).spot_price(underlying)
 
     if spot is None:
         raise ApiError(

@@ -39,6 +39,32 @@ from backend.services.position import (
 # ---------------------------------------------------------------------------
 
 
+class MarketOut(BaseModel):
+    """One market this service trades, as the page's switch lists it."""
+
+    id: str = Field(description="What a request names it by: US or IN.")
+    name: str
+    currency: str
+    currency_symbol: str
+    timezone: str = Field(description="The exchange's clock, e.g. America/New_York.")
+    ready: bool = Field(
+        description="False while the market is configured but cannot trade "
+        "yet. Its settings and switches work; broker calls answer 503."
+    )
+    dry_run: bool = Field(description="This market's SAFE/ARMED switch.")
+    mode: str
+    trade_symbols: list[str]
+    quick_sell_steps: list[float]
+    option_tick_size: float
+
+
+class MarketsResponse(BaseModel):
+    """Every market this service trades."""
+
+    default: str = Field(description="The market a request that names none means.")
+    markets: list[MarketOut]
+
+
 class HealthResponse(BaseModel):
     """Whether the service is up, and which account it is pointed at."""
 
@@ -278,6 +304,12 @@ class ClosePositionRequest(BaseModel):
         gt=0,
         description="Contracts to close. Omit to close the whole position. "
         "More than is held is refused rather than sold short.",
+    )
+    market: str | None = Field(
+        default=None,
+        max_length=8,
+        description="Which market: US or IN. Omitted means US, so a caller "
+        "written before there was a second market is unaffected.",
     )
 
 
@@ -637,6 +669,13 @@ class TradeRequest(BaseModel):
         max_length=64,
         description="Unique per intended trade. Retrying with the same value "
         "returns the first result instead of placing a second order.",
+    )
+
+    market: str | None = Field(
+        default=None,
+        max_length=8,
+        description="Which market: US or IN. Omitted means US, so a caller "
+        "written before there was a second market is unaffected.",
     )
 
     symbol: str = Field(min_length=1, max_length=16, description="e.g. AAPL")
