@@ -49,6 +49,20 @@
   .brand { display:flex; align-items:center; gap:10px; padding:2px 8px;
            font-size:15px; font-weight:700; letter-spacing:-.01em; }
   .brand svg { width:22px; height:22px; flex:0 0 auto; color:var(--primary); }
+  /* The market switch. One segment per market this server trades; the
+     page reloads everything for the one chosen. Hidden with only one. */
+  .mktsw { display:flex; gap:4px; padding:3px; border-radius:9px;
+           border:1px solid var(--line); background:rgba(255,255,255,.04); }
+  .mktsw:empty { display:none; }
+  .mktsw button { flex:1 1 0; min-width:0; padding:7px 6px; border-radius:6px;
+           border:1px solid transparent; background:transparent; font:inherit;
+           font-size:12.5px; font-weight:600; color:var(--rail-muted);
+           cursor:pointer; display:flex; flex-direction:column; align-items:center;
+           gap:1px; }
+  .mktsw button:hover { color:var(--rail-ink); }
+  .mktsw button.on { background:var(--accent-soft); color:var(--accent);
+           border-color:var(--accent); }
+  .mktsw .m-s { font-size:10.5px; font-weight:500; opacity:.8; }
   .railnav { display:flex; flex-direction:column; gap:3px; }
   .railnav button { display:flex; align-items:center; gap:11px; width:100%;
           text-align:left; padding:10px 11px; border-radius:8px; border:1px solid transparent;
@@ -655,6 +669,8 @@
   <aside class="rail">
     <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/></svg><span>Trade Tester</span></div>
 
+    <div class="mktsw" id="mktsw" role="radiogroup" aria-label="Market"></div>
+
     <nav class="railnav">
       <button type="button" id="nav-trade" class="on" onclick="showPage('trade')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg><span>Trade</span></button>
@@ -946,6 +962,54 @@ const money = n => (n === null || n === undefined) ? "—" : Number(n).toFixed(2
 const key   = () => $("apikey").value.trim();
 const hdrs  = () => ({ "Content-Type": "application/json", "X-API-Key": key() });
 
+/* ---------- which market ----------
+   The server trades one or more markets behind the same endpoints. Every
+   call below names the one chosen here; the server treats a call that names
+   none as the US, so nothing reaches India unless this says India.
+
+   Remembered in this browser only -- it is a view preference. What decides
+   whether an order is sent is each market's own SAFE/ARMED switch, which
+   the server holds. */
+let currentMarket = "US";
+let markets = [];   // from GET /markets
+try { currentMarket = localStorage.getItem("tradeMarket") || "US"; } catch (e) {}
+
+const US_FALLBACK = { id: "US", name: "US options", currency_symbol: "$",
+                      timezone: "America/New_York", ready: true };
+const marketInfo = () => markets.find(m => m.id === currentMarket)
+  || (currentMarket === "US" ? US_FALLBACK : { ...US_FALLBACK, id: currentMarket });
+const cur = () => marketInfo().currency_symbol;
+const marketTz = () => marketInfo().timezone;
+const withMarket = url =>
+  url + (url.includes("?") ? "&" : "?") + "market=" + encodeURIComponent(currentMarket);
+
+function renderMarketSwitch() {
+  const box = $("mktsw");
+  if (markets.length < 2) { box.innerHTML = ""; return; }
+  box.innerHTML = markets.map(m => `
+    <button type="button" role="radio" data-id="${m.id}"
+            aria-checked="${m.id === currentMarket}"
+            class="${m.id === currentMarket ? "on" : ""}"
+            title="${m.name}${m.ready ? "" : " (not connected yet)"}">
+      <span>${m.id === "IN" ? "India" : m.id}</span>
+      <span class="m-s">${m.currency_symbol}${m.ready ? "" : " · setup"}</span>
+    </button>`).join("");
+  box.querySelectorAll("button").forEach(b => b.onclick = () => chooseMarket(b.dataset.id));
+}
+
+function chooseMarket(id) {
+  if (id === currentMarket) return;
+  currentMarket = id;
+  try { localStorage.setItem("tradeMarket", id); } catch (e) {}
+  // Nothing from the other market may linger: its symbols, its history,
+  // its last result.
+  historyCache = [];
+  $("out").innerHTML = EMPTY_RESULT;
+  $("symbol").innerHTML = "";
+  renderMarketSwitch();
+  refreshAll();
+}
+
 /* Seconds -> "4.2 min" / "48s" / "1.3 hr". One place, so every screen agrees. */
 function duration(seconds) {
   if (seconds == null) return "—";
@@ -984,20 +1048,41 @@ async function loadStatus() {
     return;
   }
   try {
-    const r = await fetch("/health", { headers: hdrs() });
+    const [r, rm] = await Promise.all([
+      fetch("/health", { headers: hdrs() }),
+      fetch("/markets", { headers: hdrs() }),
+    ]);
     if (!r.ok) throw new Error(r.status === 401 ? "key rejected" : "HTTP " + r.status);
-    const h = await r.json();
+    const server = await r.json();
+    if (rm.ok) markets = (await rm.json()).markets || [];
+    if (!markets.some(m => m.id === currentMarket)) currentMarket = "US";
+    renderMarketSwitch();
+
+    // Everything below is about THIS market: its switch, its mode.
+    const m = marketInfo();
+    const h = {
+      ...server,
+      dry_run: m.dry_run ?? server.dry_run,
+      mode: m.mode ?? server.mode,
+      orders_enabled: m.ready !== false && !(m.dry_run ?? server.dry_run)
+        && (m.mode ?? server.mode) === "PAPER",
+    };
+    const envFile = currentMarket === "US" ? ".env" : "config/india.env";
 
     const canTrade = h.orders_enabled;
     const place = $("place");
-    place.disabled = false;
-    place.textContent = canTrade ? "Place the order for real" : "Run it — buys nothing";
+    place.disabled = m.ready === false;
+    place.textContent = m.ready === false ? `${m.name || currentMarket} cannot trade yet`
+      : canTrade ? "Place the order for real" : "Run it — buys nothing";
     place.classList.toggle("btn-real", canTrade);
     place.classList.toggle("btn-test", !canTrade);
-    $("realnote").textContent = canTrade
+    $("realnote").textContent = m.ready === false
+      ? "Its settings, symbols and switches work. Placing orders arrives "
+        + "when its broker connection is built."
+      : canTrade
       ? "DRY_RUN is false. This button will spend money."
-      : "DRY_RUN is true in .env, so every price is worked out and nothing is "
-        + "sent. Set DRY_RUN=false and RESTART to trade for real.";
+      : `DRY_RUN is true in ${envFile}, so every price is worked out and nothing `
+        + "is sent. Arm the switch above to trade for real.";
 
     strip.innerHTML = `
       <span class="pill ${canTrade ? "ok" : "no"}">
@@ -1010,15 +1095,18 @@ async function loadStatus() {
       </button>
       <span class="pill ${h.mode === "PAPER" ? "ok" : "no"}">
         <span class="k">Mode</span><span class="v">${h.mode}</span></span>
+      ${currentMarket === "US" ? `
       <span class="pill"><span class="k">Account</span><span class="v">${h.account_masked}</span></span>
-      <span class="pill"><span class="k">Quotes</span><span class="v">${h.market_data_source}</span></span>`;
+      <span class="pill"><span class="k">Quotes</span><span class="v">${h.market_data_source}</span></span>`
+      : `<span class="pill ${m.ready === false ? "no" : "ok"}"><span class="k">Broker</span>
+         <span class="v">${m.ready === false ? "not connected yet" : "connected"}</span></span>`}`;
 
     // The rail says whether this is armed, which is the one thing worth
     // knowing whatever you have scrolled to.
     wireArmSwitch(h.dry_run);
 
     setRail(
-      canTrade ? "Armed" : "Safe",
+      (canTrade ? "Armed" : "Safe") + (markets.length > 1 ? ` · ${currentMarket}` : ""),
       h.mode === "PAPER" ? "Paper trading mode" : "LIVE account",
       canTrade && h.mode !== "PAPER"
     );
@@ -1056,7 +1144,7 @@ function wireArmSwitch(dryRun) {
 
     btn.disabled = true;
     try {
-      const r = await fetch("/trade/armed", {
+      const r = await fetch(withMarket("/trade/armed"), {
         method: "PUT", headers: hdrs(),
         body: JSON.stringify({ armed: arming })
       });
@@ -1085,7 +1173,7 @@ function setRail(title, sub, danger) {
 
 async function expiriesFor(symbol) {
   if (expiryCache[symbol]) return expiryCache[symbol];
-  const r = await fetch(`/expirations/${encodeURIComponent(symbol)}`, { headers: hdrs() });
+  const r = await fetch(withMarket(`/expirations/${encodeURIComponent(symbol)}`), { headers: hdrs() });
   if (!r.ok) return null;
   const d = await r.json();
   expiryCache[symbol] = d.expirations.filter(e => !e.expired);
@@ -1162,7 +1250,7 @@ async function pollSpot() {
   spotBusy = true;
   const verdict = $("spotverdict");
   try {
-    const r = await fetch(`/spot/${encodeURIComponent($("symbol").value)}`,
+    const r = await fetch(withMarket(`/spot/${encodeURIComponent($("symbol").value)}`),
                           { headers: hdrs() });
     const d = await r.json();
     if (!r.ok) {
@@ -1347,21 +1435,21 @@ let historySummary = null;
 // 14:30 in New York and most of the session -- landed on the NEXT calendar
 // day, so picking today found nothing and the orders looked lost.
 //
-// A trading session is a market-day concept. US/Eastern is what the server
-// uses for the same reason (see MARKET_TIMEZONE), and it is what the broker's
-// own statements show.
-const MARKET_TIMEZONE = "America/New_York";
+// A trading session is a market-day concept. Each market's own clock -- New
+// York for the US, Kolkata for India, from GET /markets -- is what the server
+// uses for the same reason, and it is what the broker's own statements show.
+
 
 function marketDay(iso) {
   // en-CA gives YYYY-MM-DD, which is what <input type="date"> holds.
   return new Date(iso).toLocaleDateString("en-CA", {
-    timeZone: MARKET_TIMEZONE,
+    timeZone: marketTz(),
   });
 }
 
 // Today, in the market's timezone -- for defaulting and for labelling.
 function marketToday() {
-  return new Date().toLocaleDateString("en-CA", { timeZone: MARKET_TIMEZONE });
+  return new Date().toLocaleDateString("en-CA", { timeZone: marketTz() });
 }
 
 /* Average time held, for one outcome. Winners held far longer than losers
@@ -1556,7 +1644,7 @@ async function loadHistory(options = {}) {
   if (!key()) { list.innerHTML = `<div class="placeholder">Enter your API key.</div>`; return; }
   try {
     const r = await fetch(
-      "/orders/history" + (options.fresh ? "?fresh=true" : ""),
+      withMarket("/orders/history" + (options.fresh ? "?fresh=true" : "")),
       { headers: hdrs() });
     const d = await r.json();
     if (!r.ok) {
@@ -1636,7 +1724,7 @@ $("exportgo").onclick = async () => {
   verdict.textContent = "building…";
 
   try {
-    const r = await fetch("/orders/export" + (query ? "?" + query : ""),
+    const r = await fetch(withMarket("/orders/export" + (query ? "?" + query : "")),
                           { headers: hdrs() });
 
     if (!r.ok) {
@@ -1697,7 +1785,7 @@ async function loadSymbolSettings() {
   if (!key()) { box.innerHTML = `<div class="placeholder" style="padding:10px 0">Enter the API key to load symbols.</div>`; return; }
 
   try {
-    const r = await fetch("/trade/symbols", { headers: hdrs() });
+    const r = await fetch(withMarket("/trade/symbols"), { headers: hdrs() });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
 
@@ -1755,7 +1843,7 @@ async function saveSymbol(row) {
   verdict.textContent = "saving…";
 
   try {
-    const r = await fetch(`/trade/symbols/${encodeURIComponent(symbol)}`, {
+    const r = await fetch(withMarket(`/trade/symbols/${encodeURIComponent(symbol)}`), {
       method: "PUT",
       headers: hdrs(),
       // Blank clears the override rather than setting zero, so .env comes back.
@@ -1799,9 +1887,9 @@ async function loadSettingsPage() {
 
   try {
     const [sr, hr, tr] = await Promise.all([
-      fetch("/trade/settings", { headers: hdrs() }),
+      fetch(withMarket("/trade/settings"), { headers: hdrs() }),
       fetch("/health", { headers: hdrs() }),
-      fetch("/trade/time-brackets", { headers: hdrs() }),
+      fetch(withMarket("/trade/time-brackets"), { headers: hdrs() }),
     ]);
     if (!sr.ok) throw new Error("HTTP " + sr.status);
     const d = await sr.json();
@@ -1832,7 +1920,7 @@ async function loadSettingsPage() {
         ${row("Take profit", d.take_profit_percent + "%")}
         ${row("Stop loss", d.stop_loss_percent + "%")}
         ${row("Strikes out", d.strikes_out)}
-        ${row("Max cash", "$" + d.max_trade_cash)}
+        ${row("Max cash", cur() + d.max_trade_cash)}
         ${row("Expiry", d.expiry_date || "auto-select")}
         ${row("Min days to expiry", d.min_days_to_expiry)}
         ${row("Leg time in force", d.leg_time_in_force)}
@@ -1937,7 +2025,7 @@ async function loadTimeBrackets() {
   }
 
   try {
-    const r = await fetch("/trade/time-brackets", { headers: hdrs() });
+    const r = await fetch(withMarket("/trade/time-brackets"), { headers: hdrs() });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
 
@@ -2102,7 +2190,7 @@ async function saveTimeBrackets() {
   verdict.textContent = "saving\u2026";
 
   try {
-    const r = await fetch("/trade/time-brackets", {
+    const r = await fetch(withMarket("/trade/time-brackets"), {
       method: "PUT",
       headers: hdrs(),
       body: JSON.stringify({
@@ -2140,7 +2228,7 @@ async function resetTimeBrackets() {
   try {
     // DELETE forgets the override so .env comes back, including any edit
     // made to it since -- which saving a copy of .env would not.
-    const r = await fetch("/trade/time-brackets", { method: "DELETE", headers: hdrs() });
+    const r = await fetch(withMarket("/trade/time-brackets"), { method: "DELETE", headers: hdrs() });
     if (!r.ok) throw new Error("HTTP " + r.status);
     await loadTimeBrackets();
   } catch (e) {
@@ -2314,10 +2402,11 @@ async function quickSell(btn, o) {
   row.appendChild(verdict);
 
   try {
-    const r = await fetch("/positions/close", {
+    const r = await fetch(withMarket("/positions/close"), {
       method: "POST",
       headers: hdrs(),
-      body: JSON.stringify({ identifier: o.identifier, limit_price: limit })
+      body: JSON.stringify({ identifier: o.identifier, limit_price: limit,
+                             market: currentMarket })
     });
     const d = await r.json();
 
@@ -2548,7 +2637,7 @@ async function loadJourney(orderId, box, outcome) {
 
   box.innerHTML = `<div class="placeholder" style="padding:22px 0">Loading the chart…</div>`;
   try {
-    const r = await fetch(`/orders/${encodeURIComponent(orderId)}/journey`, { headers: hdrs() });
+    const r = await fetch(withMarket(`/orders/${encodeURIComponent(orderId)}/journey`), { headers: hdrs() });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
     journeyCache[orderId] = d;
@@ -2568,7 +2657,7 @@ function jrnyTime(ms) {
 }
 function fmtNum(v) { return v == null ? "—" : Number(v).toFixed(2); }
 function fmtPct(v) { return v == null ? "" : (v >= 0 ? "+" : "") + Number(v).toFixed(2) + "%"; }
-function fmtMoney(v) { return v == null ? "—" : (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2); }
+function fmtMoney(v) { return v == null ? "—" : (v >= 0 ? "+" : "−") + cur() + Math.abs(v).toFixed(2); }
 
 /* A PUT gains when the premium rises, exactly as a CALL does: both are
    BOUGHT here, so "favourable" is always up. If short positions are ever
@@ -2628,7 +2717,7 @@ function jrnyStory(d, verdict) {
     const gave = (d.high_water_pnl != null && settled != null)
       ? d.high_water_pnl - settled : null;
     const tail = (gave != null && gave > 0.005 && peakPct > 0)
-      ? ` Gave back ${down("$" + gave.toFixed(2))}.`
+      ? ` Gave back ${down(cur() + gave.toFixed(2))}.`
       : "";
     return `${reached} before reversing and hitting the stop loss.${tail}`;
   }
@@ -3024,7 +3113,8 @@ function body() {
     client_order_id: $("client_order_id").value.trim(),
     symbol: $("symbol").value.trim().toUpperCase(),
     option_type: $("option_type").value,
-    current_price: parseFloat($("current_price").value)
+    current_price: parseFloat($("current_price").value),
+    market: currentMarket
   };
 
   // Only send an override that was actually typed. An empty string would be
@@ -3077,7 +3167,7 @@ try {
 async function loadTradeSettings() {
   if (!key()) return;
   try {
-    const r = await fetch("/trade/settings", { headers: hdrs() });
+    const r = await fetch(withMarket("/trade/settings"), { headers: hdrs() });
     if (!r.ok) return;
     const s = await r.json();
     configuredExpiry = s.expiry_date || null;
@@ -3142,10 +3232,10 @@ function renderOk(data, exactOrderId) {
       <tr><td>Option price from</td><td>${data.price_source.is_live
           ? `<span class="pos">TRADING NOW</span> — ${data.price_source.recent_volume} this minute`
           : `<span class="neg">not trading this minute</span>`}
-          &nbsp;$${money(data.price_source.price)}</td></tr>
+          &nbsp;${cur()}${money(data.price_source.price)}</td></tr>
       <tr><td>Buffer applied</td><td>+${data.tick.buffer_ticks} tick of ${data.tick.tick_size}</td></tr>
-      <tr><td>Cash needed</td><td>$${money(data.cash_required)}</td></tr>
-      <tr><td>Commission round trip</td><td>$${money(data.commission.round_trip)}</td></tr>
+      <tr><td>Cash needed</td><td>${cur()}${money(data.cash_required)}</td></tr>
+      <tr><td>Commission round trip</td><td>${cur()}${money(data.commission.round_trip)}</td></tr>
       <tr><td>Legs sent</td><td>${(data.legs_submitted || []).map(l =>
           `${l.leg_kind} ${l.order_type} @ ${money(l.price)} ${l.time_in_force || ""}`).join("<br>") || "—"}</td></tr>
     </table>
@@ -3194,7 +3284,7 @@ async function send() {
 
   const started = performance.now();
   try {
-    const r = await fetch("/trade", { method: "POST", headers: hdrs(), body: JSON.stringify(body()) });
+    const r = await fetch(withMarket("/trade"), { method: "POST", headers: hdrs(), body: JSON.stringify(body()) });
     // Read the TEXT first. Order ids are bigger than 2^53, so JSON.parse turns
     // 44561462560050176 into 44561462560050180 -- an id the broker has never
     // heard of. Pull the digits out as a string before anything parses them.

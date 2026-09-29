@@ -55,3 +55,28 @@ def test_routes_never_fall_back_to_the_us_on_their_own():
         if "get_market()" in line and path.name != "trade.py"
     ]
     assert offenders == [], "\n".join(offenders)
+
+
+def test_every_call_the_page_makes_names_the_market(asset_beside):
+    """A call without it would quietly be about the US, whatever is selected."""
+    import re
+
+    page = asset_beside("backend.api.routes.ui", "trade_form.html")
+
+    calls = re.findall(r"fetch\(\s*(withMarket\()?\s*[\"`](/[^\"`?]*)", page)
+    assert calls, "no fetch calls found -- has the page changed shape?"
+
+    unnamed = sorted({
+        path for wrapped, path in calls
+        if not wrapped and path not in ("/health", "/markets")
+    })
+    assert unnamed == [], "Calls that do not say which market: " + ", ".join(unnamed)
+
+
+def test_the_page_sends_the_market_with_every_order(asset_beside):
+    """POST bodies carry it, since withMarket only touches the URL."""
+    page = asset_beside("backend.api.routes.ui", "trade_form.html")
+
+    assert "market: currentMarket" in page.split("function body()")[1].split("}")[0]
+    close_call = page.split('fetch(withMarket("/positions/close")')[1][:300]
+    assert "market: currentMarket" in close_call
