@@ -46,6 +46,10 @@ ORDER_LOG_PATH = LOG_DIRECTORY / "order_audit.log"
 #: Every HTTP request that could move money.
 API_LOG_PATH = LOG_DIRECTORY / "api_requests.log"
 
+#: The price of every held contract while it was held, one folder per
+#: contract and one JSON-lines file per UTC day. Drawn by the trade journey.
+PRICE_LOG_DIRECTORY = LOG_DIRECTORY / "prices"
+
 #: Per-symbol enable/disable and bracket overrides, editable from the page
 #: without a restart. Gitignored for the same reason as the logs.
 SYMBOL_SETTINGS_PATH = PROJECT_ROOT / "symbol_settings.json"

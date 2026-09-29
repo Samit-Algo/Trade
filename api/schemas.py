@@ -955,6 +955,13 @@ class BarOut(BaseModel):
     v: int
 
 
+class PricePointOut(BaseModel):
+    """One price at one moment on the drawn line."""
+
+    t: int = Field(description="ms since epoch UTC.")
+    p: float
+
+
 class ExtremeOut(BaseModel):
     """One end of the range a trade reached."""
 
@@ -994,6 +1001,23 @@ class JourneyResponse(BaseModel):
         description="One-minute OHLC over the trade, oldest first. A spike "
         "inside a minute is in that bar's high; one BETWEEN bars is not "
         "recorded anywhere.",
+    )
+    path: list[PricePointOut] = Field(
+        default_factory=list,
+        description="The drawn line, fill to exit (or now): starts at the "
+        "fill price and ends at the exit price, so both are on it. best and "
+        "worst are measured on this line.",
+    )
+    lead: list[PricePointOut] = Field(
+        default_factory=list,
+        description="Minute closes before the fill, ending at the fill. "
+        "Context only; not part of the trade or its numbers.",
+    )
+    path_source: str | None = Field(
+        default=None,
+        description="'recorded' when the line between fill and exit comes "
+        "from prices recorded while held; 'minute_bars' when only minute "
+        "closes were available.",
     )
 
     best: ExtremeOut | None = Field(

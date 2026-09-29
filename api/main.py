@@ -25,6 +25,7 @@ still runs twice on every order path inside `orders.py`.
 from __future__ import annotations
 
 import secrets
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -32,9 +33,12 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from api.service.core.config import ConfigError
+from api.service.core.live_cache import CACHE
+from api.service.market.price_log import PriceRecorder
+from api.service.position import list_option_positions
 
 from .errors import ApiError, classify_exception
-from .shared import get_settings
+from .shared import get_settings, get_trade_client
 from .routes import (
     armed, close, export, health, journey, market, orders, positions,
     symbol_settings,
@@ -57,6 +61,34 @@ UNPROTECTED_PATHS = frozenset(
 UNPROTECTED_PREFIX = "/ui/vendor/"
 
 API_KEY_HEADER = "X-API-Key"
+
+
+def _held_positions(max_age_seconds: float):
+    """What is held, through the display cache the history page reads.
+
+    The SAME key as the page, so its one-second poll is served from what the
+    price recorder fetched rather than costing get_positions calls of its own.
+    """
+    return CACHE.get(
+        "positions",
+        lambda: list_option_positions(get_trade_client()),
+        max_age_seconds,
+    )
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Run the price recorder for as long as the server is up.
+
+    Here rather than in create_app: building the app -- which the tests do,
+    to read the OpenAPI spec -- must not start a thread that calls the broker.
+    """
+    recorder = PriceRecorder(_held_positions)
+    recorder.start()
+    try:
+        yield
+    finally:
+        recorder.stop()
 
 
 def create_app() -> FastAPI:
@@ -88,6 +120,7 @@ def create_app() -> FastAPI:
             "token, then submit with that token and the exact cash figure."
         ),
         swagger_ui_parameters={"persistAuthorization": True},
+        lifespan=lifespan,
     )
 
     register_middleware(app)

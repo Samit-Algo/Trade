@@ -478,8 +478,8 @@
            border:1px solid var(--line); background:var(--card); }
   .armsw .sw-track { width:32px; height:18px; border-radius:9px; flex:0 0 auto; }
   .armsw .sw-knob { width:12px; height:12px; left:2px; top:2px; }
-  .armsw.safe { background:var(--good-soft); border-color:var(--good); color:var(--good); }
-  .armsw.safe .sw-track { background:var(--good); border-color:var(--good); }
+  .armsw.disarmed { background:var(--good-soft); border-color:var(--good); color:var(--good); }
+  .armsw.disarmed .sw-track { background:var(--good); border-color:var(--good); }
   .armsw.on { background:var(--bad-soft); border-color:var(--bad); color:var(--bad); }
   .armsw.on .sw-track { background:var(--bad); border-color:var(--bad); }
   /* 32 wide, 1px border each side, knob 12 at left 2 -> 32-2-12-2-2 = 14. */
@@ -532,20 +532,13 @@
      what the data is, and the link opens a site mid-review. */
   .jrnychart #tv-attr-logo { display:none !important; }
 
-  /* Entry, best and exit. Drawn over the canvas rather than as a series:
-     the library strokes a segment between any real point and its
-     neighbours, so a one-point series always came with a stub of line
-     through the dot. Positioned from the chart's own coordinate API and
-     repositioned as it moves, so they still ride the zoom. */
+  /* Entry, best and exit. Drawn over the canvas rather than as a series,
+     positioned from the chart's own coordinate API and repositioned as it
+     moves, so they ride the zoom and stay on the line. */
   .jrnydots { position:absolute; inset:0; pointer-events:none; }
   .jrnydot { position:absolute; width:11px; height:11px; border-radius:50%;
              transform:translate(-50%, -50%); border:2px solid var(--card);
              box-shadow:0 0 0 1px rgba(0,0,0,.35); }
-  /* A hairline from the dot to the closing line, for the minutes where the
-     two differ -- a fill at 2.65 inside a minute that closed at 2.48 is a
-     real gap, and hiding it would be drawing a price that did not happen. */
-  .jrnydotstem { position:absolute; width:0; border-left:1px dashed;
-                 opacity:.55; transform:translateX(-50%); }
 
   /* Hover readout. Text, not a floating box: a tooltip that follows the
      pointer covers the candles it is describing. */
@@ -554,6 +547,8 @@
                margin-top:6px; }
   .jrnyhover b { color:var(--ink); font-weight:700; }
   .jrnyhover .ph { color:var(--faint); }
+  .jrnyhover .pos { color:var(--good); }
+  .jrnyhover .neg { color:var(--bad); }
 
   .jrnynote { font-size:10.5px; color:var(--muted); line-height:1.5;
               margin-top:10px; }
@@ -629,10 +624,6 @@
   tr.clickable { cursor:pointer; }
   tr.clickable:hover td { background:var(--sunken); }
   tr.clickable.on td { background:var(--accent-soft); }
-  .naked { background:var(--bad-soft); color:var(--bad); font-weight:600;
-           padding:10px 12px; border-radius:6px; font-size:13px; margin-bottom:12px; }
-  .safe  { background:var(--good-soft); color:var(--good); font-weight:600;
-           padding:10px 12px; border-radius:6px; font-size:13px; margin-bottom:12px; }
   .pnlbig { font-family:var(--mono); font-size:26px; font-weight:600; }
 
   .chip { display:inline-block; font-family:var(--mono); font-size:10.5px; font-weight:600;
@@ -1011,7 +1002,7 @@ async function loadStatus() {
     strip.innerHTML = `
       <span class="pill ${canTrade ? "ok" : "no"}">
         <span class="k">Orders</span><span class="v">${canTrade ? "ENABLED" : "BLOCKED"}</span></span>
-      <button type="button" class="armsw ${h.dry_run ? "safe" : "on"}" id="armswitch"
+      <button type="button" class="armsw ${h.dry_run ? "disarmed" : "on"}" id="armswitch"
               data-armed="${!h.dry_run}" role="switch" aria-checked="${!h.dry_run}"
               title="${armTitle(h.dry_run)}">
         <span class="sw-track"><span class="sw-knob"></span></span>
@@ -2615,7 +2606,7 @@ function jrnyStory(d, verdict) {
   const up = v => `<b class="pos">${v}</b>`;
   const down = v => `<b class="neg">${v}</b>`;
 
-  if (!best) return "No minute bars, so what the price did in between is unknown.";
+  if (!best) return "No prices for this trade, so what it did in between is unknown.";
 
   const reached = peakPct > 0
     ? `Reached ${up(fmtPct(peakPct))} at ${jrnyTime(best.time_ms)}`
@@ -2649,9 +2640,9 @@ function jrnyStory(d, verdict) {
 }
 
 function renderJourney(d, box, outcome) {
-  if (!d || !d.bars || !d.bars.length) {
+  if (!d || !d.path || d.path.length < 2) {
     box.innerHTML = `<div class="placeholder" style="padding:18px 0">${
-      d && d.note ? d.note : "No minute bars for this trade."}</div>`;
+      d && d.note ? d.note : "No prices for this trade."}</div>`;
     return;
   }
 
@@ -2667,7 +2658,7 @@ function renderJourney(d, box, outcome) {
     <p class="jrnystory">${jrnyStory(d, verdict)}</p>
     ${jrnyChart(d)}
     <div class="jrnyhover" id="jrnyhover">
-      <span class="ph">Hover the line for a minute's open, high, low and close.</span>
+      <span class="ph">Hover the line for the price at that moment.</span>
     </div>
     ${jrnyNotes(d)}`;
 
@@ -2708,7 +2699,7 @@ function jrnyChart(d) {
 
 function jrnyDrawChart(d) {
   const box = $("jrnychart");
-  if (!box || !window.LightweightCharts || !d.bars.length) return;
+  if (!box || !window.LightweightCharts || !d.path || d.path.length < 2) return;
 
   jrnyDestroyChart();
 
@@ -2750,21 +2741,22 @@ function jrnyDrawChart(d) {
      offset is taken per bar, so a session spanning a daylight-saving change
      does not slide by an hour halfway along.
      
-     byTime below is keyed on the SAME shifted value, so the hover still
-     finds its bar. */
+     msAt below is keyed on the SAME shifted value, so the hover still
+     finds the real moment. */
   const toSec = ms => {
     const at = new Date(ms);
     return Math.floor((ms - at.getTimezoneOffset() * 60_000) / 1000);
   };
 
-  /* A BASELINE series, split at the entry price: green where the trade was
-     in profit, red where it was under water, with the area filled either
-     side of that line.
+  /* THE LINE IS THE TRADE: it starts at the fill price and ends at the
+     exit price (d.path, built by the backend), so the entry and exit dots
+     are on it by construction. In between are the prices recorded while
+     the contract was held -- or, for a trade from before the recorder, the
+     minute closes.
 
-     This is why the library is worth having -- the split and its fill are
-     built in, and they stay correct through every zoom and pan. One colour
-     for the whole line only said how the trade ENDED; this says what it was
-     doing at every minute along the way. */
+     A BASELINE series split at the entry: green in profit, red under water.
+     The minutes before the fill are a separate grey line: context, not
+     profit or loss the position ever had. */
   const series = chart.addBaselineSeries({
     baseValue: { type: "price", price: d.entry_price },
     topLineColor: good,
@@ -2777,21 +2769,94 @@ function jrnyDrawChart(d) {
     priceLineVisible: false,
     lastValueVisible: false,
     crosshairMarkerRadius: 4,
+    /* The axis fits the LINE by default, and price lines do not count: a
+       trade that never went near its take profit or stop loss drew both
+       off-screen, so the reader could not see how far away they were.
+       The levels are added to the range, so TP and SL are always in view. */
+    autoscaleInfoProvider: original => {
+      const res = original();
+      if (!res || !res.priceRange) return res;
+      [d.take_profit_price, d.stop_loss_price, d.entry_price].forEach(v => {
+        if (v == null) return;
+        res.priceRange.minValue = Math.min(res.priceRange.minValue, v);
+        res.priceRange.maxValue = Math.max(res.priceRange.maxValue, v);
+      });
+      return res;
+    },
+  });
+  const leadSeries = chart.addLineSeries({
+    color: muted + "99",
+    lineWidth: 2,
+    lineStyle: LightweightCharts.LineStyle.Dotted,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
   });
 
-  // One point per minute. Duplicated stamps would be rejected by the
-  // library, so the set is de-duplicated and sorted first.
-  const seen = new Set();
-  const data = [];
-  d.bars.forEach(b => {
-    const t = toSec(b.t);
-    if (seen.has(t)) return;
-    seen.add(t);
-    data.push({ time: t, value: b.c });
+  /* EVENLY SPACED, because the library spaces every point evenly whatever
+     the gap in time between them. Recorded prices arrive only when the
+     price CHANGES, so fed in raw, a minute of stillness would take the
+     same width as two seconds of movement.
+
+     So the line is sampled on a fixed step, anchored at the fill so the
+     fill lands exactly on a sample. A recorded price HOLDS until the next
+     one (it was the price until it changed); minute closes are joined
+     straight, since nothing is known between them. */
+  const path = d.path;
+  const lead = d.lead || [];
+  const entryMs = path[0].t;
+  const endMs = path[path.length - 1].t;
+  const startMs = lead.length ? lead[0].t : entryMs;
+  // At most ~3000 samples, in whole seconds, never finer than 2s.
+  const step = Math.max(2000, Math.ceil((endMs - startMs) / 3000 / 1000) * 1000);
+
+  const sample = (pts, t, hold) => {
+    let i = 0;
+    while (i + 1 < pts.length && pts[i + 1].t <= t) i++;
+    const a = pts[i], b = pts[i + 1];
+    if (hold || !b || t <= a.t) return a.p;
+    return a.p + (b.p - a.p) * (t - a.t) / (b.t - a.t);
+  };
+  const recorded = d.path_source === "recorded";
+
+  // Grid times: every step from the first lead point to the exit, with the
+  // fill on the grid and the exit itself as the last sample.
+  const times = [];
+  for (let k = Math.ceil((startMs - entryMs) / step); entryMs + k * step < endMs; k++) {
+    times.push(entryMs + k * step);
+  }
+  times.push(endMs);
+
+  const leadData = [], data = [];
+  const msAt = {};              // chart time -> real ms, for the hover
+  let lastSec = -Infinity;
+  times.forEach(t => {
+    const sec = toSec(t);
+    if (sec <= lastSec) return;  // a daylight-saving step; skip, never reorder
+    lastSec = sec;
+    msAt[sec] = t;
+    if (t <= entryMs && lead.length) {
+      leadData.push({ time: sec, value: sample(lead, t, false) });
+    }
+    if (t >= entryMs) {
+      data.push({ time: sec, value: sample(path, t, recorded) });
+    }
   });
-  data.sort((a, b) => a.time - b.time);
+
+  /* The best is a point on the path, but a step can fall either side of
+     it. Its nearest sample is set to it, so the dot, its label and the
+     story all name the peak the line actually reaches. */
+  const onGrid = ms => {
+    let hit = data[0];
+    for (const pt of data) {
+      if (Math.abs(msAt[pt.time] - ms) < Math.abs(msAt[hit.time] - ms)) hit = pt;
+    }
+    return hit;
+  };
+  if (d.best) onGrid(d.best.time_ms).value = d.best.price;
 
   series.setData(data);
+  leadSeries.setData(leadData);
 
   // The three levels, as price lines the library keeps pinned to the axis.
   const level = (price, colour, title) => {
@@ -2806,99 +2871,54 @@ function jrnyDrawChart(d) {
   level(d.entry_price, accent, "ENTRY");
   level(d.stop_loss_price, bad, "SL");
 
-  const nearestSec = ms => {
-    let best = null, gap = Infinity;
-    data.forEach(pt => {
-      const g = Math.abs(pt.time - toSec(ms));
-      if (g < gap) { gap = g; best = pt.time; }
-    });
-    return best;
-  };
+  /* Where each mark sits: a point OF the line. The entry is its first
+     sample, the exit its last, the best the sample set to the peak above --
+     so no dot can be anywhere but on the line. */
+  const first = data[0];
+  const last = data[data.length - 1];
+  const peak = d.best ? onGrid(d.best.time_ms) : null;
 
-  /* Entry, best and exit as filled dots sitting ON the line.
+  /* Entry, best and exit as filled dots on the line.
 
-     An overlay, not a series. Every series approach drew a stub of line
-     through the dot: the library strokes between a real point and its
-     neighbours, and point markers take the same colour as that line, so
-     there is no combination where the dot is coloured and the line is not.
-
-     The positions come from the chart's own coordinate API and are
+     An overlay, not a series: a second series would stroke a line between
+     its points. The positions come from the chart's own coordinate API and are
      recomputed whenever the visible range changes, so they track zoom and
      pan exactly as a series would. */
   const overlay = document.createElement("div");
   overlay.className = "jrnydots";
   box.appendChild(overlay);
 
-  const wanted = [];
-  if (d.entry_time_ms != null && d.entry_price != null) {
-    wanted.push({ t: nearestSec(d.entry_time_ms), v: d.entry_price, c: accent });
+  const wanted = [{ t: first.time, v: first.value, c: accent }];
+  // The best is not marked twice when it IS the entry or the exit.
+  if (peak && peak !== first && peak !== last) {
+    wanted.push({ t: peak.time, v: peak.value, c: warn });
   }
-  if (d.best) wanted.push({ t: nearestSec(d.best.time_ms), v: d.best.price, c: warn });
-  if (!d.is_open && d.exit_time_ms != null && d.exit_price != null) {
+  if (!d.is_open && last !== first) {
     wanted.push({
-      t: nearestSec(d.exit_time_ms), v: d.exit_price,
+      t: last.time, v: last.value,
       c: d.touched_take_profit ? good : bad,
     });
   }
-
-  // The closing price of the minute each marker belongs to, so the stem
-  // knows where the line it is anchored to actually sits.
-  const closeAt = {};
-  data.forEach(pt => { closeAt[pt.time] = pt.value; });
 
   const nodes = wanted.map(w => {
     const el = document.createElement("div");
     el.className = "jrnydot";
     el.style.background = w.c;
     overlay.appendChild(el);
-
-    const stem = document.createElement("div");
-    stem.className = "jrnydotstem";
-    stem.style.borderLeftColor = w.c;
-    overlay.appendChild(stem);
-
-    return { el, stem, w };
+    return { el, w };
   });
 
-  /* Each dot sits at the PRICE it marks.
-
-     This is not negotiable: the entry dot and the ENTRY level line are the
-     same number, and so are the exit dot and whichever of TP or SL it hit.
-     Drawing the dot anywhere else puts it visibly off its own line, which
-     is exactly the contradiction a reader spots first.
-
-     An earlier attempt pinned the dots to the closing line instead, because
-     a fill that landed mid-minute does not sit on a line of closes. That
-     traded one mismatch for a worse one -- the dot left the level it was
-     naming. The price is the anchor; the line is just where the price
-     happened to be at the end of each minute. */
   const placeDots = () => {
-    nodes.forEach(({ el, stem, w }) => {
+    nodes.forEach(({ el, w }) => {
       const x = chart.timeScale().timeToCoordinate(w.t);
       const y = series.priceToCoordinate(w.v);
       if (x == null || y == null) {
         el.style.display = "none";
-        stem.style.display = "none";
         return;
       }
       el.style.display = "";
       el.style.left = x + "px";
       el.style.top = y + "px";
-
-      /* A hairline joining the dot to the closing line when the two are
-         apart. That gap is real -- a fill at 2.65 inside a minute that
-         closed at 2.48 is seventeen cents -- and the stem says "these
-         belong together" rather than leaving the dot looking stray. */
-      const close = closeAt[w.t];
-      const yClose = close != null ? series.priceToCoordinate(close) : null;
-      if (yClose == null || Math.abs(yClose - y) < 4) {
-        stem.style.display = "none";
-        return;
-      }
-      stem.style.display = "";
-      stem.style.left = x + "px";
-      stem.style.top = Math.min(y, yClose) + "px";
-      stem.style.height = Math.abs(yClose - y) + "px";
     });
   };
 
@@ -2911,26 +2931,23 @@ function jrnyDrawChart(d) {
 
   /* The labels stay as markers: a dot alone does not say which is which,
      and text drawn at the price would sit on the line it marks. */
-  const markers = [];
-  if (d.entry_time_ms != null) {
+  const markers = [{
+    time: first.time, position: "belowBar",
+    color: accent, shape: "square", size: 0,
+    text: `ENTRY ${fmtNum(first.value)}`,
+  }];
+  if (peak && peak !== first && peak !== last) {
     markers.push({
-      time: nearestSec(d.entry_time_ms), position: "belowBar",
-      color: accent, shape: "square", size: 0,
-      text: `ENTRY ${fmtNum(d.entry_price)}`,
-    });
-  }
-  if (d.best) {
-    markers.push({
-      time: nearestSec(d.best.time_ms), position: "aboveBar",
+      time: peak.time, position: "aboveBar",
       color: warn, shape: "square", size: 0,
       text: `BEST ${fmtNum(d.best.price)} ${fmtPct(d.best.percent_from_entry)}`,
     });
   }
-  if (!d.is_open && d.exit_time_ms != null) {
+  if (!d.is_open && last !== first) {
     markers.push({
-      time: nearestSec(d.exit_time_ms), position: "belowBar",
+      time: last.time, position: "belowBar",
       color: d.touched_take_profit ? good : bad, shape: "square", size: 0,
-      text: d.touched_take_profit ? "TAKE PROFIT" : (d.touched_stop_loss ? "STOP LOSS" : "EXIT"),
+      text: `${d.touched_take_profit ? "TAKE PROFIT" : (d.touched_stop_loss ? "STOP LOSS" : "EXIT")} ${fmtNum(last.value)}`,
     });
   }
   markers.sort((a, b) => a.time - b.time);
@@ -2940,21 +2957,32 @@ function jrnyDrawChart(d) {
 
   // The readout under the chart, driven by the library's own crosshair.
   const out = $("jrnyhover");
-  const rest = `<span class="ph">Hover the line for a minute's open, high, low and close.</span>`;
-  const byTime = {};
-  d.bars.forEach(b => { byTime[toSec(b.t)] = b; });
+  const rest = `<span class="ph">Hover the line for the price at that moment.</span>`;
+  const qty = d.quantity || 1;
 
   chart.subscribeCrosshairMove(param => {
     if (!out) return;
-    if (!param || !param.time || !byTime[param.time]) { out.innerHTML = rest; return; }
-    const b = byTime[param.time];
+    const ms = param && param.time != null ? msAt[param.time] : undefined;
+    if (ms === undefined) { out.innerHTML = rest; return; }
+
+    const held = param.seriesData.get(series);
+    const before = param.seriesData.get(leadSeries);
+    const clock = new Date(ms).toLocaleTimeString(
+      [], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+    if (!held) {
+      out.innerHTML = `<span><b>${clock}</b></span>`
+        + (before ? `<span>Price <b>${before.value.toFixed(2)}</b></span>` : "")
+        + `<span class="ph">before entry</span>`;
+      return;
+    }
+    const move = held.value - d.entry_price;
+    const cls = move >= 0 ? "pos" : "neg";
     out.innerHTML =
-      `<span><b>${jrnyTime(b.t)}</b></span>`
-      + `<span>O <b>${b.o.toFixed(2)}</b></span>`
-      + `<span>H <b>${b.h.toFixed(2)}</b></span>`
-      + `<span>L <b>${b.l.toFixed(2)}</b></span>`
-      + `<span>C <b>${b.c.toFixed(2)}</b></span>`
-      + `<span>Vol <b>${b.v}</b></span>`;
+      `<span><b>${clock}</b></span>`
+      + `<span>Price <b>${held.value.toFixed(2)}</b></span>`
+      + `<span>vs entry <b class="${cls}">${fmtPct(move / d.entry_price * 100)}</b></span>`
+      + `<span>P&amp;L <b class="${cls}">${fmtMoney(move * 100 * qty)}</b></span>`;
   });
 
   const resize = () => {
@@ -2970,15 +2998,20 @@ function jrnyDrawChart(d) {
 }
 
 function jrnyNotes(d) {
-  const notes = ["One-minute bars: a spike inside a minute is in that bar's high, "
-               + "but a move between two bars is not recorded anywhere."];
+  const notes = [d.path_source === "recorded"
+    ? "Prices recorded every 2 seconds while held. The line starts at your fill and ends at your exit."
+    : "No recorded prices for this trade (placed before recording started, or while the "
+      + "backend was off), so the middle is one-minute closes. The line still starts at "
+      + "your fill and ends at your exit."];
   if (d.touched_take_profit && d.exit_price != null
       && d.take_profit_price != null && d.exit_price < d.take_profit_price) {
-    notes.push("A high at or above the take profit does not mean the leg failed: "
+    notes.push("A price at or above the take profit does not mean the leg failed: "
              + "it rests with the broker and triggers on the quote the broker "
-             + "saw, which a one-minute high can outrun.");
+             + "saw, which a brief spike can outrun.");
   }
-  if (d.truncated) notes.push("The chart is cut to the bar limit; the tail is missing, not the entry.");
+  if (d.truncated && d.path_source !== "recorded") {
+    notes.push("The chart is cut to the bar limit; the tail is missing, not the entry.");
+  }
   if (d.note) notes.push(d.note);
   return `<div class="jrnynote">${notes.join("<br>")}</div>`;
 }

@@ -84,6 +84,98 @@ class Journey:
         return bool(self.bars)
 
 
+@dataclass(frozen=True)
+class PricePoint:
+    """One price at one moment, for drawing."""
+
+    time_ms: int
+    price: float
+
+
+#: A minute bar's close is the price at the END of its minute.
+BAR_MS = 60_000
+
+
+def build_path(
+    bars,
+    ticks,
+    *,
+    entry_ms: int,
+    entry_price: float,
+    end_ms: int | None,
+    end_price: float | None,
+) -> tuple[list[PricePoint], list[PricePoint], str]:
+    """The line a journey is drawn as: the fill, what happened, the exit.
+
+    WHY A PATH AND NOT THE BARS. A bar's close is the price at the last
+    second of its minute. The fill and the exit happen inside a minute, so a
+    line of closes never passed through either, and their dots sat off it by
+    whatever the price did in the rest of the minute. This line STARTS at
+    the fill and ENDS at the exit, so both dots are on it by construction.
+
+    In between it uses the recorded prices (price_log.py) when there are
+    any, and the minute closes when there are not -- a trade from before the
+    recorder, or one held while the backend was down.
+
+    Args:
+        bars: Minute bars around the trade, any order.
+        ticks: Recorded (time_ms, price) pairs for the contract.
+        entry_ms: When it filled.
+        entry_price: The fill.
+        end_ms: The exit, or now for an open trade. None when unknown.
+        end_price: The exit fill, or the current price. None when unknown.
+
+    Returns:
+        (lead, path, source). `lead` is the minutes BEFORE the fill, ending
+        at the fill so the two lines join -- context, not part of the trade.
+        `path` runs fill to exit. `source` is "recorded" or "minute_bars".
+    """
+    ordered = sorted(bars, key=lambda b: b.time_ms)
+
+    # Stamped at the bar's END, which is when its close was the price.
+    lead = [
+        PricePoint(b.time_ms + BAR_MS, b.close)
+        for b in ordered
+        if b.time_ms + BAR_MS <= entry_ms
+    ]
+    if lead:
+        lead.append(PricePoint(entry_ms, entry_price))
+
+    def inside(t: int) -> bool:
+        return t > entry_ms and (end_ms is None or t < end_ms)
+
+    between = [PricePoint(int(t), float(p)) for t, p in ticks if inside(int(t))]
+    source = "recorded"
+    if not between:
+        source = "minute_bars"
+        between = [
+            PricePoint(b.time_ms + BAR_MS, b.close)
+            for b in ordered
+            if inside(b.time_ms + BAR_MS)
+        ]
+    between.sort(key=lambda pt: pt.time_ms)
+
+    path = [PricePoint(entry_ms, entry_price)] + between
+    if end_ms is not None and end_price is not None and end_ms > entry_ms:
+        path.append(PricePoint(end_ms, end_price))
+
+    return lead, path, source
+
+
+def path_as_bars(path: list[PricePoint]) -> list[Bar]:
+    """The path in the shape build() measures, one flat bar per point.
+
+    So the best, the worst and "did it touch the take profit" are measured
+    on the SAME line the chart draws. Measured on the bars' highs instead,
+    the story could name a peak the line never reaches.
+    """
+    return [
+        Bar(time_ms=pt.time_ms, open=pt.price, high=pt.price,
+            low=pt.price, close=pt.price, volume=0)
+        for pt in path
+    ]
+
+
 def _percent(entry: float, price: float) -> float:
     """Signed move from entry, in percent."""
     if entry <= 0:

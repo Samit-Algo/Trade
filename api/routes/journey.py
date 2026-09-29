@@ -18,10 +18,11 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter
 
 from api.service.market.bars import MAX_BARS, fetch_minute_bars
+from api.service.market.price_log import PRICE_LOG
 from api.service.order import journey as journey_service
 
 from ..errors import ApiError
-from ..schemas import BarOut, ExtremeOut, JourneyResponse
+from ..schemas import BarOut, ExtremeOut, JourneyResponse, PricePointOut
 from ..shared import get_quote_client
 
 router = APIRouter(tags=["orders"])
@@ -178,29 +179,41 @@ def read_journey(order_id: int) -> JourneyResponse:
         get_quote_client(), row.identifier, begin=begin, end=end
     )
 
-    # The window snaps back to the start of the minute the fill happened in,
-    # so its first bar opens slightly BEFORE the position did. Searching
-    # that bar for the peak can report a price the position never had -- one
-    # trade showed a "best reached" before it was opened, promising profit
-    # that was never reachable.
-    #
-    # Drawn, not measured: the bar stays on the line, out of the numbers.
     filled = _parse(row.filled_at)
-    owned = (
-        [b for b in bars if b.time_ms >= int(filled.timestamp() * 1000)]
-        if filled else bars
+    exited = _parse(row.exited_at)
+    entry_ms = int((filled or begin).timestamp() * 1000)
+
+    # Where the line ends: the exit fill, or -- still open -- the price now.
+    if exited:
+        end_ms, end_price = int(exited.timestamp() * 1000), row.exit_price
+    elif row.current_price is not None:
+        end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        end_price = row.current_price
+    else:
+        end_ms = end_price = None
+
+    ticks = PRICE_LOG.read(
+        row.identifier,
+        entry_ms,
+        end_ms if end_ms is not None else int(end.timestamp() * 1000),
+    )
+    lead, path, source = journey_service.build_path(
+        bars, ticks,
+        entry_ms=entry_ms, entry_price=entry,
+        end_ms=end_ms, end_price=end_price,
     )
 
+    # Measured on the line that is drawn, fill to exit. The run-up before
+    # the fill is not in it, so it cannot report a peak the position never
+    # had; and the story cannot name a price the line does not reach.
     result = journey_service.build(
-        owned or bars,
+        journey_service.path_as_bars(path),
         entry_price=entry,
         quantity=row.quantity or 1,
         multiplier=100.0,
         take_profit_price=row.take_profit_price,
         stop_loss_price=row.stop_loss_price,
     )
-
-    exited = _parse(row.exited_at)
 
     return JourneyResponse(
         order_id=str(order_id),
@@ -213,18 +226,20 @@ def read_journey(order_id: int) -> JourneyResponse:
         quantity=row.quantity,
         take_profit_price=row.take_profit_price,
         stop_loss_price=row.stop_loss_price,
-        entry_time_ms=int((_parse(row.filled_at) or begin).timestamp() * 1000),
+        entry_time_ms=entry_ms,
         exit_time_ms=int(exited.timestamp() * 1000) if exited else None,
         is_open=row.exited_at is None,
-        # Every bar fetched, including the run-up before the fill: the line
-        # reads better with a little context. Only the NUMBERS above are
-        # restricted to bars the position actually existed for.
+        # Every bar fetched, for the hover's open/high/low/close. The line
+        # itself is `path` and `lead`.
         bars=[
             BarOut(
                 t=b.time_ms, o=b.open, h=b.high, l=b.low, c=b.close, v=b.volume
             )
             for b in bars
         ],
+        path=[PricePointOut(t=pt.time_ms, p=pt.price) for pt in path],
+        lead=[PricePointOut(t=pt.time_ms, p=pt.price) for pt in lead],
+        path_source=source,
         best=_extreme(result.best),
         worst=_extreme(result.worst),
         progress_to_take_profit=result.progress_to_take_profit,
@@ -236,9 +251,11 @@ def read_journey(order_id: int) -> JourneyResponse:
         touched_take_profit=result.touched_take_profit,
         touched_stop_loss=result.touched_stop_loss,
         truncated=(end - begin) >= timedelta(minutes=MAX_BARS),
-        note=None if result.has_bars else (
-            "No minute bars came back for this contract and window. It may "
-            "have traded too thinly to have any."
+        # The path always holds the fill, so "nothing known" is a path with
+        # nothing after it.
+        note=None if len(path) > 1 else (
+            "No prices were recorded while this was held, and no minute bars "
+            "came back for it. It may have traded too thinly to have any."
         ),
     )
 
