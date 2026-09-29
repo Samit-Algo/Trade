@@ -42,7 +42,7 @@ def test_only_the_us_market_imports_tigeropen():
     assert leaks == [], "Tiger's SDK imported outside markets/us:\n" + "\n".join(leaks)
 
 
-def test_only_the_registry_reaches_into_the_us_market():
+def test_only_the_registry_reaches_into_a_market():
     """Everything else goes through get_market()."""
     allowed = {
         # The registry: the one place a market is chosen by name.
@@ -51,13 +51,17 @@ def test_only_the_registry_reaches_into_the_us_market():
         # lazy import inside the provider, and the HTTP service never builds one.
         Path("services/market/quotes.py"),
     }
+    outside_markets = [
+        p for p in python_files(BACKEND) if BACKEND / "markets" not in p.parents
+    ]
     leaks = [
         f"{path.relative_to(BACKEND)}: {line}"
-        for path in outside_us()
+        for path in outside_markets
         for line in import_lines(path)
-        if "markets.us" in line and path.relative_to(BACKEND) not in allowed
+        if re.search(r"markets\.(us|india)", line)
+        and path.relative_to(BACKEND) not in allowed
     ]
-    assert leaks == [], "markets/us imported directly:\n" + "\n".join(leaks)
+    assert leaks == [], "a market imported directly:\n" + "\n".join(leaks)
 
 
 def test_every_place_order_is_in_the_submission_file():

@@ -344,7 +344,7 @@ class TestRequestValidation:
 
 
 class TestTheEndpointIsRegisteredAndProtected:
-    def test_trade_is_in_the_schema(self):
+    def test_trade_is_in_the_schema(self, fake_env):
         from backend.main import create_app
 
         assert "/trade" in create_app().openapi()["paths"]
@@ -355,7 +355,7 @@ class TestTheEndpointIsRegisteredAndProtected:
 
         assert "/trade" not in UNPROTECTED_PATHS
 
-    def test_trade_declares_the_api_key_in_its_schema(self):
+    def test_trade_declares_the_api_key_in_its_schema(self, fake_env):
         from backend.main import create_app
 
         spec = create_app().openapi()

@@ -108,7 +108,7 @@ class TestOpenApiSecurityMatchesMiddleware:
     that is actually required, or imply one is needed where it is not.
     """
 
-    def test_every_route_except_the_unprotected_ones_declares_the_key(self):
+    def test_every_route_except_the_unprotected_ones_declares_the_key(self, fake_env):
         from backend.main import UNPROTECTED_PATHS, create_app
 
         spec = create_app().openapi()
@@ -123,7 +123,7 @@ class TestOpenApiSecurityMatchesMiddleware:
             else:
                 assert declares_key, f"{path} is enforced but not marked in the schema"
 
-    def test_the_scheme_names_the_header_the_middleware_reads(self):
+    def test_the_scheme_names_the_header_the_middleware_reads(self, fake_env):
         from backend.main import API_KEY_HEADER, create_app
 
         spec = create_app().openapi()

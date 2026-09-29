@@ -61,55 +61,81 @@ class ConfigError(Exception):
 
 
 @dataclass(frozen=True)
-class Settings:
-    """Immutable view of the environment. Build it once, pass it around."""
+class TradingDefaults:
+    """What one market's trading settings fall back to when its file is silent.
 
-    tiger_id: str
-    account: str
-    paper_account: str
-    private_key_path: Path
-    allow_live: bool
+    Every market reads the SAME trading keys -- TRADE_SYMBOLS,
+    TAKE_PROFIT_PERCENT, QUANTITY_TIERS and the rest -- so the page and the
+    routes treat them alike. What differs is what a sensible default is: a
+    US premium is a few dollars on a cent grid, a NIFTY premium is a hundred
+    rupees on a five-paise grid.
+    """
+
+    trade_symbols: tuple[str, ...]
+    quick_sell_steps: tuple[float, ...]
+    quantity_tiers: tuple[tuple[float, int], ...]
+    max_trade_cash: float
+    option_tick_size: float
+    #: Units one contract controls, used ONLY to check the quantity bands
+    #: against the cash cap at startup. The real figure comes from the
+    #: contract when an order is priced.
+    contract_size: int
+    currency_symbol: str
+    min_days_to_expiry: int
+    limit_buffer_ticks: int
+    buffer_tiers_enabled: bool
+    time_brackets_start: str
+    time_brackets_windows: str
+
+
+@dataclass(frozen=True)
+class TradingSettings:
+    """What every market decides about a trade. Build it once, pass it around.
+
+    Each market's settings are one of these plus whatever reaching its broker
+    needs -- Settings below for the US, IndiaSettings in markets/india.
+    """
+
+    #: Which market these belong to. The page's saved switches are kept per
+    #: market, and they find their file through this.
+    market_id: str
+
     dry_run: bool
-    license: str | None
-    market_data_source: str  # "manual" or "tiger"
-    api_key: str | None  # the HTTP layer's fourth lock; None disables the API
-    api_host: str
-    api_port: int
+    mode: str  # "PAPER" or "LIVE"
     quote_stale_after_seconds: int  # a typed bid older than this is stale
 
     # Phase 10, the fast single-call trading path.
     option_tick_size: float      # MEASURED, not assumed -- see HANDOVER 3d
     limit_buffer_ticks: int      # whole ticks added to a BUY, to help it fill
     min_days_to_expiry: int      # refuse to auto-select anything sooner
-    idempotency_ttl_seconds: int # how long a client_order_id is remembered
 
-    # OPTIONAL premium-scaled buy buffer. See order/buffer_tiers.py --
+    # OPTIONAL premium-scaled buy buffer. See order/pricing_rules.py --
     # setting buffer_tiers_enabled to False restores the flat buffer.
     buffer_tiers_enabled: bool
     buffer_tier_floor_ticks: int
 
-    # Phase 11. The seven trading decisions that used to arrive per request.
+    # Phase 11. The trading decisions that used to arrive per request.
     # They live here so POST /trade needs only four inputs. Every bound below
     # is the one TradeRequest used to enforce -- the validation did not go
     # away, it moved to startup, where a bad value refuses to boot instead of
     # refusing an order mid-session.
-    trade_quantity: int          # contracts per trade
+    trade_quantity: int          # contracts (lots, in India) per trade
     take_profit_percent: float   # REQUIRED -- never defaulted
     stop_loss_percent: float     # REQUIRED -- never defaulted
     trade_strikes_out: int       # whole strikes out of the money
     max_trade_cash: float        # refuse any order costing more than this
 
-    # OPTIONAL: quantity scaled by premium. See order/quantity_tiers.py;
+    # OPTIONAL: quantity scaled by premium. See order/pricing_rules.py;
     # setting quantity_tiers_enabled to False restores the flat TRADE_QUANTITY.
     quantity_tiers_enabled: bool
     quantity_tiers: tuple[tuple[float, int], ...]
     quantity_tier_top: int
 
-    #: Cents below the live premium offered as one-click sell prices. Empty
+    #: Money below the live premium offered as one-click sell prices. Empty
     #: disables the buttons.
     quick_sell_steps: tuple[float, ...]
 
-    #: The symbols offered for trading. The /ui dropdown and the TradingView
+    #: The symbols offered for trading. The page and the TradingView
     #: userscript both read this, so it is the only place to add one.
     trade_symbols: tuple[str, ...]
 
@@ -135,15 +161,34 @@ class Settings:
     leg_time_in_force: str       # DAY or GTC
     require_live_trading: bool   # refuse a price not traded this minute
 
-    mode: str  # "PAPER" or "LIVE", resolved by safety.resolve_account_mode
+    @property
+    def is_paper(self) -> bool:
+        return self.mode == "PAPER"
+
+
+@dataclass(frozen=True)
+class Settings(TradingSettings):
+    """The US market's settings, from .env -- and the server's own.
+
+    .env is the server's file as well as the US market's, so the HTTP lock
+    and the address to bind live here too.
+    """
+
+    tiger_id: str
+    account: str
+    paper_account: str
+    private_key_path: Path
+    allow_live: bool
+    license: str | None
+    market_data_source: str  # "manual" or "tiger"
+    api_key: str | None  # the HTTP layer's fourth lock; None disables the API
+    api_host: str
+    api_port: int
+    idempotency_ttl_seconds: int # how long a client_order_id is remembered
 
     @property
     def masked_account(self) -> str:
         return mask_account(self.account)
-
-    @property
-    def is_paper(self) -> bool:
-        return self.mode == "PAPER"
 
 
 #: The settings being read right now. `load_settings` points this at the
@@ -197,6 +242,22 @@ QUANTITY_TIERS_DEFAULT: tuple[tuple[float, int], ...] = (
     (1.60, 4),
     (2.65, 3),
     (4.00, 2),
+)
+
+#: What the US market falls back to. See TradingDefaults.
+US_DEFAULTS = TradingDefaults(
+    trade_symbols=TRADE_SYMBOLS_DEFAULT,
+    quick_sell_steps=QUICK_SELL_STEPS_DEFAULT,
+    quantity_tiers=QUANTITY_TIERS_DEFAULT,
+    max_trade_cash=800.0,
+    option_tick_size=DEFAULT_OPTION_TICK_SIZE,
+    contract_size=OPTION_CONTRACT_MULTIPLIER,
+    currency_symbol="$",
+    min_days_to_expiry=DEFAULT_MIN_DAYS_TO_EXPIRY,
+    limit_buffer_ticks=1,
+    buffer_tiers_enabled=True,
+    time_brackets_start=TIME_BRACKETS_START_DEFAULT,
+    time_brackets_windows=TIME_BRACKETS_WINDOWS_DEFAULT,
 )
 
 
@@ -574,6 +635,230 @@ def _assert_looks_like_private_key(path: Path) -> None:
         )
 
 
+def read_env_settings(env_path: Path, build):
+    """Read one settings file and hand it to `build`, restoring state after.
+
+    Every market's file goes through here, so each is read the same way:
+    into a box of its own rather than os.environ, which is process-wide and
+    cannot be undone. See env.py.
+
+    Args:
+        env_path: The file to read.
+        build: Called with the file's path while the file is being read; its
+            `setting_*` reads come from that file.
+
+    Returns:
+        Whatever `build` returns.
+    """
+    global _active_reader
+    previous_reader = _active_reader
+    _active_reader = EnvReader(read_env_file(env_path), source=env_path)
+    try:
+        return build(env_path)
+    finally:
+        # Always restored, including when validation raises, so a failed load
+        # cannot leave the next one reading the wrong market's file.
+        _active_reader = previous_reader
+
+
+#: Public names for the readers a market's own settings module uses. They
+#: read the file read_env_settings is currently reading.
+setting = _get
+setting_bool = _get_bool
+setting_int = _get_int
+setting_float = _get_float
+setting_bounded_int = _get_bounded_int
+
+
+def read_trading_settings(defaults: TradingDefaults) -> dict:
+    """Read the trading keys every market shares, from the file being read.
+
+    Args:
+        defaults: What this market falls back to.
+
+    Returns:
+        TradingSettings' fields, except market_id and mode, which each market
+        resolves for itself.
+
+    Raises:
+        ConfigError: For anything a human must fix.
+    """
+    dry_run = _get_bool("DRY_RUN", default=True)
+
+    # Named PREVIEW_TOKEN_TTL_SECONDS until Phase 11 deleted preview tokens.
+    # It never described a token: it is how long a hand-typed bid stays usable.
+    # The old name is still honoured so an existing .env keeps working.
+    quote_stale_after_seconds = _get_int(
+        "QUOTE_STALE_AFTER_SECONDS",
+        _get_int("PREVIEW_TOKEN_TTL_SECONDS", 60),
+    )
+
+    # Phase 10. The tick size is the MEASURED increment, not the widely quoted
+    # "penny under $3, nickel above" convention -- that convention was tested
+    # against 32,360 real traded prices and refused. It is configurable only
+    # so a symbol class that genuinely quotes more coarsely can be handled
+    # without a code change. See docs/HANDOVER.md section 3d before touching it.
+    option_tick_size = _get_float("OPTION_TICK_SIZE", defaults.option_tick_size)
+    limit_buffer_ticks = _get_int("LIMIT_BUFFER_TICKS", defaults.limit_buffer_ticks)
+    if limit_buffer_ticks < 0:
+        raise ConfigError(
+            f"LIMIT_BUFFER_TICKS must be zero or more (got {limit_buffer_ticks}). "
+            "A negative buffer moves a BUY away from the market."
+        )
+    min_days_to_expiry = _get_int("MIN_DAYS_TO_EXPIRY", defaults.min_days_to_expiry)
+    if min_days_to_expiry < 0:
+        raise ConfigError(
+            f"MIN_DAYS_TO_EXPIRY must be zero or more (got {min_days_to_expiry})."
+        )
+
+    # The premium-scaled buffer. Off restores LIMIT_BUFFER_TICKS alone.
+    buffer_tiers_enabled = _get_bool("BUFFER_TIERS_ENABLED", default=defaults.buffer_tiers_enabled)
+    buffer_tier_floor_ticks = _get_bounded_int(
+        "BUFFER_TIER_FLOOR_TICKS", 2, minimum=0, maximum=50
+    )
+
+    # Phase 11. The seven trading decisions, read once here instead of on
+    # every request. Bounds match what TradeRequest used to enforce.
+    trade_quantity = _get_bounded_int("TRADE_QUANTITY", 1, minimum=1, maximum=1000)
+    take_profit_percent = _get_required_percent(
+        "TAKE_PROFIT_PERCENT", maximum=1000, inclusive=True
+    )
+    stop_loss_percent = _get_required_percent(
+        "STOP_LOSS_PERCENT", maximum=100, inclusive=False
+    )
+    trade_strikes_out = _get_bounded_int(
+        "TRADE_STRIKES_OUT", 1, minimum=1, maximum=10
+    )
+
+    # The most cash one order may require. Checked against the SAME figure the
+    # response reports as cash_required, so what is capped is what is shown.
+    # Rejected at startup rather than at trade time if it is nonsense: a cap of
+    # zero would refuse every order, and finding that out mid-session is worse
+    # than not starting.
+    max_trade_cash = _get_float("MAX_TRADE_CASH", defaults.max_trade_cash)
+    if max_trade_cash <= 0:
+        raise ConfigError(
+            f"MAX_TRADE_CASH must be greater than zero (got {max_trade_cash}). "
+            "It is the most cash a single order may require; zero or less "
+            "would refuse every trade."
+        )
+
+    # Quantity scaled by premium. The bands are numbers here, not derived from
+    # the cap, so the two can drift apart -- see the check below.
+    quantity_tiers_enabled = _get_bool("QUANTITY_TIERS_ENABLED", default=False)
+    quantity_tiers = _get_quantity_tiers(
+        "QUANTITY_TIERS", defaults.quantity_tiers
+    )
+    quantity_tier_top = _get_bounded_int(
+        "QUANTITY_TIER_TOP", 1, minimum=1, maximum=100
+    )
+
+    # One-click sell prices, as money below the live premium.
+    quick_sell_steps = _get_quick_sell_steps(
+        "QUICK_SELL_STEPS", defaults.quick_sell_steps
+    )
+
+    # The symbols offered for trading, and any per-symbol bracket overrides.
+    # The overrides are looked up BY this list, so it decides what is read.
+    trade_symbols = _get_symbol_list("TRADE_SYMBOLS", defaults.trade_symbols)
+    symbol_take_profit = _get_symbol_percentages(
+        "_TAKE_PROFIT_PERCENT", trade_symbols, maximum=1000, inclusive=True
+    )
+    symbol_stop_loss = _get_symbol_percentages(
+        "_STOP_LOSS_PERCENT", trade_symbols, maximum=100, inclusive=False
+    )
+
+    # Bracket percentages that follow the clock. Stored as the raw text and
+    # validated here, so a malformed schedule refuses to boot rather than
+    # failing on the first trade of the evening. The page may override these
+    # later; its values go through the same parsers.
+    time_brackets_enabled = _get_bool("TIME_BRACKETS_ENABLED", default=False)
+    time_brackets_timezone = (
+        _get("TIME_BRACKETS_TIMEZONE") or TIME_BRACKETS_TIMEZONE_DEFAULT
+    )
+    time_brackets_start = _get("TIME_BRACKETS_START") or defaults.time_brackets_start
+    time_brackets_windows = (
+        _get("TIME_BRACKETS_WINDOWS") or defaults.time_brackets_windows
+    )
+
+    # Checked even when disabled: a schedule that is switched on mid-session
+    # should not be the moment its typo is discovered.
+    try:
+        parse_timezone(time_brackets_timezone)
+        parse_start(time_brackets_start)
+        parse_windows(time_brackets_windows)
+    except TimeBracketError as error:
+        raise ConfigError(f"TIME_BRACKETS: {error}") from error
+
+    # A band whose top premium times its quantity exceeds MAX_TRADE_CASH would
+    # propose orders the cap then refuses -- the table promising a size it
+    # cannot deliver. Caught at startup, because discovering it mid-session
+    # means a trade that did not happen when it was meant to.
+    if quantity_tiers_enabled:
+        for upper_bound, quantity in quantity_tiers:
+            worst_case = upper_bound * quantity * defaults.contract_size
+            if worst_case > max_trade_cash:
+                money = defaults.currency_symbol
+                raise ConfigError(
+                    f"QUANTITY_TIERS band {upper_bound:.2f}:{quantity} can "
+                    f"need up to {money}{worst_case:,.2f}, over the "
+                    f"{money}{max_trade_cash:,.2f} MAX_TRADE_CASH limit. Lower the "
+                    f"quantity, lower the bound, or raise the cap -- the two "
+                    f"are maintained by hand and must be kept in step."
+                )
+
+    # Blank means "pick the soonest expiry at least MIN_DAYS_TO_EXPIRY away".
+    # A value that is present but malformed is an error: silently falling back
+    # to auto-selection would trade a different contract than the one meant.
+    trade_expiry_date = _get("TRADE_EXPIRY_DATE") or None
+    if trade_expiry_date is not None:
+        try:
+            date.fromisoformat(trade_expiry_date)
+        except ValueError as error:
+            raise ConfigError(
+                f"TRADE_EXPIRY_DATE must be YYYY-MM-DD (got "
+                f"{trade_expiry_date!r}). Leave it blank to auto-select."
+            ) from error
+
+    leg_time_in_force = (_get("LEG_TIME_IN_FORCE") or "DAY").upper()
+    if leg_time_in_force not in VALID_TIME_IN_FORCE:
+        raise ConfigError(
+            f"LEG_TIME_IN_FORCE must be one of "
+            f"{', '.join(VALID_TIME_IN_FORCE)} (got {leg_time_in_force!r})."
+        )
+
+    require_live_trading = _get_bool("REQUIRE_LIVE_TRADING", default=False)
+
+    return dict(
+        dry_run=dry_run,
+        quote_stale_after_seconds=quote_stale_after_seconds,
+        option_tick_size=option_tick_size,
+        limit_buffer_ticks=limit_buffer_ticks,
+        min_days_to_expiry=min_days_to_expiry,
+        buffer_tiers_enabled=buffer_tiers_enabled,
+        buffer_tier_floor_ticks=buffer_tier_floor_ticks,
+        trade_quantity=trade_quantity,
+        take_profit_percent=take_profit_percent,
+        stop_loss_percent=stop_loss_percent,
+        trade_strikes_out=trade_strikes_out,
+        max_trade_cash=max_trade_cash,
+        quantity_tiers_enabled=quantity_tiers_enabled,
+        quantity_tiers=quantity_tiers,
+        quantity_tier_top=quantity_tier_top,
+        quick_sell_steps=quick_sell_steps,
+        trade_symbols=trade_symbols,
+        symbol_take_profit=symbol_take_profit,
+        symbol_stop_loss=symbol_stop_loss,
+        time_brackets_enabled=time_brackets_enabled,
+        time_brackets_timezone=time_brackets_timezone,
+        time_brackets_start=time_brackets_start,
+        time_brackets_windows=time_brackets_windows,
+        trade_expiry_date=trade_expiry_date,
+        leg_time_in_force=leg_time_in_force,
+        require_live_trading=require_live_trading,
+    )
+
+
 def load_settings(env_file: Path | str | None = None) -> Settings:
     """Load .env, validate it, and resolve the account mode.
 
@@ -585,25 +870,11 @@ def load_settings(env_file: Path | str | None = None) -> Settings:
     if env_file is not None and not env_path.exists():
         raise ConfigError(f"Env file not found: {env_path}")
 
-    # Read the file into a box of its own rather than into os.environ, which
-    # is process-wide and cannot be undone. See env.py.
-    global _active_reader
-    previous_reader = _active_reader
-    _active_reader = EnvReader(read_env_file(env_path), source=env_path)
-    try:
-        return _build_settings(env_path)
-    finally:
-        # Always restored, including when validation raises, so a failed load
-        # cannot leave the next one reading the wrong market's file.
-        _active_reader = previous_reader
+    return read_env_settings(env_path, _build_settings)
 
 
 def _build_settings(env_path: Path) -> Settings:
-    """Read and validate every setting. Called with a reader already active.
-
-    Split out of `load_settings` only so the reader can be restored in a
-    `finally` without indenting two hundred lines of validation.
-    """
+    """Read and validate every US setting. Called with a reader already active."""
     tiger_id = _get("TIGER_ID")
     account = _get("TIGER_ACCOUNT")
     paper_account = _get("TIGER_PAPER_ACCOUNT")
@@ -629,7 +900,6 @@ def _build_settings(env_path: Path) -> Settings:
     # Booleans are parsed strictly: an unrecognised value must not silently
     # collapse to the unsafe side of a lock.
     allow_live = _get_bool("TIGER_ALLOW_LIVE", default=False)
-    dry_run = _get_bool("DRY_RUN", default=True)
 
     private_key_path = _resolve_key_path(key_path_raw)
     if not private_key_path.exists():
@@ -658,194 +928,27 @@ def _build_settings(env_path: Path) -> Settings:
     api_key = _get("TIGER_API_KEY") or None
     api_host = _get("API_HOST") or "127.0.0.1"
     api_port = _get_int("API_PORT", 8000)
-    # Named PREVIEW_TOKEN_TTL_SECONDS until Phase 11 deleted preview tokens.
-    # It never described a token: it is how long a hand-typed bid stays usable.
-    # The old name is still honoured so an existing .env keeps working.
-    quote_stale_after_seconds = _get_int(
-        "QUOTE_STALE_AFTER_SECONDS",
-        _get_int("PREVIEW_TOKEN_TTL_SECONDS", 60),
-    )
 
-    # Phase 10. The tick size is the MEASURED increment, not the widely quoted
-    # "penny under $3, nickel above" convention -- that convention was tested
-    # against 32,360 real traded prices and refused. It is configurable only
-    # so a symbol class that genuinely quotes more coarsely can be handled
-    # without a code change. See docs/HANDOVER.md section 3d before touching it.
-    option_tick_size = _get_float("OPTION_TICK_SIZE", DEFAULT_OPTION_TICK_SIZE)
-    limit_buffer_ticks = _get_int("LIMIT_BUFFER_TICKS", 1)
-    if limit_buffer_ticks < 0:
-        raise ConfigError(
-            f"LIMIT_BUFFER_TICKS must be zero or more (got {limit_buffer_ticks}). "
-            "A negative buffer moves a BUY away from the market."
-        )
-    min_days_to_expiry = _get_int("MIN_DAYS_TO_EXPIRY", DEFAULT_MIN_DAYS_TO_EXPIRY)
-    if min_days_to_expiry < 0:
-        raise ConfigError(
-            f"MIN_DAYS_TO_EXPIRY must be zero or more (got {min_days_to_expiry})."
-        )
     idempotency_ttl_seconds = _get_int("IDEMPOTENCY_TTL_SECONDS", 600)
 
-    # The premium-scaled buffer. Off restores LIMIT_BUFFER_TICKS alone.
-    buffer_tiers_enabled = _get_bool("BUFFER_TIERS_ENABLED", default=True)
-    buffer_tier_floor_ticks = _get_bounded_int(
-        "BUFFER_TIER_FLOOR_TICKS", 2, minimum=0, maximum=50
-    )
-
-    # Phase 11. The seven trading decisions, read once here instead of on
-    # every request. Bounds match what TradeRequest used to enforce.
-    trade_quantity = _get_bounded_int("TRADE_QUANTITY", 1, minimum=1, maximum=1000)
-    take_profit_percent = _get_required_percent(
-        "TAKE_PROFIT_PERCENT", maximum=1000, inclusive=True
-    )
-    stop_loss_percent = _get_required_percent(
-        "STOP_LOSS_PERCENT", maximum=100, inclusive=False
-    )
-    trade_strikes_out = _get_bounded_int(
-        "TRADE_STRIKES_OUT", 1, minimum=1, maximum=10
-    )
-
-    # The most cash one order may require. Checked against the SAME figure the
-    # response reports as cash_required, so what is capped is what is shown.
-    # Rejected at startup rather than at trade time if it is nonsense: a cap of
-    # zero would refuse every order, and finding that out mid-session is worse
-    # than not starting.
-    max_trade_cash = _get_float("MAX_TRADE_CASH", 800.0)
-    if max_trade_cash <= 0:
-        raise ConfigError(
-            f"MAX_TRADE_CASH must be greater than zero (got {max_trade_cash}). "
-            "It is the most cash a single order may require; zero or less "
-            "would refuse every trade."
-        )
-
-    # Quantity scaled by premium. The bands are numbers here, not derived from
-    # the cap, so the two can drift apart -- see the check below.
-    quantity_tiers_enabled = _get_bool("QUANTITY_TIERS_ENABLED", default=False)
-    quantity_tiers = _get_quantity_tiers(
-        "QUANTITY_TIERS", QUANTITY_TIERS_DEFAULT
-    )
-    quantity_tier_top = _get_bounded_int(
-        "QUANTITY_TIER_TOP", 1, minimum=1, maximum=100
-    )
-
-    # One-click sell prices, as dollars below the live premium.
-    quick_sell_steps = _get_quick_sell_steps(
-        "QUICK_SELL_STEPS", QUICK_SELL_STEPS_DEFAULT
-    )
-
-    # The symbols offered for trading, and any per-symbol bracket overrides.
-    # The overrides are looked up BY this list, so it decides what is read.
-    trade_symbols = _get_symbol_list("TRADE_SYMBOLS", TRADE_SYMBOLS_DEFAULT)
-    symbol_take_profit = _get_symbol_percentages(
-        "_TAKE_PROFIT_PERCENT", trade_symbols, maximum=1000, inclusive=True
-    )
-    symbol_stop_loss = _get_symbol_percentages(
-        "_STOP_LOSS_PERCENT", trade_symbols, maximum=100, inclusive=False
-    )
-
-    # Bracket percentages that follow the clock. Stored as the raw text and
-    # validated here, so a malformed schedule refuses to boot rather than
-    # failing on the first trade of the evening. The page may override these
-    # later; its values go through the same parsers.
-    time_brackets_enabled = _get_bool("TIME_BRACKETS_ENABLED", default=False)
-    time_brackets_timezone = (
-        _get("TIME_BRACKETS_TIMEZONE") or TIME_BRACKETS_TIMEZONE_DEFAULT
-    )
-    time_brackets_start = _get("TIME_BRACKETS_START") or TIME_BRACKETS_START_DEFAULT
-    time_brackets_windows = (
-        _get("TIME_BRACKETS_WINDOWS") or TIME_BRACKETS_WINDOWS_DEFAULT
-    )
-
-    # Checked even when disabled: a schedule that is switched on mid-session
-    # should not be the moment its typo is discovered.
-    try:
-        parse_timezone(time_brackets_timezone)
-        parse_start(time_brackets_start)
-        parse_windows(time_brackets_windows)
-    except TimeBracketError as error:
-        raise ConfigError(f"TIME_BRACKETS: {error}") from error
-
-    # A band whose top premium times its quantity exceeds MAX_TRADE_CASH would
-    # propose orders the cap then refuses -- the table promising a size it
-    # cannot deliver. Caught at startup, because discovering it mid-session
-    # means a trade that did not happen when it was meant to.
-    if quantity_tiers_enabled:
-        for upper_bound, quantity in quantity_tiers:
-            worst_case = upper_bound * quantity * OPTION_CONTRACT_MULTIPLIER
-            if worst_case > max_trade_cash:
-                raise ConfigError(
-                    f"QUANTITY_TIERS band {upper_bound:.2f}:{quantity} can "
-                    f"need up to ${worst_case:,.2f}, over the "
-                    f"${max_trade_cash:,.2f} MAX_TRADE_CASH limit. Lower the "
-                    f"quantity, lower the bound, or raise the cap -- the two "
-                    f"are maintained by hand and must be kept in step."
-                )
-
-    # Blank means "pick the soonest expiry at least MIN_DAYS_TO_EXPIRY away".
-    # A value that is present but malformed is an error: silently falling back
-    # to auto-selection would trade a different contract than the one meant.
-    trade_expiry_date = _get("TRADE_EXPIRY_DATE") or None
-    if trade_expiry_date is not None:
-        try:
-            date.fromisoformat(trade_expiry_date)
-        except ValueError as error:
-            raise ConfigError(
-                f"TRADE_EXPIRY_DATE must be YYYY-MM-DD (got "
-                f"{trade_expiry_date!r}). Leave it blank to auto-select."
-            ) from error
-
-    leg_time_in_force = (_get("LEG_TIME_IN_FORCE") or "DAY").upper()
-    if leg_time_in_force not in VALID_TIME_IN_FORCE:
-        raise ConfigError(
-            f"LEG_TIME_IN_FORCE must be one of "
-            f"{', '.join(VALID_TIME_IN_FORCE)} (got {leg_time_in_force!r})."
-        )
-
-    require_live_trading = _get_bool("REQUIRE_LIVE_TRADING", default=False)
-
-    # Choose the most heavily held of the first few whole OTM strikes rather
-    # than counting TRADE_STRIKES_OUT positions out. Costs one extra free
-    # call; falls back to counting when open interest cannot be read.
+    trading = read_trading_settings(US_DEFAULTS)
 
     # Lock 1 and Lock 2. Raises LiveTradingBlocked rather than returning.
     mode = resolve_account_mode(account, paper_account, allow_live)
 
     return Settings(
+        market_id="US",
+        mode=mode,
         tiger_id=tiger_id,
         account=account,
         paper_account=paper_account,
         private_key_path=private_key_path,
         allow_live=allow_live,
-        dry_run=dry_run,
         license=license_code,
         market_data_source=market_data_source,
         api_key=api_key,
         api_host=api_host,
         api_port=api_port,
-        quote_stale_after_seconds=quote_stale_after_seconds,
-        option_tick_size=option_tick_size,
-        limit_buffer_ticks=limit_buffer_ticks,
-        min_days_to_expiry=min_days_to_expiry,
         idempotency_ttl_seconds=idempotency_ttl_seconds,
-        buffer_tiers_enabled=buffer_tiers_enabled,
-        buffer_tier_floor_ticks=buffer_tier_floor_ticks,
-        trade_quantity=trade_quantity,
-        take_profit_percent=take_profit_percent,
-        stop_loss_percent=stop_loss_percent,
-        trade_strikes_out=trade_strikes_out,
-        max_trade_cash=max_trade_cash,
-        quantity_tiers_enabled=quantity_tiers_enabled,
-        quantity_tiers=quantity_tiers,
-        quantity_tier_top=quantity_tier_top,
-        quick_sell_steps=quick_sell_steps,
-        trade_symbols=trade_symbols,
-        symbol_take_profit=symbol_take_profit,
-        symbol_stop_loss=symbol_stop_loss,
-        time_brackets_enabled=time_brackets_enabled,
-        time_brackets_timezone=time_brackets_timezone,
-        time_brackets_start=time_brackets_start,
-        time_brackets_windows=time_brackets_windows,
-        trade_expiry_date=trade_expiry_date,
-        leg_time_in_force=leg_time_in_force,
-        require_live_trading=require_live_trading,
-        mode=mode,
+        **trading,
     )

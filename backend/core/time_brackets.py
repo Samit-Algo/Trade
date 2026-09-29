@@ -48,6 +48,20 @@ MARKET_TIMEZONE = ZoneInfo("US/Eastern")
 MARKET_OPEN_TIME = time(9, 30)
 MARKET_CLOSE_TIME = time(16, 0)
 
+
+@dataclass(frozen=True)
+class Session:
+    """When a market trades, on its own clock. What MARKET_OPEN resolves to."""
+
+    timezone: ZoneInfo
+    opens: time
+    closes: time
+
+
+#: The US options session. The default wherever no market is named, so every
+#: caller written before there was more than one market means this.
+US_SESSION = Session(MARKET_TIMEZONE, MARKET_OPEN_TIME, MARKET_CLOSE_TIME)
+
 #: How long the schedule runs when the start is a fixed clock time rather
 #: than MARKET_OPEN. A fixed start has no calendar to close against, so the
 #: session is taken to be a normal trading day's length.
@@ -335,7 +349,9 @@ def parse_windows(raw: str) -> tuple[TimeWindow, ...]:
     return tuple(windows)
 
 
-def session_start(moment: datetime, start: time | None) -> datetime:
+def session_start(
+    moment: datetime, start: time | None, session: Session = US_SESSION
+) -> datetime:
     """Work out when the schedule begins on the day of `moment`.
 
     A session that began before local midnight still belongs to `moment`:
@@ -346,18 +362,20 @@ def session_start(moment: datetime, start: time | None) -> datetime:
     Args:
         moment: Any instant, in any zone. Its date in the RELEVANT zone
             decides which session is meant.
-        start: A clock time in the display zone, or None for the US open.
+        start: A clock time in the display zone, or None for the market's
+            open.
+        session: The market whose open None means.
 
     Returns:
         The start, as an aware datetime.
     """
     if start is None:
-        # The US session's own calendar day, not the local one. At 19:00 in
+        # The market's own calendar day, not the local one. At 19:00 in
         # Kolkata it is still the morning in New York, and it is that
         # morning's open the window belongs to.
-        in_new_york = moment.astimezone(MARKET_TIMEZONE)
+        in_market = moment.astimezone(session.timezone)
         return datetime.combine(
-            in_new_york.date(), MARKET_OPEN_TIME, tzinfo=MARKET_TIMEZONE
+            in_market.date(), session.opens, tzinfo=session.timezone
         )
 
     today = datetime.combine(moment.date(), start, tzinfo=moment.tzinfo)
@@ -370,7 +388,9 @@ def session_start(moment: datetime, start: time | None) -> datetime:
     return today
 
 
-def session_end(opened: datetime, start: time | None) -> datetime:
+def session_end(
+    opened: datetime, start: time | None, session: Session = US_SESSION
+) -> datetime:
     """Work out when the session the schedule belongs to finishes.
 
     The final `*` window runs to the close, not for ever. Without an end,
@@ -379,14 +399,15 @@ def session_end(opened: datetime, start: time | None) -> datetime:
     Args:
         opened: When the schedule began, aware.
         start: The configured start, to tell the two cases apart.
+        session: The market whose close ends a MARKET_OPEN schedule.
 
     Returns:
         The close, as an aware datetime.
     """
     if start is None:
-        in_new_york = opened.astimezone(MARKET_TIMEZONE)
+        in_market = opened.astimezone(session.timezone)
         return datetime.combine(
-            in_new_york.date(), MARKET_CLOSE_TIME, tzinfo=MARKET_TIMEZONE
+            in_market.date(), session.closes, tzinfo=session.timezone
         )
 
     return opened + timedelta(minutes=FIXED_SESSION_MINUTES)
@@ -398,14 +419,16 @@ def resolve(
     windows: tuple[TimeWindow, ...],
     start: time | None,
     display_timezone: ZoneInfo,
+    session: Session = US_SESSION,
 ) -> ActiveWindow | None:
     """Find the window a moment falls in.
 
     Args:
         moment: When the order is being built. Aware; any zone.
         windows: The parsed table.
-        start: A clock time in the display zone, or None for the US open.
+        start: A clock time in the display zone, or None for the market's open.
         display_timezone: The zone the caller reads times in.
+        session: The market being traded, for what MARKET_OPEN means.
 
     Returns:
         The active window, or None when `moment` falls outside the session.
@@ -416,7 +439,7 @@ def resolve(
         return None
 
     local_now = moment.astimezone(display_timezone)
-    opened = session_start(local_now, start).astimezone(display_timezone)
+    opened = session_start(local_now, start, session).astimezone(display_timezone)
 
     if local_now < opened:
         return None
@@ -424,7 +447,7 @@ def resolve(
     # The last window has no end of its own, so without this it would still
     # be "active" at breakfast the next morning -- the previous session's
     # final window, hours after the market shut. The session closes it.
-    if local_now >= session_end(opened, start):
+    if local_now >= session_end(opened, start, session):
         return None
 
     elapsed = (local_now - opened).total_seconds() / 60

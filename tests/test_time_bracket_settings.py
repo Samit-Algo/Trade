@@ -35,10 +35,12 @@ class FakeSettings:
 
 @pytest.fixture
 def store_path(tmp_path, monkeypatch):
-    """Point the store at a temporary file, never the real one."""
-    path = tmp_path / "time_bracket_settings.json"
-    monkeypatch.setattr(store, "SETTINGS_PATH", path)
-    return path
+    """Point every market's state at a temporary folder, never the real one."""
+    from backend.core import paths
+
+    monkeypatch.setattr(paths, "STATE_DIRECTORY", tmp_path)
+    (tmp_path / "us").mkdir()
+    return tmp_path / "us" / "time_bracket_settings.json"
 
 
 # ---------------------------------------------------------------------------

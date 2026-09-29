@@ -40,9 +40,19 @@ from .time_brackets import (
     parse_windows,
 )
 
-#: Beside .env and symbol_settings.json, and gitignored for the same reason:
-#: it is this machine's operating state, not part of the project.
-SETTINGS_PATH = paths.TIME_BRACKET_SETTINGS_PATH
+#: In state/<market>/, gitignored: this machine's operating state, not part
+#: of the project. One file per market -- see paths.state_file.
+FILENAME = "time_bracket_settings.json"
+
+
+def settings_path(market_id: str = "US") -> Path:
+    """This market's file."""
+    return paths.state_file(market_id, FILENAME)
+
+
+def _market_of(settings) -> str:
+    """The market a settings object belongs to; US for one that predates markets."""
+    return getattr(settings, "market_id", "US")
 
 #: Reads and writes are serialised, as in symbol_settings.py. Two tabs saving
 #: at once would otherwise interleave a read-modify-write and lose one.
@@ -79,22 +89,26 @@ class Schedule:
         return format_windows(self.windows)
 
 
-def read_stored() -> dict | None:
-    """Return the saved schedule, unparsed.
+def read_stored(market_id: str = "US") -> dict | None:
+    """Return one market's saved schedule, unparsed.
 
     A missing or unreadable file is not an error. This is an overlay on top
     of .env, and its absence means "nothing overridden" -- refusing to trade
     because a convenience file is malformed would be worse than ignoring it.
 
+    Args:
+        market_id: Which market's schedule.
+
     Returns:
         The stored fields, or None when nothing is stored.
     """
+    path = settings_path(market_id)
     with _lock:
-        if not SETTINGS_PATH.exists():
+        if not path.exists():
             return None
 
         try:
-            stored = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            stored = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -118,12 +132,12 @@ def effective(settings) -> Schedule:
     malformed file does.
 
     Args:
-        settings: The loaded configuration.
+        settings: The market's loaded configuration.
 
     Returns:
         The schedule, saying which of the two it came from.
     """
-    stored = read_stored()
+    stored = read_stored(_market_of(settings))
 
     if stored is not None:
         try:
@@ -176,7 +190,12 @@ def _build(
 
 
 def save(
-    *, enabled: bool, timezone_name: str, start_text: str, windows_text: str
+    *,
+    enabled: bool,
+    timezone_name: str,
+    start_text: str,
+    windows_text: str,
+    market_id: str = "US",
 ) -> Schedule:
     """Store a schedule, replacing whatever was there.
 
@@ -188,6 +207,7 @@ def save(
         timezone_name: An IANA name, e.g. Asia/Kolkata.
         start_text: MARKET_OPEN or a 24-hour HH:MM.
         windows_text: minutes:take_profit:stop_loss entries, ending in *.
+        market_id: Which market's schedule.
 
     Returns:
         The schedule as stored.
@@ -212,12 +232,13 @@ def save(
         "windows": schedule.windows_text,
     }
 
+    path = settings_path(market_id)
     with _lock:
-        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         handle = tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
-            dir=SETTINGS_PATH.parent,
+            dir=path.parent,
             prefix=".time_bracket_settings-",
             suffix=".tmp",
             delete=False,
@@ -225,7 +246,7 @@ def save(
         try:
             with handle:
                 json.dump(entry, handle, indent=2, sort_keys=True)
-            Path(handle.name).replace(SETTINGS_PATH)
+            Path(handle.name).replace(path)
         except Exception:
             Path(handle.name).unlink(missing_ok=True)
             raise
@@ -233,11 +254,11 @@ def save(
     return schedule
 
 
-def clear() -> None:
-    """Forget the saved schedule, so .env comes back.
+def clear(market_id: str = "US") -> None:
+    """Forget one market's saved schedule, so its settings file comes back.
 
     Deleting rather than overwriting is deliberate: it restores .env as it
     is READ, including any later edit to it.
     """
     with _lock:
-        SETTINGS_PATH.unlink(missing_ok=True)
+        settings_path(market_id).unlink(missing_ok=True)

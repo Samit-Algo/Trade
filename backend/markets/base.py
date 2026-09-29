@@ -24,6 +24,16 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from backend.core.time_brackets import Session
+
+
+class UnknownMarket(Exception):
+    """A request named a market this service does not trade."""
+
+
+class MarketNotReady(Exception):
+    """The market is configured, but cannot do this yet. Nothing was sent."""
+
 
 @dataclass(frozen=True)
 class MarketProfile:
@@ -31,12 +41,27 @@ class MarketProfile:
 
     id: str               # "US" -- what a request names it by
     name: str             # for people, e.g. "US options (Tiger)"
-    timezone: ZoneInfo    # the exchange's clock; a trading day is ITS day
     currency: str         # "USD"
+    currency_symbol: str  # "$" -- for messages and the page
+    session: Session      # when it trades, on its own clock
+
+    #: Units one contract controls when an order does not say. A US option
+    #: is 100 shares. Where a broker counts quantity in units already -- as
+    #: Indian F&O does, in multiples of the lot -- this is 1.
+    contract_multiplier: float
+
+    @property
+    def timezone(self) -> ZoneInfo:
+        """The exchange's clock. A trading day is ITS day."""
+        return self.session.timezone
 
     def today(self) -> date:
         """The trading day it is now, on the exchange's own clock."""
         return datetime.now(self.timezone).date()
+
+    def money(self, amount: float) -> str:
+        """An amount in this market's currency, e.g. "$800.00" or "₹10,000.00"."""
+        return f"{self.currency_symbol}{amount:,.2f}"
 
 
 @dataclass(frozen=True)
@@ -72,6 +97,14 @@ class Market(ABC):
     """A market this service can trade, behind one set of endpoints."""
 
     profile: MarketProfile
+
+    #: The market's own trading settings -- a TradingSettings from its file.
+    settings: object
+
+    #: False while the market is configured but cannot trade yet. Its
+    #: settings, symbols and switches still work; the broker calls raise
+    #: MarketNotReady.
+    ready: bool = True
 
     # -- reading. Nothing below can place an order. -------------------------
 

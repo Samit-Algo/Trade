@@ -41,6 +41,38 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 @pytest.fixture
+def fake_env(tmp_path, monkeypatch):
+    """Build the app from a throwaway .env, never the developer's real one.
+
+    Building the app loads settings, and settings are read from .env at the
+    project root. Tests that did that passed only on a machine with a real,
+    filled-in .env -- and read an account number to do it. This points the
+    loader at a file of obvious dummies instead, with the paper account
+    matching so the account resolves to PAPER.
+    """
+    from backend.api import shared
+    from backend.core import config
+
+    (tmp_path / "key.pem").write_text("MIIBdummykeymaterial\n", encoding="utf-8")
+    (tmp_path / ".env").write_text(
+        "\n".join([
+            "TIGER_ID=test",
+            "TIGER_ACCOUNT=12345",
+            "TIGER_PAPER_ACCOUNT=12345",
+            "TIGER_PRIVATE_KEY_PATH=./key.pem",
+            "TIGER_API_KEY=test-key",
+            "TAKE_PROFIT_PERCENT=10",
+            "STOP_LOSS_PERCENT=10",
+        ]),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(shared, "_settings", None)
+    monkeypatch.setattr(shared, "_markets", {})
+    return tmp_path
+
+
+@pytest.fixture
 def source_of():
     """Return a function that reads a module's source code as text.
 

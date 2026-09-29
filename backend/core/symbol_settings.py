@@ -27,9 +27,14 @@ from pathlib import Path
 
 from . import paths
 
-#: In state/, gitignored: it is this machine's operating state, not part of
-#: the project.
-SETTINGS_PATH = paths.SYMBOL_SETTINGS_PATH
+#: In state/<market>/, gitignored: this machine's operating state, not part
+#: of the project. One file per market -- see paths.state_file.
+FILENAME = "symbol_settings.json"
+
+
+def settings_path(market_id: str = "US") -> Path:
+    """This market's file."""
+    return paths.state_file(market_id, FILENAME)
 
 #: Reads and writes are serialised. Two browser tabs saving at once would
 #: otherwise interleave a read-modify-write and lose one of them.
@@ -45,22 +50,26 @@ def _blank() -> dict:
     return {"enabled": True, "take_profit": None, "stop_loss": None}
 
 
-def read_all() -> dict:
-    """Return every stored symbol setting.
+def read_all(market_id: str = "US") -> dict:
+    """Return every stored symbol setting for one market.
 
     A missing or unreadable file is not an error. This is an overlay on top of
     .env, and its absence means "nothing overridden" -- refusing to start
     because a convenience file is malformed would be worse than ignoring it.
 
+    Args:
+        market_id: Which market's symbols.
+
     Returns:
         A mapping of symbol to its settings. Empty when nothing is stored.
     """
+    path = settings_path(market_id)
     with _lock:
-        if not SETTINGS_PATH.exists():
+        if not path.exists():
             return {}
 
         try:
-            stored = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            stored = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return {}
 
@@ -74,19 +83,20 @@ def read_all() -> dict:
         }
 
 
-def read_for(symbol: str) -> dict:
+def read_for(symbol: str, market_id: str = "US") -> dict:
     """Return one symbol's settings, or the untouched defaults.
 
     Args:
         symbol: The underlying.
+        market_id: The market it trades in.
 
     Returns:
         Its settings. Enabled, with no overrides, when nothing is stored.
     """
-    return read_all().get(symbol.strip().upper(), _blank())
+    return read_all(market_id).get(symbol.strip().upper(), _blank())
 
 
-def is_enabled(symbol: str) -> bool:
+def is_enabled(symbol: str, market_id: str = "US") -> bool:
     """Whether new trades are allowed on this symbol.
 
     Defaults to True: a symbol in TRADE_SYMBOLS with nothing stored is
@@ -94,11 +104,12 @@ def is_enabled(symbol: str) -> bool:
 
     Args:
         symbol: The underlying.
+        market_id: The market it trades in.
 
     Returns:
         False only when it has been explicitly disabled.
     """
-    return bool(read_for(symbol).get("enabled", True))
+    return bool(read_for(symbol, market_id).get("enabled", True))
 
 
 def _check_percent(value, name: str, *, maximum: float, inclusive: bool):
@@ -137,7 +148,9 @@ def _check_percent(value, name: str, *, maximum: float, inclusive: bool):
     return number
 
 
-def save(symbol: str, *, enabled: bool, take_profit, stop_loss) -> dict:
+def save(
+    symbol: str, *, enabled: bool, take_profit, stop_loss, market_id: str = "US"
+) -> dict:
     """Store one symbol's settings, replacing whatever was there.
 
     Written to a temporary file and moved into place, so an interrupted write
@@ -149,6 +162,7 @@ def save(symbol: str, *, enabled: bool, take_profit, stop_loss) -> dict:
         enabled: False to refuse NEW trades on it. Closing is unaffected.
         take_profit: Percent, or None to fall back to .env.
         stop_loss: Percent, or None to fall back to .env.
+        market_id: The market it trades in.
 
     Returns:
         The settings as stored.
@@ -168,15 +182,16 @@ def save(symbol: str, *, enabled: bool, take_profit, stop_loss) -> dict:
         ),
     }
 
+    path = settings_path(market_id)
     with _lock:
-        stored = read_all()
+        stored = read_all(market_id)
         stored[wanted] = entry
 
-        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         handle = tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
-            dir=SETTINGS_PATH.parent,
+            dir=path.parent,
             prefix=".symbol_settings-",
             suffix=".tmp",
             delete=False,
@@ -184,7 +199,7 @@ def save(symbol: str, *, enabled: bool, take_profit, stop_loss) -> dict:
         try:
             with handle:
                 json.dump(stored, handle, indent=2, sort_keys=True)
-            Path(handle.name).replace(SETTINGS_PATH)
+            Path(handle.name).replace(path)
         except Exception:
             Path(handle.name).unlink(missing_ok=True)
             raise

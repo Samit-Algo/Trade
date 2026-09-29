@@ -31,17 +31,27 @@ from pathlib import Path
 
 from . import paths
 
-#: Beside the other page-editable state, and gitignored for the same reason:
-#: it is this machine's operating state, not part of the project.
-SETTINGS_PATH = paths.ARMED_SETTINGS_PATH
+#: In state/<market>/, gitignored: this machine's operating state, not part
+#: of the project. One file per market -- see paths.state_file.
+FILENAME = "armed_settings.json"
+
+
+def settings_path(market_id: str = "US") -> Path:
+    """This market's file."""
+    return paths.state_file(market_id, FILENAME)
+
+
+def _market_of(settings) -> str:
+    """The market a settings object belongs to; US for one that predates markets."""
+    return getattr(settings, "market_id", "US")
 
 #: Reads and writes are serialised, as in symbol_settings.py. Two tabs
 #: flipping at once would otherwise interleave a read-modify-write.
 _lock = threading.RLock()
 
 
-def read_stored() -> bool | None:
-    """Return the stored dry-run state, or None when nothing is stored.
+def read_stored(market_id: str = "US") -> bool | None:
+    """Return one market's stored dry-run state, or None when nothing is stored.
 
     A missing or unreadable file is not an error: it means "nothing
     overridden", and .env decides. Refusing to trade because a convenience
@@ -49,15 +59,19 @@ def read_stored() -> bool | None:
     that falls. Ignoring it leaves .env in charge, and .env defaults to dry
     run, so a corrupt file can only ever make this SAFER.
 
+    Args:
+        market_id: Which market's switch.
+
     Returns:
         True for dry run, False for armed, None when unset.
     """
+    path = settings_path(market_id)
     with _lock:
-        if not SETTINGS_PATH.exists():
+        if not path.exists():
             return None
 
         try:
-            stored = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            stored = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -75,12 +89,13 @@ def is_dry(settings) -> bool:
     startup value can never be read in different places.
 
     Args:
-        settings: The loaded configuration, for the .env fallback.
+        settings: The market's loaded configuration: which market it is, and
+            the .env fallback.
 
     Returns:
         True when nothing may be sent.
     """
-    stored = read_stored()
+    stored = read_stored(_market_of(settings))
     if stored is not None:
         return stored
     return settings.dry_run
@@ -95,13 +110,13 @@ def describe(settings) -> tuple[bool, str]:
     Returns:
         A pair of (dry run, "the UI" or ".env").
     """
-    stored = read_stored()
+    stored = read_stored(_market_of(settings))
     if stored is not None:
         return stored, "the UI"
     return settings.dry_run, ".env"
 
 
-def save(dry_run: bool) -> bool:
+def save(dry_run: bool, market_id: str = "US") -> bool:
     """Store the switch, overriding .env until it is cleared.
 
     Written to a temporary file and moved into place, so an interrupted
@@ -110,16 +125,18 @@ def save(dry_run: bool) -> bool:
 
     Args:
         dry_run: True to block orders, False to arm.
+        market_id: Which market's switch. Arming one arms no other.
 
     Returns:
         What was stored.
     """
+    path = settings_path(market_id)
     with _lock:
-        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         handle = tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
-            dir=SETTINGS_PATH.parent,
+            dir=path.parent,
             prefix=".armed_settings-",
             suffix=".tmp",
             delete=False,
@@ -127,7 +144,7 @@ def save(dry_run: bool) -> bool:
         try:
             with handle:
                 json.dump({"dry_run": bool(dry_run)}, handle, indent=2)
-            Path(handle.name).replace(SETTINGS_PATH)
+            Path(handle.name).replace(path)
         except Exception:
             Path(handle.name).unlink(missing_ok=True)
             raise
@@ -135,11 +152,11 @@ def save(dry_run: bool) -> bool:
     return bool(dry_run)
 
 
-def clear() -> None:
-    """Forget the switch, so .env decides again.
+def clear(market_id: str = "US") -> None:
+    """Forget one market's switch, so its settings file decides again.
 
     Deleting rather than writing a copy of .env restores .env as it is READ,
     including any later edit to it.
     """
     with _lock:
-        SETTINGS_PATH.unlink(missing_ok=True)
+        settings_path(market_id).unlink(missing_ok=True)

@@ -31,6 +31,7 @@ from backend.services.order import BracketError, OrderSubmissionError
 from backend.services.order import PricingError
 from backend.services.market import QuoteEntryError
 from backend.core.safety import LiveTradingBlocked
+from backend.markets.base import MarketNotReady, UnknownMarket
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,9 @@ EXCEPTION_MAP: tuple[tuple[type, int, str], ...] = (
     # The broker refused, which is upstream of us.
     (OrderSubmissionError, 502, "UPSTREAM_REJECTED"),
     (MarketDataError, 502, "UPSTREAM_NO_DATA"),
+    # A market that is not traded here, and one configured but not built.
+    (UnknownMarket, 404, "UNKNOWN_MARKET"),
+    (MarketNotReady, 503, "MARKET_NOT_READY"),
 )
 
 

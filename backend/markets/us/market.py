@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import threading
 from datetime import date
-from zoneinfo import ZoneInfo
 
 from tigeropen.common.consts import SecurityType
 
@@ -27,6 +26,8 @@ from backend.markets.us.broker import (
     build_quote_client,
     build_trade_client,
 )
+
+from backend.core.time_brackets import US_SESSION
 
 from ..base import BrokerOrder, Market, MarketProfile
 from .bars import fetch_minute_bars
@@ -44,8 +45,10 @@ from .submit import buy_option_with_bracket, sell_option
 PROFILE = MarketProfile(
     id="US",
     name="US options (Tiger)",
-    timezone=ZoneInfo("America/New_York"),
     currency="USD",
+    currency_symbol="$",
+    session=US_SESSION,
+    contract_multiplier=100.0,
 )
 
 

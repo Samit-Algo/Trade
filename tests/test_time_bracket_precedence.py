@@ -39,10 +39,11 @@ def no_stored_settings(tmp_path, monkeypatch):
     NVDA is tuned in it, which would make the "nothing stored" cases pass
     or fail depending on whose machine they run on.
     """
-    monkeypatch.setattr(
-        symbol_settings, "SETTINGS_PATH", tmp_path / "symbol_settings.json"
-    )
-    return tmp_path / "symbol_settings.json"
+    from backend.core import paths
+
+    monkeypatch.setattr(paths, "STATE_DIRECTORY", tmp_path)
+    (tmp_path / "us").mkdir()
+    return tmp_path / "us" / "symbol_settings.json"
 
 
 @pytest.fixture

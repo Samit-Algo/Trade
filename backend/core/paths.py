@@ -42,16 +42,26 @@ PRICE_LOG_DIRECTORY = LOG_DIRECTORY / "prices"
 
 #: What a human changed from the page without a restart: this machine's
 #: operating state, not part of the project. Gitignored, like the logs.
+#: One folder per market, because arming US must not arm India:
+#:
+#:     state/us/armed_settings.json          the SAFE/ARMED switch
+#:     state/us/symbol_settings.json         per-symbol enable and brackets
+#:     state/us/time_bracket_settings.json   the clock-following schedule
+#:     state/in/...                          the same, for India
 STATE_DIRECTORY = PROJECT_ROOT / "state"
 
-#: Per-symbol enable/disable and bracket overrides, editable from the page
-#: without a restart. Gitignored for the same reason as the logs.
-SYMBOL_SETTINGS_PATH = STATE_DIRECTORY / "symbol_settings.json"
 
-#: The clock-following bracket schedule, when it has been changed from the
-#: page. Absent means the TIME_BRACKETS_* values in .env are in force.
-TIME_BRACKET_SETTINGS_PATH = STATE_DIRECTORY / "time_bracket_settings.json"
+def state_file(market_id: str, name: str) -> Path:
+    """Where one market keeps one piece of page-saved state.
 
-#: The arming switch, when it has been flipped from the page. Absent means
-#: DRY_RUN in .env is in force.
-ARMED_SETTINGS_PATH = STATE_DIRECTORY / "armed_settings.json"
+    Reads STATE_DIRECTORY at call time, so a test can point every market's
+    state somewhere else by replacing that one name.
+
+    Args:
+        market_id: e.g. "US" or "IN".
+        name: The file, e.g. "armed_settings.json".
+
+    Returns:
+        state/<market, lower case>/<name>.
+    """
+    return STATE_DIRECTORY / market_id.strip().lower() / name

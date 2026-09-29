@@ -155,7 +155,7 @@ class FakeMarket:
 
 
 class TestTheEndpoint:
-    def test_spot_is_registered(self):
+    def test_spot_is_registered(self, fake_env):
         from backend.main import create_app
 
         assert "/spot/{underlying}" in create_app().openapi()["paths"]

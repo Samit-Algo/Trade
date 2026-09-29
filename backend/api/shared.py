@@ -22,7 +22,7 @@ from pathlib import Path
 
 from backend.core import armed, paths
 from backend.core.config import Settings, load_settings
-from backend.markets.base import Market
+from backend.markets.base import Market, UnknownMarket
 
 from .order_rules import IdempotencyStore
 
@@ -50,31 +50,62 @@ def get_settings() -> Settings:
         return _settings
 
 
-#: The markets this service can trade. Only US so far.
+#: A request that names no market means this one, so every caller written
+#: before there was a second market -- the TradingView userscript included --
+#: keeps meaning what it meant.
 DEFAULT_MARKET = "US"
 
 
-def get_market(market_id: str = DEFAULT_MARKET) -> Market:
+def available_markets() -> list[str]:
+    """The markets this service trades, in the order the page lists them.
+
+    US always. India when config/india.env exists -- the file is what turns
+    it on, so deleting it turns India off without touching code.
+    """
+    from backend.markets.india.config import india_env_path
+
+    return ["US"] + (["IN"] if india_env_path().exists() else [])
+
+
+def get_market(market_id: str | None = DEFAULT_MARKET) -> Market:
     """Return the market a request is about, built once.
 
+    THE REGISTRY: the one place a market is chosen by name. Everything else
+    asks this and never imports a market's folder.
+
     Args:
-        market_id: Which market, e.g. "US".
+        market_id: Which market, e.g. "US" or "IN". None or blank means US.
 
     Returns:
         The Market. Its broker clients are built on first use, not here.
 
     Raises:
-        KeyError: For a market this service does not trade.
+        UnknownMarket: For a market this service does not trade.
+        ConfigError: When the market's settings file cannot be used.
     """
-    wanted = market_id.strip().upper()
+    wanted = (market_id or DEFAULT_MARKET).strip().upper()
     with _lock:
         if wanted not in _markets:
-            if wanted != "US":
-                raise KeyError(f"No market named {market_id!r}.")
-            from backend.markets.us.market import UsMarket
-
-            _markets[wanted] = UsMarket(get_settings())
+            if wanted not in available_markets():
+                raise UnknownMarket(
+                    f"No market named {market_id!r}. This service trades: "
+                    f"{', '.join(available_markets())}."
+                )
+            _markets[wanted] = _build_market(wanted)
         return _markets[wanted]
+
+
+def _build_market(market_id: str) -> Market:
+    """Construct one market from its settings. Called under the lock."""
+    if market_id == "US":
+        from backend.markets.us.market import UsMarket
+
+        return UsMarket(get_settings())
+
+    from backend.markets.india.config import load_india_settings
+    from backend.markets.india.market import IndiaMarket
+
+    return IndiaMarket(load_india_settings())
 
 
 def get_idempotency_store() -> IdempotencyStore:

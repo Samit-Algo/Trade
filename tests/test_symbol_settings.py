@@ -25,10 +25,12 @@ from backend.core.symbol_settings import SymbolSettingsError  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def store(tmp_path, monkeypatch):
-    """Point the store at a temporary file, never the real one."""
-    path = tmp_path / "symbol_settings.json"
-    monkeypatch.setattr(symbol_settings, "SETTINGS_PATH", path)
-    return path
+    """Point every market's state at a temporary folder, never the real one."""
+    from backend.core import paths
+
+    monkeypatch.setattr(paths, "STATE_DIRECTORY", tmp_path)
+    (tmp_path / "us").mkdir()
+    return tmp_path / "us" / "symbol_settings.json"
 
 
 class TestDefaults:
@@ -150,7 +152,9 @@ class TestTheFileItself:
         ignored = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
 
         assert "state/" in ignored
-        assert paths.SYMBOL_SETTINGS_PATH.parent == PROJECT_ROOT / "state"
+        # Under state/, one folder per market.
+        assert paths.state_file("US", "x") == paths.STATE_DIRECTORY / "us" / "x"
+        assert paths.state_file("IN", "x") == paths.STATE_DIRECTORY / "in" / "x"
 
     def test_no_temporary_file_is_left_behind(self, store):
         """Written to a temp file and moved, so an interrupted write cannot
