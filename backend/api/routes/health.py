@@ -63,6 +63,7 @@ def read_markets() -> MarketsResponse:
                 trade_symbols=list(settings.trade_symbols),
                 quick_sell_steps=list(settings.quick_sell_steps),
                 option_tick_size=settings.option_tick_size,
+                alerts=market.alerts(),
             )
         )
     return MarketsResponse(default=DEFAULT_MARKET, markets=rows)

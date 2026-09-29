@@ -249,6 +249,9 @@ def close_position(body: ClosePositionRequest, request: Request) -> ClosePositio
     # fills there is no stop on this position, which is the price of closing
     # it at all -- and it is why a failed sell below says so explicitly.
 
+    # A market that watches exits itself must stop before they are cancelled,
+    # or it could send a take-profit SELL alongside this one.
+    market.release_protection(identifier)
     cancelled_legs, stubborn_legs = cancel_resting_legs(identifier, market)
 
     # ---- from here the order can reach the broker -------------------------

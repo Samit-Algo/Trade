@@ -138,7 +138,10 @@ def build_order_record(
         "stage": stage,
         # SIMULATED records must never be mistakable for submitted ones.
         "submitted": False if stage == "SIMULATED" else None,
-        "account_masked": mask_account(settings.account),
+        # Every market says which it is; only the US has an account number
+        # of its own here -- India's lives in OpenAlgo.
+        "market": getattr(settings, "market_id", "US"),
+        "account_masked": mask_account(getattr(settings, "account", "") or ""),
         "mode": settings.mode,
         # The live switch, not the startup value: the audit log has to
         # say what was in force when THIS order was built.

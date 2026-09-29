@@ -93,8 +93,10 @@ class TestIndiaBeforeItCanTrade:
         assert sorted(IndiaMarket.__abstractmethods__) == []
         assert issubclass(IndiaMarket, Market)
 
-    def test_every_broker_call_refuses_rather_than_pretends(self, india_on):
-        """Nothing about India may place an order, or claim to have read one."""
+    def test_without_a_key_every_broker_call_refuses(self, india_on):
+        """Nothing about India may place an order, or claim to have read one,
+        before OPENALGO_API_KEY is set. Reading a contract name needs no
+        broker, so it is the one exception."""
         import inspect
 
         from backend.api.shared import get_market
@@ -103,7 +105,7 @@ class TestIndiaBeforeItCanTrade:
         market = get_market("IN")
         assert market.ready is False
 
-        for name in sorted(Market.__abstractmethods__):
+        for name in sorted(Market.__abstractmethods__ - {"parse_identifier"}):
             method = getattr(market, name)
             arguments = [
                 p for p in inspect.signature(method).parameters.values()

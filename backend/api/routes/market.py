@@ -85,7 +85,7 @@ def read_spot_price(
         is_live=spot.is_live,
         source=spot.source,
         note=(
-            f"Live from Yahoo, {spot.age_seconds:.0f}s old."
+            f"Live from {spot.source.title()}, {spot.age_seconds:.0f}s old."
             if spot.is_live
             else "Market is closed; this is the last trade being held, not a "
                  "currently-trading price."

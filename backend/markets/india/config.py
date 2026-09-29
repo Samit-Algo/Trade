@@ -89,6 +89,9 @@ class IndiaSettings(TradingSettings):
     exchange: str   # "NFO"
     product: str    # "NRML" or "MIS"
     lot_size: int   # for the startup band check only; see the module doc
+    exit_slippage_ticks: int    # how far under its price an exit SELL is set
+    stuck_exit_seconds: int     # an exit unfilled this long goes to MARKET
+    exit_poll_seconds: float    # how often the exits are checked
 
 
 def load_india_settings(env_file: Path | str | None = None) -> IndiaSettings:
@@ -134,5 +137,11 @@ def _build_india_settings(env_path: Path) -> IndiaSettings:
         exchange=(setting("EXCHANGE") or "NFO").upper(),
         product=product,
         lot_size=lot_size,
+        exit_slippage_ticks=setting_bounded_int(
+            "EXIT_SLIPPAGE_TICKS", 20, minimum=0, maximum=200),
+        stuck_exit_seconds=setting_bounded_int(
+            "STUCK_EXIT_SECONDS", 10, minimum=2, maximum=300),
+        exit_poll_seconds=float(setting_bounded_int(
+            "EXIT_POLL_SECONDS", 1, minimum=1, maximum=30)),
         **trading,
     )

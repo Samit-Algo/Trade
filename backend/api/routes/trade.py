@@ -662,8 +662,10 @@ def build_response(
         price_source=plan.price_source,
         prices=shape_bracket_prices(plan.calculation),
         cash_required=plan.estimate.total_cash,
-        commission=shape_commission(
-            plan.quantity, plan.estimate.multiplier
+        # Fitted to Tiger's own charges; no other market's are measured yet.
+        commission=(
+            shape_commission(plan.quantity, plan.estimate.multiplier)
+            if getattr(settings, "market_id", "US") == "US" else None
         ),
         order_status=order_status,
         parent_filled=parent_filled,

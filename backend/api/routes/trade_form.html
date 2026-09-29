@@ -1068,6 +1068,9 @@ async function loadStatus() {
         && (m.mode ?? server.mode) === "PAPER",
     };
     const envFile = currentMarket === "US" ? ".env" : "config/india.env";
+    // Anything left unprotected, from ANY market -- a problem on India
+    // matters just as much while the page is showing the US.
+    const alerts = markets.flatMap(x => (x.alerts || []).map(a => `${x.id} -- ${a}`));
 
     const canTrade = h.orders_enabled;
     const place = $("place");
@@ -1084,7 +1087,10 @@ async function loadStatus() {
       : `DRY_RUN is true in ${envFile}, so every price is worked out and nothing `
         + "is sent. Arm the switch above to trade for real.";
 
-    strip.innerHTML = `
+    strip.innerHTML = (alerts.length ? `
+      <span class="pill no" title="${alerts.join(" | ").replace(/"/g, "&quot;")}">
+        <span class="k">ATTENTION</span><span class="v">${alerts.length} position(s) need you</span></span>` : "")
+      + `
       <span class="pill ${canTrade ? "ok" : "no"}">
         <span class="k">Orders</span><span class="v">${canTrade ? "ENABLED" : "BLOCKED"}</span></span>
       <button type="button" class="armsw ${h.dry_run ? "disarmed" : "on"}" id="armswitch"
@@ -1105,6 +1111,7 @@ async function loadStatus() {
     // knowing whatever you have scrolled to.
     wireArmSwitch(h.dry_run);
 
+    if (alerts.length) $("realnote").textContent = "ATTENTION: " + alerts.join(" | ");
     setRail(
       (canTrade ? "Armed" : "Safe") + (markets.length > 1 ? ` · ${currentMarket}` : ""),
       h.mode === "PAPER" ? "Paper trading mode" : "LIVE account",
@@ -3235,7 +3242,8 @@ function renderOk(data, exactOrderId) {
           &nbsp;${cur()}${money(data.price_source.price)}</td></tr>
       <tr><td>Buffer applied</td><td>+${data.tick.buffer_ticks} tick of ${data.tick.tick_size}</td></tr>
       <tr><td>Cash needed</td><td>${cur()}${money(data.cash_required)}</td></tr>
-      <tr><td>Commission round trip</td><td>${cur()}${money(data.commission.round_trip)}</td></tr>
+      <tr><td>Commission round trip</td><td>${data.commission
+          ? cur() + money(data.commission.round_trip) : "not estimated for this market"}</td></tr>
       <tr><td>Legs sent</td><td>${(data.legs_submitted || []).map(l =>
           `${l.leg_kind} ${l.order_type} @ ${money(l.price)} ${l.time_in_force || ""}`).join("<br>") || "—"}</td></tr>
     </table>

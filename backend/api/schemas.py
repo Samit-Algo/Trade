@@ -56,6 +56,10 @@ class MarketOut(BaseModel):
     trade_symbols: list[str]
     quick_sell_steps: list[float]
     option_tick_size: float
+    alerts: list[str] = Field(
+        default_factory=list,
+        description="Problems to act on now, e.g. a position left with no stop.",
+    )
 
 
 class MarketsResponse(BaseModel):
@@ -817,7 +821,11 @@ class TradeResponse(BaseModel):
     price_source: PriceSource
     prices: BracketPrices
     cash_required: float
-    commission: CommissionOut
+    commission: CommissionOut | None = Field(
+        default=None,
+        description="Estimated commission, from measured orders. Null for a "
+        "market whose charges have not been measured -- never a guess.",
+    )
 
     order_status: str
     parent_filled: int

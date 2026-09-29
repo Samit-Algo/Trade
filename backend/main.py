@@ -91,9 +91,14 @@ async def lifespan(_app: FastAPI):
     ]
     for recorder in recorders:
         recorder.start()
+    # Each market's own background work -- India's exits, for one.
+    for market_id in available_markets():
+        get_market(market_id).start()
     try:
         yield
     finally:
+        for market_id in available_markets():
+            get_market(market_id).stop()
         for recorder in recorders:
             recorder.stop()
 

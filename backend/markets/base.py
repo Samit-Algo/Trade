@@ -169,6 +169,29 @@ class Market(ABC):
     def attached_legs(self, order_id) -> list[dict]:
         """The take-profit and stop-loss legs attached to an entry order."""
 
+    # -- background work. Optional: most markets have none. ----------------
+
+    def start(self) -> None:
+        """Begin any background work, when the server starts."""
+
+    def stop(self) -> None:
+        """End it, when the server stops."""
+
+    def alerts(self) -> list[str]:
+        """Problems a human must act on now -- a position left without a stop.
+
+        Shown in red on the page. A market that manages nothing itself has none.
+        """
+        return []
+
+    def release_protection(self, identifier: str) -> None:
+        """Stop managing a position's exits, because it is being closed by hand.
+
+        Called before the close route cancels the working exits and sells. A
+        market whose broker holds the exits itself -- Tiger attaches them to
+        the order -- has nothing to do here.
+        """
+
     # -- sending. Each runs assert_order_allowed right before the broker. ---
 
     @abstractmethod
