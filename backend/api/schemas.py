@@ -60,6 +60,27 @@ class MarketOut(BaseModel):
         default_factory=list,
         description="Problems to act on now, e.g. a position left with no stop.",
     )
+    switched_on: bool = Field(
+        default=True,
+        description="The Settings page's on/off switch. Off: nothing contacts "
+        "this market's broker, and its trades are refused.",
+    )
+    can_switch: bool = Field(
+        default=False,
+        description="Whether the page offers an on/off switch for it. The US "
+        "is the server's own market and is always on.",
+    )
+
+
+class MarketSwitchIn(BaseModel):
+    """Switch a market on or off, from the Settings page."""
+
+    on: bool
+    force: bool = Field(
+        default=False,
+        description="Switch off even while a trade's take profit is being "
+        "watched. The page sends it only after the warning is confirmed.",
+    )
 
 
 class MarketsResponse(BaseModel):

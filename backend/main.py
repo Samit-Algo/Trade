@@ -84,10 +84,15 @@ async def lifespan(_app: FastAPI):
     to read the OpenAPI spec -- must not start a thread that calls the broker.
     A market that cannot trade yet has nothing to record.
     """
+    # One per market, each asking its market before every read -- so a
+    # market switched off in the page, or outside its hours, is not asked.
     recorders = [
-        PriceRecorder(partial(_held_positions, market_id=market_id), price_log(market_id))
+        PriceRecorder(
+            partial(_held_positions, market_id=market_id),
+            price_log(market_id),
+            active=get_market(market_id).recording_now,
+        )
         for market_id in available_markets()
-        if get_market(market_id).ready
     ]
     for recorder in recorders:
         recorder.start()

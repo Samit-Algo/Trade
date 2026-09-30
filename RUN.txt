@@ -26,7 +26,11 @@ Then create your settings files, all in config/:
 
   copy config\server.env.example config\server.env
   copy config\us.env.example     config\us.env
-  copy config\india.env.example  config\india.env     (only if you trade India)
+
+Only if you trade India as well:
+
+  copy config\india.env.example  config\india.env
+  and set MARKETS=US,IN in config\server.env
 
 Each .example ships with every field documented and every credential BLANK.
 Fill in these five or the server refuses to start:
@@ -44,8 +48,12 @@ you a .properties file, copy the value after private_key_pk8= into the .pem.
 
 config/*.env and secrets/ are gitignored. They must never be committed.
 
-India appears in the page's market selector only when config/india.env exists.
-It also needs the OpenAlgo server running at http://127.0.0.1:5000.
+MARKETS in config/server.env decides which markets run. MARKETS=US (the
+default in the example) never starts India and never contacts OpenAlgo.
+With MARKETS=US,IN, India also needs config/india.env and the OpenAlgo server
+running at http://127.0.0.1:5000. It can then be switched on and off on the
+Settings page, with no restart -- switch it off on a US-only day and OpenAlgo
+need not be running. India prices are only recorded in NSE hours.
 
 
 -------------------------------------------------------------------------------

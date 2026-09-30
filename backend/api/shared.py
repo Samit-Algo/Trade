@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.core import armed, paths
-from backend.core.config import Settings, load_settings
+from backend.core.config import ConfigError, Settings, load_settings
 from backend.markets.base import Market, UnknownMarket
 
 from .order_rules import IdempotencyStore
@@ -57,14 +57,30 @@ DEFAULT_MARKET = "US"
 
 
 def available_markets() -> list[str]:
-    """The markets this service trades, in the order the page lists them.
+    """The markets this service runs, in the order the page lists them.
 
-    US always. India when config/india.env exists -- the file is what turns
-    it on, so deleting it turns India off without touching code.
+    MARKETS in config/server.env decides: MARKETS=US runs the US alone,
+    however many settings files sit in config/. Without that line, India
+    runs when config/india.env exists, as it did before the line existed.
+
+    Whether a market that runs is switched ON is the page's switch -- see
+    core/market_switch.py.
+
+    Raises:
+        ConfigError: When MARKETS lists India but config/india.env is missing.
     """
     from backend.markets.india.config import india_env_path
 
-    return ["US"] + (["IN"] if india_env_path().exists() else [])
+    listed = get_settings().markets
+    if listed is None:
+        return ["US"] + (["IN"] if india_env_path().exists() else [])
+    if "IN" in listed and not india_env_path().exists():
+        raise ConfigError(
+            "MARKETS in config/server.env lists IN, but config/india.env is "
+            "missing. Copy config/india.env.example to config/india.env, or "
+            "take IN out of MARKETS."
+        )
+    return list(listed)
 
 
 def get_market(market_id: str | None = DEFAULT_MARKET) -> Market:

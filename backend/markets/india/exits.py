@@ -233,7 +233,14 @@ class ExitManager:
             self._stop.wait(self.poll_seconds)
 
     def tick(self) -> None:
-        """Read the books once, then move every active trade one step."""
+        """Read the books once, then move every active trade one step.
+
+        Nothing at all while India is switched off on the Settings page:
+        OpenAlgo is not asked, and every trade resumes where it was when
+        India is switched on again.
+        """
+        if not getattr(self.market, "ready", True):
+            return
         with self._lock:
             active = [t for t in self._trades.values() if t["status"] in ACTIVE]
         if not active:

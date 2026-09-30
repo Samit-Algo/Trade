@@ -10,9 +10,10 @@ What each piece does:
     submit.py     THE ONLY FILE THAT PLACES AN INDIAN ORDER
     exits.py      the stop loss and the take profit, one on the book at a time
 
-READY ONLY WITH A KEY. Until OPENALGO_API_KEY is set in config/india.env the
+READY ONLY WITH A KEY, AND WHEN SWITCHED ON. Until OPENALGO_API_KEY is set in
+config/india.env, or while India is switched off on the Settings page, the
 market answers its settings and switches, and every broker call raises
-MarketNotReady -- nothing is guessed, nothing is sent.
+MarketNotReady -- nothing is guessed, nothing is sent, OpenAlgo is not asked.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import threading
 from datetime import date, time
 from zoneinfo import ZoneInfo
 
+from backend.core import market_switch
 from backend.core.time_brackets import Session
 from backend.services.order import (
     BracketLegs,
@@ -44,7 +46,7 @@ from .books import (
     to_broker_order,
     to_option_position,
 )
-from .exits import ExitManager
+from .exits import ACTIVE, ExitManager
 from .openalgo import STRATEGY, build_client, resolve_mode, unwrap
 from .submit import place_entry, place_exit
 
@@ -64,6 +66,11 @@ PROFILE = MarketProfile(
 
 
 def _not_ready(what: str):
+    if not market_switch.is_on(PROFILE.id):
+        raise MarketNotReady(
+            f"India cannot {what}: India is switched off on the Settings page. "
+            "Switch it on there to use it. Nothing was sent."
+        )
     raise MarketNotReady(
         f"India cannot {what}: OPENALGO_API_KEY is blank in config/india.env. "
         "Its settings, symbols and switches work; trading does not."
@@ -83,7 +90,6 @@ class IndiaMarket(Market):
 
     def __init__(self, settings):
         self.settings = settings
-        self.ready = bool(settings.openalgo_api_key)
         self._lock = threading.RLock()
         self._client = None
         self._lots: dict[str, int] = {}
@@ -93,6 +99,51 @@ class IndiaMarket(Market):
             stuck_seconds=settings.stuck_exit_seconds,
             slippage_ticks=settings.exit_slippage_ticks,
         )
+
+    @property
+    def ready(self) -> bool:
+        """Has a key, and is switched on. Read each time: the switch can
+        change while the server runs."""
+        return bool(self.settings.openalgo_api_key) and market_switch.is_on(self.profile.id)
+
+    def recording_now(self) -> bool:
+        """Record prices only in NSE hours. Nothing moves outside them, and
+        OpenAlgo is often not running then -- asking would only fail."""
+        return self.ready and data.session_is_open(self.profile.session)
+
+    def cannot_switch_off(self) -> str | None:
+        """Refuse to switch off while this backend is watching a trade's exits.
+
+        India's take profit is watched here, not an order at the broker.
+        Switched off, nothing would watch it: the stop loss would still be at
+        the exchange, but the take profit would never fire.
+        """
+        watched = self._watched()
+        if not watched:
+            return None
+        lines = [
+            f"{t['symbol']}: the take profit {self._money(t.get('take_profit'))} will NOT be "
+            f"watched; only the stop loss {self._money(t.get('stop_loss'))} at the exchange "
+            "protects it."
+            for t in watched
+        ]
+        return (
+            "Still open, with its take profit watched by this backend:\n"
+            + "\n".join(lines)
+            + "\nClose it first -- or switch off anyway and switch India on again "
+            "before you want the take profit watched."
+        )
+
+    def _watched(self) -> list[dict]:
+        """The trades whose exits this backend is watching, one per contract."""
+        seen: dict[str, dict] = {}
+        for trade in self.exits.trades():
+            if trade["status"] in ACTIVE:
+                seen.setdefault(trade["symbol"], trade)
+        return [seen[symbol] for symbol in sorted(seen)]
+
+    def _money(self, amount) -> str:
+        return "(none)" if amount in (None, "") else self.profile.money(float(amount))
 
     # -- plumbing -----------------------------------------------------------
 
@@ -124,7 +175,10 @@ class IndiaMarket(Market):
         return lot
 
     def start(self) -> None:
-        if self.ready:
+        # Started whenever there is a key, even while switched off: it asks
+        # OpenAlgo nothing until a trade is being watched, and a trade can
+        # only be placed once India is switched on.
+        if self.settings.openalgo_api_key:
             self.exits.start()
 
     def stop(self) -> None:
@@ -137,10 +191,19 @@ class IndiaMarket(Market):
         return None
 
     def alerts(self) -> list[str]:
-        return [
+        found = [
             f"{t['symbol']}: {t['problem']}"
             for t in self.exits.trades() if t["status"] == "NEEDS_ATTENTION"
         ]
+        # Switched off with a trade still open: say so on every page, so
+        # the unwatched take profit is not forgotten.
+        if not market_switch.is_on(self.profile.id):
+            found += [
+                f"{t['symbol']}: India is switched off, so its take profit "
+                f"{self._money(t.get('take_profit'))} is not being watched"
+                for t in self._watched()
+            ]
+        return found
 
     def release_protection(self, identifier: str) -> None:
         if self.ready:

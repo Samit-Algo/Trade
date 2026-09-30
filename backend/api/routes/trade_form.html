@@ -977,13 +977,24 @@
     <div class="page" id="page-settings">
       <div class="cols">
         <div>
+          <div class="panel" id="mktpanel" hidden>
+            <div class="panelhead">
+              <span class="ph-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span>
+              <div class="ph-text">
+                <h2>Markets</h2>
+                <div class="ph-sub">Off: nothing contacts that broker and its trades
+                  are refused. No restart needed.</div>
+              </div>
+            </div>
+            <div class="panelbody" id="mktbody"></div>
+          </div>
           <div class="panel">
             <div class="panelhead">
               <span class="ph-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg></span>
               <div class="ph-text">
                 <h2>Server Settings</h2>
-                <div class="ph-sub">Read-only. These come from .env and need a
-                  restart to change.</div>
+                <div class="ph-sub">Read-only. These come from the files in
+                  config/ and need a restart to change.</div>
               </div>
               <div class="ph-right">
                 <button type="button" class="btn-small" id="setrefresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
@@ -1054,11 +1065,14 @@ const cur = () => marketInfo().currency_symbol;
 const marketTz = () => marketInfo().timezone;
 const withMarket = url =>
   url + (url.includes("?") ? "&" : "?") + "market=" + encodeURIComponent(currentMarket);
+/* The markets the selector offers: a market switched off on the Settings
+   page is left out, so nothing on the page asks it anything. */
+const shownMarkets = () => markets.filter(m => m.switched_on !== false);
 
 function renderMarketSwitch() {
   const box = $("mktsw");
-  if (markets.length < 2) { box.innerHTML = ""; return; }
-  box.innerHTML = markets.map(m => `
+  if (shownMarkets().length < 2) { box.innerHTML = ""; return; }
+  box.innerHTML = shownMarkets().map(m => `
     <button type="button" role="radio" data-id="${m.id}"
             aria-checked="${m.id === currentMarket}"
             class="${m.id === currentMarket ? "on" : ""}"
@@ -1129,7 +1143,11 @@ async function loadStatus() {
     if (!r.ok) throw new Error(r.status === 401 ? "key rejected" : "HTTP " + r.status);
     const server = await r.json();
     if (rm.ok) markets = (await rm.json()).markets || [];
-    if (!markets.some(m => m.id === currentMarket)) currentMarket = "US";
+    if (!shownMarkets().some(m => m.id === currentMarket)) {
+      // Switched off, or gone: back to the US, and forget what was showing.
+      // chooseMarket clears what was showing and reloads every panel.
+      if (currentMarket !== "US") { chooseMarket("US"); return; }
+    }
     renderMarketSwitch();
 
     // Everything below is about THIS market: its switch, its mode.
@@ -1141,7 +1159,7 @@ async function loadStatus() {
       orders_enabled: m.ready !== false && !(m.dry_run ?? server.dry_run)
         && (m.mode ?? server.mode) === "PAPER",
     };
-    const envFile = currentMarket === "US" ? ".env" : "config/india.env";
+    const envFile = currentMarket === "US" ? "config/us.env" : "config/india.env";
     // Anything left unprotected, from ANY market -- a problem on India
     // matters just as much while the page is showing the US.
     const alerts = markets.flatMap(x => (x.alerts || []).map(a => `${x.id} -- ${a}`));
@@ -1187,7 +1205,7 @@ async function loadStatus() {
 
     if (alerts.length) $("realnote").textContent = "ATTENTION: " + alerts.join(" | ");
     setRail(
-      (canTrade ? "Armed" : "Safe") + (markets.length > 1 ? ` · ${currentMarket}` : ""),
+      (canTrade ? "Armed" : "Safe") + (shownMarkets().length > 1 ? ` · ${currentMarket}` : ""),
       h.mode === "PAPER" ? "Paper trading mode" : "LIVE account",
       canTrade && h.mode !== "PAPER"
     );
@@ -2117,7 +2135,70 @@ async function saveSymbol(row) {
    page shows it rather than pretending it can be edited. What IS editable
    without a restart lives on the Trade page, next to what it affects. */
 
+/* The Markets card: an on/off switch for each market that has one (the US
+   is always on). The server refuses to switch a market off while it is
+   still watching one of that market's trades, and says why. */
+async function loadMarketSwitches() {
+  const panel = $("mktpanel"), box = $("mktbody");
+  if (!key()) { panel.hidden = true; return; }
+  try {
+    const r = await fetch("/markets", { headers: hdrs() });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    markets = (await r.json()).markets || [];
+  } catch (e) { panel.hidden = true; return; }
+
+  const switchable = markets.filter(m => m.can_switch);
+  panel.hidden = switchable.length === 0;
+  box.innerHTML = `<div class="symgrid">` + switchable.map(m => `
+    <div class="symrow ${m.switched_on ? "" : "off"}" data-id="${m.id}">
+      <span class="symname">${m.id === "IN" ? "India" : m.id}</span>
+      <span class="sw" data-on="${m.switched_on}" role="switch"
+            aria-checked="${m.switched_on}" tabindex="0" title="${m.name}">
+        <span class="sw-track"><span class="sw-knob"></span></span>
+        <span class="sw-label">${m.switched_on ? "ON" : "OFF"}</span>
+      </span>
+      <span class="eff">${m.switched_on
+        ? (m.ready ? "on -- reading its broker" : "on, but not connected (no API key)")
+        : "off -- its broker is not contacted"}</span>
+    </div>`).join("") + `</div>`;
+
+  box.querySelectorAll(".symrow").forEach(row => {
+    const toggle = row.querySelector(".sw");
+    const flip = async () => {
+      const on = toggle.dataset.on !== "true";
+      const send = force => fetch(`/markets/${row.dataset.id}/switch`, {
+        method: "PUT", headers: hdrs(), body: JSON.stringify({ on, force })
+      });
+      try {
+        let r = await send(false);
+        let body = r.ok ? {} : await r.json().catch(() => ({}));
+        // A trade is still open: say exactly what stops being watched, and
+        // switch off only if that is confirmed.
+        if (r.status === 409 && body.error_code === "MARKET_BUSY") {
+          if (!confirm(body.message + "\n\nOK = switch off anyway.  Cancel = keep it on.")) {
+            await loadMarketSwitches();
+            return;
+          }
+          r = await send(true);
+          body = r.ok ? {} : await r.json().catch(() => ({}));
+        }
+        if (!r.ok) throw new Error(body.message || "HTTP " + r.status);
+      } catch (e) {
+        alert("Could not switch it: " + e.message);
+      }
+      // Re-read either way: what is shown is what the server holds.
+      await loadMarketSwitches();
+      loadStatus();
+    };
+    toggle.onclick = flip;
+    toggle.onkeydown = e => {
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); flip(); }
+    };
+  });
+}
+
 async function loadSettingsPage() {
+  loadMarketSwitches();
   const box = $("setbody");
   if (!key()) {
     box.innerHTML = `<div class="placeholder">Enter the API key on the Trade page.</div>`;

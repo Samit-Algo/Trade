@@ -49,7 +49,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Query, Request
 
-from backend.core import armed
+from backend.core import armed, market_switch
 from backend.core.live_cache import CACHE
 from backend.markets.base import MarketNotReady
 from backend.core.safety import build_order_record, write_order_record
@@ -842,6 +842,11 @@ def place_bracketed_trade(body: TradeRequest, request: Request) -> TradeResponse
     settings = market.settings
     market_id = market.profile.id
     if not market.ready:
+        if not market_switch.is_on(market_id):
+            raise MarketNotReady(
+                f"{market.profile.name} is switched off on the Settings page. "
+                "Switch it on there to trade it. Nothing was sent."
+            )
         raise MarketNotReady(
             f"{market.profile.name} cannot trade yet. Nothing was sent."
         )

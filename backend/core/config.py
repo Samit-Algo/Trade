@@ -185,6 +185,11 @@ class Settings(TradingSettings):
     api_port: int
     idempotency_ttl_seconds: int # how long a client_order_id is remembered
 
+    #: MARKETS from config/server.env: the markets this machine runs, US
+    #: always first. None when the line is absent -- then India runs when
+    #: config/india.env exists, as it did before the line existed.
+    markets: tuple[str, ...] | None = None
+
     @property
     def masked_account(self) -> str:
         return mask_account(self.account)
@@ -953,6 +958,8 @@ def _build_settings(env_path: Path) -> Settings:
 
     idempotency_ttl_seconds = _get_int("IDEMPOTENCY_TTL_SECONDS", 600)
 
+    markets = _parse_markets(_get("MARKETS"))
+
     trading = read_trading_settings(US_DEFAULTS)
 
     # Lock 1 and Lock 2. Raises LiveTradingBlocked rather than returning.
@@ -972,5 +979,31 @@ def _build_settings(env_path: Path) -> Settings:
         api_host=api_host,
         api_port=api_port,
         idempotency_ttl_seconds=idempotency_ttl_seconds,
+        markets=markets,
         **trading,
     )
+
+
+#: Every market this code can run. MARKETS may list only these.
+KNOWN_MARKETS = ("US", "IN")
+
+
+def _parse_markets(raw: str) -> tuple[str, ...] | None:
+    """Read MARKETS, e.g. "US" or "US,IN".
+
+    US is always included: it is the server's own market, and the one a
+    request that names no market means. Blank means "not set".
+
+    Raises:
+        ConfigError: For a name this code does not know.
+    """
+    names = [part.strip().upper() for part in raw.split(",") if part.strip()]
+    if not names:
+        return None
+    unknown = [name for name in names if name not in KNOWN_MARKETS]
+    if unknown:
+        raise ConfigError(
+            f"MARKETS lists {', '.join(unknown)}, which this server does not know. "
+            f"Use any of: {', '.join(KNOWN_MARKETS)} -- e.g. MARKETS=US or MARKETS=US,IN."
+        )
+    return ("US",) + tuple(dict.fromkeys(name for name in names if name != "US"))

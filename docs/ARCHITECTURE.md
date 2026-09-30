@@ -59,9 +59,9 @@ backend/
                           india/exits.py watches the take-profit and runs the exits.
 
 config/                   settings, one file per market (gitignored)
-  server.env              the API key, host, port -- shared by all markets
+  server.env              the API key, host, port, and MARKETS (US or US,IN)
   us.env                  US settings
-  india.env               India settings. India appears only when this file exists.
+  india.env               India settings. Needed when MARKETS lists IN.
   *.env.example           the same files, blank, with every setting explained
 
 state/                    what the page saved, one folder per market (gitignored)
@@ -80,6 +80,17 @@ docs/                     HANDOVER.md (why things are the way they are), specs;
 
 ---
 
+## Turning a market on and off
+
+- `MARKETS` in `config/server.env` decides which markets run on this machine.
+  `MARKETS=US` never starts India. Without the line, India runs when
+  `config/india.env` exists.
+- A market other than the US can be switched off on the Settings page
+  (`PUT /markets/IN/switch`), saved in `state/in/market_switch.json`. Off, its
+  broker is not contacted and its trades are refused. Switching off is refused
+  while the backend is still watching one of its trades' take profit.
+- India's prices are recorded only in NSE hours (Mon-Fri 09:15-15:30 IST).
+
 ## How US and India differ
 
 |                     | US (Tiger)                         | India (OpenAlgo)                              |
@@ -97,6 +108,7 @@ docs/                     HANDOVER.md (why things are the way they are), specs;
 2. Put the only order-sending code in `<name>/submit.py`, and run the safety
    check right before the broker call.
 3. Add `config/<name>.env` and its `.example`.
-4. Register it in `backend/api/shared.py`.
+4. Register it in `backend/api/shared.py`, and add its id to `KNOWN_MARKETS`
+   in `backend/core/config.py`.
 
 The routes, the page and the services need no change.

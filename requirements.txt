@@ -13,3 +13,6 @@ uvicorn[standard]
 
 # Order-history export to .xlsx (api/service/export)
 openpyxl
+
+# India (NIFTY) through a local OpenAlgo server
+openalgo==2.0.5

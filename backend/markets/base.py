@@ -171,6 +171,14 @@ class Market(ABC):
 
     # -- background work. Optional: most markets have none. ----------------
 
+    def recording_now(self) -> bool:
+        """Whether the price recorder should read this market now."""
+        return self.ready
+
+    def cannot_switch_off(self) -> str | None:
+        """Why this market may not be switched off right now, or None."""
+        return None
+
     def start(self) -> None:
         """Begin any background work, when the server starts."""
 

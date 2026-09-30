@@ -12,8 +12,9 @@ NOT_ABOUT_A_MARKET = {"/health", "/markets"}
 
 
 def takes_a_market(operation: dict, spec: dict) -> bool:
-    """Whether an operation accepts `market`, as a query parameter or in its body."""
-    if any(p.get("name") == "market" for p in operation.get("parameters", [])):
+    """Whether an operation accepts `market`: as a query parameter, in its
+    body, or as the path itself -- /markets/{market_id}/switch."""
+    if any(p.get("name") in ("market", "market_id") for p in operation.get("parameters", [])):
         return True
 
     body = operation.get("requestBody", {}).get("content", {}).get("application/json", {})
@@ -69,6 +70,8 @@ def test_every_call_the_page_makes_names_the_market(asset_beside):
     unnamed = sorted({
         path for wrapped, path in calls
         if not wrapped and path not in ("/health", "/markets")
+        # The market is in the path itself.
+        and not path.startswith("/markets/${row.dataset.id}/")
     })
     assert unnamed == [], "Calls that do not say which market: " + ", ".join(unnamed)
 

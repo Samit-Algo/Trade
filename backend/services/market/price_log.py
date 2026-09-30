@@ -197,15 +197,19 @@ class PriceRecorder:
             `market_price_latest`. Given max_age_seconds, the freshness
             wanted. Injected so this module never builds a broker client.
         log: Where to write.
+        active: Asked before every read; while it says False nothing is
+            read at all -- a market switched off, or outside its hours.
     """
 
     def __init__(
         self,
         read_positions: Callable[[float], tuple[list, float]],
         log: PriceLog | None = None,
+        active: Callable[[], bool] | None = None,
     ) -> None:
         self._read_positions = read_positions
         self._log = log if log is not None else price_log("US")
+        self._active = active
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -230,6 +234,8 @@ class PriceRecorder:
             How many contracts are held -- the caller sleeps longer when
             the answer is none.
         """
+        if self._active is not None and not self._active():
+            return 0
         positions, age = self._read_positions(RECORD_INTERVAL_SECONDS)
         # Stamped when the broker was READ, not now: a cached answer served
         # a second late describes the moment it was fetched.
