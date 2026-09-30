@@ -2,11 +2,12 @@
   TIGER OPTIONS BACKEND -- HOW TO RUN IT
 ===============================================================================
 
-An HTTP service that places bracketed option orders through Tiger Brokers.
+An HTTP service that places bracketed option orders, for US options through
+Tiger Brokers and India (NIFTY) options through OpenAlgo / Angel One.
 It binds to 127.0.0.1 by default: only this machine can reach it.
 
 READ THE SAFETY SECTION BEFORE THE FIRST REAL RUN. This service can spend
-money, and two lines of .env decide whether it does.
+money, and two lines of config/us.env decide whether it does.
 
 
 -------------------------------------------------------------------------------
@@ -21,25 +22,30 @@ Requires Python 3.11 or newer (built and tested on 3.11.9).
   vnv\Scripts\activate
   pip install -r requirements.txt
 
-Then create your .env:
+Then create your settings files, all in config/:
 
-  copy .env.example .env
+  copy config\server.env.example config\server.env
+  copy config\us.env.example     config\us.env
+  copy config\india.env.example  config\india.env     (only if you trade India)
 
-.env.example ships with every field documented and every credential BLANK.
+Each .example ships with every field documented and every credential BLANK.
 Fill in these five or the server refuses to start:
 
   TIGER_ID                 your Tiger developer ID
   TIGER_ACCOUNT            the account to trade
   TIGER_PAPER_ACCOUNT      the paper account ID -- see SAFETY below
   TIGER_LICENSE            as issued by Tiger
-  TIGER_API_KEY            a long random string YOU choose; callers send it
-                           as the X-API-Key header on every request
+  TIGER_API_KEY            (in server.env) a long random string YOU choose;
+                           callers send it as the X-API-Key header
 
 Put your Tiger private key at secrets/tiger_private_key.pem. It must be raw
 base64 with NO header lines -- no "-----BEGIN PRIVATE KEY-----". If Tiger gave
 you a .properties file, copy the value after private_key_pk8= into the .pem.
 
-.env and secrets/ are gitignored. They must never be committed.
+config/*.env and secrets/ are gitignored. They must never be committed.
+
+India appears in the page's market selector only when config/india.env exists.
+It also needs the OpenAlgo server running at http://127.0.0.1:5000.
 
 
 -------------------------------------------------------------------------------
@@ -70,7 +76,7 @@ Note the --factory flag. There is no module-level `app` object: the app is
 built by create_app(), which validates settings first and REFUSES TO START if
 something is wrong. `uvicorn backend.main:app` will not work.
 
---reload picks up CODE changes only. A change to .env needs a full restart,
+--reload picks up CODE changes only. A change to config/ needs a full restart,
 because settings are read once at startup and cached.
 
 
@@ -113,7 +119,7 @@ Health needs no key:
 
   curl http://127.0.0.1:8000/health
 
-Everything else does. Replace YOUR_KEY with TIGER_API_KEY from .env:
+Everything else does. Replace YOUR_KEY with TIGER_API_KEY from config/server.env:
 
   curl -H "X-API-Key: YOUR_KEY" http://127.0.0.1:8000/positions
   curl -H "X-API-Key: YOUR_KEY" http://127.0.0.1:8000/spot/NVDA
@@ -148,7 +154,8 @@ server-side from Yahoo (~0.3s slower). Send it if you already have a price on
 screen. Either way the response says which source was used.
 
 Everything else -- quantity, bracket percentages, expiry, how far out of the
-money -- comes from .env. See GET /trade/settings for what is in force.
+money -- comes from config/us.env (or config/india.env). See
+GET /trade/settings for what is in force.
 
 
 -------------------------------------------------------------------------------
@@ -158,7 +165,8 @@ money -- comes from .env. See GET /trade/settings for what is in force.
   vnv\Scripts\activate
   pytest
 
-431 tests. They need no network and no Tiger credentials.
+About 775 tests. They need no network and no broker credentials, and they
+never write into the real logs/ or state/ folders.
 
 Note they do NOT cover function-level imports that only execute when an order
 is actually placed. A live paper order is the real check.
@@ -180,18 +188,22 @@ is actually placed. A live paper order is the real check.
     markets/us/            US options through Tiger -- the ONLY folder that
                            talks to Tiger. submit.py in it is the only file
                            that can place an order.
+    markets/india/         India through OpenAlgo -- the same rule.
 
+  config/                  settings: server.env, us.env, india.env. Gitignored
+                           (the .example copies are not).
   tests/                   the test suite
-  scripts/                 standalone diagnostics, and callOrderAPI.user.js
-                           (the Tampermonkey userscript for TradingView)
-  docs/                    HANDOVER.md (the project bible -- measured evidence
-                           for the decisions, and the traps found the hard
-                           way), ARCHITECTURE.md, the specs
+  docs/                    ARCHITECTURE.md (start here), HANDOVER.md (the
+                           project bible -- measured evidence for the
+                           decisions, and the traps found the hard way), the
+                           specs. archive/ holds old plans.
 
-  state/                   what the page saved: symbol settings, the time
-                           bracket schedule, the SAFE/ARMED switch. Gitignored.
+  state/us/, state/in/     what the page saved, per market: symbol settings,
+                           the time bracket schedule, the SAFE/ARMED switch.
+                           Gitignored.
   secrets/                 your private key. Gitignored.
-  logs/                    request and order audit logs. Gitignored.
+  logs/                    request and order audit logs, and prices/us/ and
+                           prices/in/ for the trade chart. Gitignored.
 
 
 -------------------------------------------------------------------------------
@@ -200,7 +212,7 @@ is actually placed. A live paper order is the real check.
 
   "TIGER_API_KEY is not set, so this service will not start."
       An endpoint that can place orders must not be reachable without a key.
-      Add a long random value to .env.
+      Add a long random value to config/server.env.
 
   401 UNAUTHORIZED
       Missing or wrong X-API-Key header.
@@ -216,7 +228,7 @@ is actually placed. A live paper order is the real check.
       No current_price was sent and Yahoo could not be reached. Send
       current_price explicitly.
 
-  A change to .env did nothing
+  A change to config/ did nothing
       Settings load once at startup. Restart the server -- --reload is not
       enough.
 

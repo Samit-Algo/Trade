@@ -245,3 +245,23 @@ def test_require_live_trading_parses_strictly(env):
     assert env(REQUIRE_LIVE_TRADING="true").require_live_trading is True
     with pytest.raises(ConfigError):
         env(REQUIRE_LIVE_TRADING="maybe")
+
+
+def test_the_server_file_is_read_under_the_us_file(tmp_path, monkeypatch):
+    """config/server.env holds the key, host and port; config/us.env the rest."""
+    from backend.core import config
+
+    for name in TIGER_VARS + ["TIGER_API_KEY", "API_PORT"]:
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "key.pem").write_text("not-a-real-key")
+    (tmp_path / "config" / "us.env").write_text("\n".join(
+        [f"{k}={v}" for k, v in BASE_ENV.items() if v is not None]
+        + ["TIGER_PRIVATE_KEY_PATH=./key.pem"]
+    ))
+    (tmp_path / "config" / "server.env").write_text("TIGER_API_KEY=abc\nAPI_PORT=8123\n")
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+
+    settings = config.load_settings()
+    assert settings.api_key == "abc"
+    assert settings.api_port == 8123

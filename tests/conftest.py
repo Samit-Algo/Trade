@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-#: The repo root -- the folder holding `backend/`, `tests/` and `.env`.
+#: The repo root -- the folder holding `backend/`, `tests/` and `config/`.
 #: tests/ -> the repo root.
 #:
 #: This is the ONE place the suite counts folder depth. When the package
@@ -38,6 +38,42 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(PROJECT_ROOT))
+
+
+@pytest.fixture(autouse=True)
+def _nothing_written_to_the_real_folders(tmp_path, monkeypatch):
+    """Every test writes its logs and saved state into its own temp folder.
+
+    Without this, a test calling the order routes appended lines to the
+    real logs/api_requests.log -- "client=unknown" rows mixed in with the
+    real trading record -- and could write to the real state/ switches.
+    A test that wants its own paths still sets them; this is the default.
+    """
+    import logging
+
+    from backend.api import shared
+    from backend.core import paths, safety
+    from backend.services.market import price_log
+
+    logs = tmp_path / "_logs"
+    monkeypatch.setattr(paths, "STATE_DIRECTORY", tmp_path / "_state")
+    monkeypatch.setattr(paths, "PRICE_LOG_DIRECTORY", logs / "prices")
+    monkeypatch.setattr(price_log, "_LOGS", {})
+    monkeypatch.setattr(safety, "ORDER_LOG_PATH", logs / "order_audit.log")
+    monkeypatch.setattr(shared, "LOG_DIRECTORY", logs)
+    monkeypatch.setattr(shared, "API_LOG_PATH", logs / "api_requests.log")
+    monkeypatch.setattr(shared, "_logger", None)
+
+    # The request logger keeps its file open once made; start each test
+    # without one so it is made again, pointing at this test's folder.
+    logger = logging.getLogger("tiger_api")
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+    yield
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
 
 
 @pytest.fixture

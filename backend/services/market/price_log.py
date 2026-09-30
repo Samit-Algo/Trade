@@ -20,10 +20,10 @@ HOW OFTEN. get_positions is capped at 60 a minute, and placing an order
 reads it too (symbol_lock.py). Every second would take the whole budget and
 make an order wait behind this. Every two seconds takes half.
 
-ON DISK. JSON lines, like the order audit log -- one folder per contract,
-one file per UTC day:
+ON DISK. JSON lines, like the order audit log -- one folder per market,
+one per contract, one file per UTC day:
 
-    logs/prices/TSLA260928P00370000/2026-09-28.jsonl
+    logs/prices/us/TSLA260928P00370000/2026-09-28.jsonl
     {"t": 1790620150000, "p": 3.6}
     {"t": 1790620152000, "p": 3.62}
 
@@ -82,8 +82,11 @@ class PriceLog:
     gap ended.
     """
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, older: Path | None = None) -> None:
         self.root = root if root is not None else paths.PRICE_LOG_DIRECTORY
+        # Read as well, never written: where prices went before each market
+        # had a folder of its own, so a trade from then still draws.
+        self.older = older
         self._last: dict[str, float] = {}
         self._lock = threading.Lock()
 
@@ -145,8 +148,13 @@ class PriceLog:
 
         points: list[tuple[int, float]] = []
         day = first
+        roots = [self.root] + ([self.older] if self.older is not None else [])
+        files = []
         while day <= last:
-            path = _day_file(identifier, day, self.root)
+            files += [_day_file(identifier, day, root) for root in roots]
+            day += timedelta(days=1)
+
+        for path in files:
             if path.exists():
                 with path.open(encoding="utf-8") as handle:
                     for line in handle:
@@ -159,14 +167,25 @@ class PriceLog:
                             continue
                         if begin_ms <= t <= end_ms:
                             points.append((t, p))
-            day += timedelta(days=1)
 
-        points.sort()
-        return points
+        return sorted(set(points))
 
 
-#: One log for the process: the recorder writes it, the journey reads it.
-PRICE_LOG = PriceLog()
+_LOGS: dict[str, PriceLog] = {}
+
+
+def price_log(market_id: str) -> PriceLog:
+    """One market's log, the same one for the whole process: its recorder
+    writes it, the journey and the analysis read it.
+
+    logs/prices/<market, lower case>/ -- US and NIFTY contracts kept apart.
+    """
+    key = market_id.strip().upper()
+    if key not in _LOGS:
+        _LOGS[key] = PriceLog(
+            paths.PRICE_LOG_DIRECTORY / key.lower(), older=paths.PRICE_LOG_DIRECTORY
+        )
+    return _LOGS[key]
 
 
 class PriceRecorder:
@@ -183,10 +202,10 @@ class PriceRecorder:
     def __init__(
         self,
         read_positions: Callable[[float], tuple[list, float]],
-        log: PriceLog = PRICE_LOG,
+        log: PriceLog | None = None,
     ) -> None:
         self._read_positions = read_positions
-        self._log = log
+        self._log = log if log is not None else price_log("US")
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 

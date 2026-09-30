@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Query
 
 from backend.services.market.bars import MAX_BARS
-from backend.services.market.price_log import PRICE_LOG
+from backend.services.market.price_log import price_log
 from backend.services.order import journey as journey_service
 
 from ..errors import ApiError
@@ -193,7 +193,7 @@ def read_journey(
     else:
         end_ms = end_price = None
 
-    ticks = PRICE_LOG.read(
+    ticks = price_log(chosen.profile.id).read(
         row.identifier,
         entry_ms,
         end_ms if end_ms is not None else int(end.timestamp() * 1000),

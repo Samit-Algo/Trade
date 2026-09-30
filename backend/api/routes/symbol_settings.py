@@ -51,7 +51,7 @@ def describe(symbol: str, settings) -> SymbolSettingOut:
         tp_value, tp_source = take_profit, "set in the UI"
     elif symbol in settings.symbol_take_profit:
         tp_value = settings.symbol_take_profit[symbol]
-        tp_source = f"{symbol}_TAKE_PROFIT_PERCENT in .env"
+        tp_source = f"{symbol}_TAKE_PROFIT_PERCENT in the settings file"
     else:
         tp_value, tp_source = settings.take_profit_percent, "the default"
 
@@ -60,7 +60,7 @@ def describe(symbol: str, settings) -> SymbolSettingOut:
         sl_value, sl_source = stop_loss, "set in the UI"
     elif symbol in settings.symbol_stop_loss:
         sl_value = settings.symbol_stop_loss[symbol]
-        sl_source = f"{symbol}_STOP_LOSS_PERCENT in .env"
+        sl_source = f"{symbol}_STOP_LOSS_PERCENT in the settings file"
     else:
         sl_value, sl_source = settings.stop_loss_percent, "the default"
 
@@ -120,7 +120,7 @@ def write_symbol_settings(
             message=(
                 f"{wanted} is not in TRADE_SYMBOLS "
                 f"({', '.join(settings.trade_symbols)}). Which symbols exist "
-                "is set in .env and needs a restart; this page only tunes "
+                "is set in the settings file and needs a restart; this page only tunes "
                 "the ones already there."
             ),
         )

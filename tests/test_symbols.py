@@ -170,9 +170,7 @@ class TestResolutionOrder:
 class TestNothingIsHardcoded:
     """The symbol list lives in .env, in one place.
 
-    It used to be written in the /ui dropdown AND in the userscript, and the
-    two had drifted: the page offered AAPL, the userscript did not recognise
-    it, so a chart the page could trade the script would refuse.
+    It used to be written in the /ui dropdown as well, and drifted from it.
     """
 
     def test_the_page_has_no_symbol_options(self):
@@ -180,9 +178,3 @@ class TestNothingIsHardcoded:
 
         for symbol in ("AAPL", "NVDA", "TSLA", "QQQ"):
             assert f"<option>{symbol}</option>" not in page
-
-    def test_the_userscript_has_no_symbol_array(self):
-        script = (PROJECT_ROOT / "scripts/callOrderAPI.user.js").read_text(encoding="utf-8")
-
-        assert '["TSLA", "QQQ", "NVDA"]' not in script
-        assert "trade_symbols" in script

@@ -1,4 +1,5 @@
-"""Loads and validates configuration from .env, and resolves the account mode.
+"""Loads and validates the US settings (config/us.env, plus config/server.env),
+and resolves the account mode.
 
 Fails closed: anything missing, malformed or ambiguous raises ConfigError with a
 message a human can act on. The private key is read from disk by broker.py --
@@ -168,10 +169,8 @@ class TradingSettings:
 
 @dataclass(frozen=True)
 class Settings(TradingSettings):
-    """The US market's settings, from .env -- and the server's own.
-
-    .env is the server's file as well as the US market's, so the HTTP lock
-    and the address to bind live here too.
+    """The US market's settings, from config/us.env -- and the server's own,
+    from config/server.env: the HTTP lock and the address to bind.
     """
 
     tiger_id: str
@@ -347,7 +346,7 @@ def _get_required_percent(name: str, *, maximum: float, inclusive: bool) -> floa
     raw = _get(name)
     if raw == "":
         raise ConfigError(
-            f"{name} is required and has no default. Set it in .env -- a "
+            f"{name} is required and has no default. Set it in config/us.env -- a "
             "bracket price is not something to guess at."
         )
     try:
@@ -635,7 +634,7 @@ def _assert_looks_like_private_key(path: Path) -> None:
         )
 
 
-def read_env_settings(env_path: Path, build):
+def read_env_settings(env_path: Path, build, shared: tuple[Path, ...] = ()):
     """Read one settings file and hand it to `build`, restoring state after.
 
     Every market's file goes through here, so each is read the same way:
@@ -646,13 +645,19 @@ def read_env_settings(env_path: Path, build):
         env_path: The file to read.
         build: Called with the file's path while the file is being read; its
             `setting_*` reads come from that file.
+        shared: Files read underneath it -- config/server.env, which holds
+            the API key, host and port. A name in env_path wins over them.
 
     Returns:
         Whatever `build` returns.
     """
     global _active_reader
     previous_reader = _active_reader
-    _active_reader = EnvReader(read_env_file(env_path), source=env_path)
+    values: dict[str, str] = {}
+    for path in shared:
+        values.update(read_env_file(path))
+    values.update(read_env_file(env_path))
+    _active_reader = EnvReader(values, source=env_path)
     try:
         return build(env_path)
     finally:
@@ -859,18 +864,35 @@ def read_trading_settings(defaults: TradingDefaults) -> dict:
     )
 
 
+def us_env_path() -> Path:
+    """The US settings: config/us.env, or the old root .env while that is
+    the only one there."""
+    path = PROJECT_ROOT / "config" / "us.env"
+    return path if path.exists() else PROJECT_ROOT / ".env"
+
+
+def server_env_path() -> Path:
+    """The server's own settings -- API key, host, port: config/server.env."""
+    return PROJECT_ROOT / "config" / "server.env"
+
+
 def load_settings(env_file: Path | str | None = None) -> Settings:
-    """Load .env, validate it, and resolve the account mode.
+    """Load config/server.env + config/us.env, validate, and resolve the
+    account mode.
+
+    A test passes `env_file` to read that one file alone.
 
     Raises ConfigError for anything a human must fix, and LiveTradingBlocked if
     the configured account is not the declared paper account and live has not
     been explicitly opted into.
     """
-    env_path = Path(env_file) if env_file is not None else PROJECT_ROOT / ".env"
-    if env_file is not None and not env_path.exists():
-        raise ConfigError(f"Env file not found: {env_path}")
+    if env_file is not None:
+        env_path = Path(env_file)
+        if not env_path.exists():
+            raise ConfigError(f"Env file not found: {env_path}")
+        return read_env_settings(env_path, _build_settings)
 
-    return read_env_settings(env_path, _build_settings)
+    return read_env_settings(us_env_path(), _build_settings, shared=(server_env_path(),))
 
 
 def _build_settings(env_path: Path) -> Settings:
@@ -894,7 +916,7 @@ def _build_settings(env_path: Path) -> Settings:
         raise ConfigError(
             "Missing required setting(s): "
             + ", ".join(missing)
-            + f"\nExpected them in {env_path}. Copy .env.example to .env and fill it in."
+            + f"\nExpected them in {env_path}. Copy config/us.env.example to config/us.env and fill it in."
         )
 
     # Booleans are parsed strictly: an unrecognised value must not silently

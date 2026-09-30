@@ -12,7 +12,7 @@ from datetime import date, datetime, timezone
 from fastapi import APIRouter, Query
 
 from backend.services import analysis
-from backend.services.market.price_log import PRICE_LOG
+from backend.services.market.price_log import price_log
 from backend.services.order import journey as journey_service
 
 from ..errors import ApiError
@@ -46,7 +46,7 @@ def _moment(value) -> datetime | None:
         return None
 
 
-def _path(row: dict) -> list[tuple[int, float]]:
+def _path(row: dict, market_id: str) -> list[tuple[int, float]]:
     """The recorded prices from the fill to the exit; [] when none were recorded."""
     filled, entry = _moment(row.get("filled_at")), row.get("fill_price")
     if not filled or not entry:
@@ -55,7 +55,7 @@ def _path(row: dict) -> list[tuple[int, float]]:
     end = exited or datetime.now(timezone.utc)
     entry_ms, end_ms = int(filled.timestamp() * 1000), int(end.timestamp() * 1000)
 
-    ticks = PRICE_LOG.read(row["identifier"], entry_ms, end_ms)
+    ticks = price_log(market_id).read(row["identifier"], entry_ms, end_ms)
     if not ticks:
         return []
     _lead, path, _source = journey_service.build_path(
@@ -100,7 +100,7 @@ def read_analysis(
 
     report = analysis.build(
         rows,
-        {row["order_id_text"]: _path(row) for row in rows
+        {row["order_id_text"]: _path(row, chosen.profile.id) for row in rows
          if row.get("fill_price") and row.get("outcome") == "STOPPED_OUT"},
         timezone=clock, opens=chosen.profile.session.opens, fallback_multiplier=fallback,
     )

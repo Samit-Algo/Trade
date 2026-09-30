@@ -35,7 +35,7 @@ from fastapi.responses import JSONResponse
 
 from backend.core.config import ConfigError
 from backend.core.live_cache import CACHE
-from backend.services.market.price_log import PriceRecorder
+from backend.services.market.price_log import PriceRecorder, price_log
 
 from .api.errors import ApiError, classify_exception
 from .api.shared import available_markets, get_market, get_settings
@@ -85,7 +85,7 @@ async def lifespan(_app: FastAPI):
     A market that cannot trade yet has nothing to record.
     """
     recorders = [
-        PriceRecorder(partial(_held_positions, market_id=market_id))
+        PriceRecorder(partial(_held_positions, market_id=market_id), price_log(market_id))
         for market_id in available_markets()
         if get_market(market_id).ready
     ]
@@ -119,7 +119,7 @@ def create_app() -> FastAPI:
         raise ConfigError(
             "TIGER_API_KEY is not set, so this service will not start.\n"
             "An HTTP endpoint that can place orders must not be reachable "
-            "without a key. Add a long random TIGER_API_KEY to .env."
+            "without a key. Add a long random TIGER_API_KEY to config/server.env."
         )
 
     # Every market's settings, checked now: a mistake in config/india.env
@@ -191,7 +191,7 @@ def register_middleware(app: FastAPI) -> None:
                     "error_code": "UNAUTHORIZED",
                     "message": (
                         f"This endpoint requires a valid {API_KEY_HEADER} header. "
-                        "The key is TIGER_API_KEY from .env."
+                        "The key is TIGER_API_KEY from config/server.env."
                     ),
                     "detail": None,
                 },

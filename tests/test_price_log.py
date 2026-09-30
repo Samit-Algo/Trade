@@ -194,3 +194,39 @@ def test_the_best_is_measured_on_the_drawn_line():
 
     assert result.best.price == 4.20
     assert result.worst.price == 2.90
+
+
+# ---------------------------------------------------------------------------
+# One folder per market
+# ---------------------------------------------------------------------------
+
+
+def test_each_market_writes_its_own_folder(tmp_path, monkeypatch):
+    from backend.core import paths
+    from backend.services.market import price_log
+
+    monkeypatch.setattr(paths, "PRICE_LOG_DIRECTORY", tmp_path)
+    monkeypatch.setattr(price_log, "_LOGS", {})
+
+    price_log.price_log("US").record(CONTRACT, START_MS, 1.0)
+    price_log.price_log("IN").record("NIFTY30SEP2625200CE", START_MS, 2.0)
+
+    assert (tmp_path / "us" / "TSLA260928P00370000").is_dir()
+    assert (tmp_path / "in" / "NIFTY30SEP2625200CE").is_dir()
+    assert price_log.price_log("us") is price_log.price_log("US")
+
+
+def test_prices_from_before_the_split_still_read(tmp_path, monkeypatch):
+    """A trade recorded into the old shared folder still draws its line."""
+    from backend.core import paths
+    from backend.services.market import price_log
+
+    monkeypatch.setattr(paths, "PRICE_LOG_DIRECTORY", tmp_path)
+    monkeypatch.setattr(price_log, "_LOGS", {})
+
+    PriceLog(tmp_path).record(CONTRACT, START_MS, 1.0)          # the old place
+    price_log.price_log("US").record(CONTRACT, START_MS + 2000, 1.1)
+
+    assert price_log.price_log("US").read(CONTRACT, START_MS, START_MS + 5000) == [
+        (START_MS, 1.0), (START_MS + 2000, 1.1),
+    ]
