@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 
 from backend.core.config import ConfigError
 from backend.core.live_cache import CACHE
+from backend.markets.base import MarketNotReady, UnknownMarket
 from backend.services.market.price_log import PriceRecorder, price_log
 
 from .api.errors import ApiError, classify_exception
@@ -257,6 +258,23 @@ def register_error_handlers(app: FastAPI) -> None:
                 "error_code": error.error_code,
                 "message": error.message,
                 "detail": error.detail,
+            },
+        )
+
+    # A market that is switched off, not connected, or not run here is an
+    # ordinary answer (503 / 404), not a fault. Handled here rather than by
+    # the catch-all below, which the framework also prints as a traceback.
+    @app.exception_handler(MarketNotReady)
+    @app.exception_handler(UnknownMarket)
+    async def handle_market_unavailable(_request: Request, error: Exception) -> JSONResponse:
+        """Say which market cannot answer, and why, with no traceback."""
+        api_error = classify_exception(error)
+        return JSONResponse(
+            status_code=api_error.status_code,
+            content={
+                "error_code": api_error.error_code,
+                "message": api_error.message,
+                "detail": api_error.detail,
             },
         )
 
