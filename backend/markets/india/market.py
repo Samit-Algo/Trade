@@ -130,6 +130,12 @@ class IndiaMarket(Market):
     def stop(self) -> None:
         self.exits.stop()
 
+    def planned_exits(self, order_id) -> dict | None:
+        for trade in self.exits.trades():
+            if trade["entry_order_id"] == str(order_id):
+                return {"take_profit": trade["take_profit"], "stop_loss": trade["stop_loss"]}
+        return None
+
     def alerts(self) -> list[str]:
         return [
             f"{t['symbol']}: {t['problem']}"
@@ -165,7 +171,8 @@ class IndiaMarket(Market):
             self.client, underlying, option_type, underlying_price,
             exchange=self.settings.exchange, today=self._today(),
             minimum_days=minimum_days, expiry_date_text=expiry_date_text,
-            strikes_out=strikes_out,
+            strikes_out=strikes_out, strike_step=self.settings.strike_step,
+            strike_choices=self.settings.strike_choices,
         )
         with self._lock:
             self._lots[chosen[0].identifier] = int(chosen[0].multiplier)

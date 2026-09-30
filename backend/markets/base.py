@@ -177,6 +177,15 @@ class Market(ABC):
     def stop(self) -> None:
         """End it, when the server stops."""
 
+    def planned_exits(self, order_id) -> dict | None:
+        """The take-profit and stop-loss levels an entry was given, when this
+        market runs its exits itself rather than as orders at the broker.
+
+        Returns {"take_profit": ..., "stop_loss": ...}, or None. A market whose
+        broker holds both legs as orders -- Tiger -- has nothing to add.
+        """
+        return None
+
     def alerts(self) -> list[str]:
         """Problems a human must act on now -- a position left without a stop.
 

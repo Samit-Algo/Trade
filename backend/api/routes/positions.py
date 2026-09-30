@@ -193,7 +193,10 @@ def fetch_working_orders(identifier: str, market) -> list[WorkingOrderOut]:
                 order_id_text=str(order.id or ""),
                 action=order.action,
                 order_type=order.order_type or None,
-                price=order.limit_price or order.aux_price,
+                # A stop's level is its trigger; a limit's is its limit.
+                price=(order.aux_price or order.limit_price)
+                if "STP" in (order.order_type or "").upper()
+                else (order.limit_price or order.aux_price),
                 time_in_force=order.time_in_force,
                 status=order.status or None,
                 role=classify_working_order(order.action, order.order_type),

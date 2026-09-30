@@ -5,6 +5,7 @@
     order/        cost it, build it, send it, track it
     position.py   what is held, and the P&L
     export/       order history as a spreadsheet
+    analysis.py   the Analysis page: results, heat map, why stops fired
 
 The foundations they stand on -- settings, the safety locks, the broker
 connection -- are in `backend/core/`.

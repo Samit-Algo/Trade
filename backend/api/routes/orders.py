@@ -182,6 +182,14 @@ def read_order_history(
                 target = read_leg_price(leg)
             tif = tif or str(getattr(leg, "time_in_force", "") or "") or None
 
+        # A market that runs its own exits knows the levels it was given --
+        # India's take profit is watched, never an order, so no leg shows it.
+        # Those levels are what was set; the orders only carry out one exit.
+        planned = market.planned_exits(parent.id)
+        if planned:
+            target = planned.get("take_profit") or target
+            stop = planned.get("stop_loss") or stop
+
         # Timing. Tiger stamps order_time when it accepted the order and
         # trade_time when it filled, so both ends are already on record --
         # nothing here is tracked by us, and it works for old orders too.
@@ -417,8 +425,16 @@ def read_leg_price(order) -> float | None:
     The two legs store their price in DIFFERENT fields: a take-profit is a
     LMT carrying limit_price, a stop-loss is a STP carrying aux_price.
     Reading the wrong one returns None and looks like a missing price.
+
+    A stop-LIMIT carries both: aux_price is its TRIGGER -- the stop loss
+    level -- and limit_price the floor it will sell down to once triggered.
+    The level is what a person set, so a stop reads its trigger first.
     """
-    return getattr(order, "limit_price", None) or getattr(order, "aux_price", None)
+    limit = getattr(order, "limit_price", None)
+    trigger = getattr(order, "aux_price", None)
+    if "STP" in str(getattr(order, "order_type", "") or "").upper():
+        return trigger or limit
+    return limit or trigger
 
 
 def position_market_price(identifier: str, market_id: str = "US") -> float | None:

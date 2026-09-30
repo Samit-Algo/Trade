@@ -13,6 +13,12 @@ The rules are the US ones, so the page means the same thing in both markets:
     strike   TRADE_STRIKES_OUT whole strikes out of the money; the first is
              the first strike strictly past the underlying's price. In the
              money is never chosen.
+
+             Then, from there, the next STRIKE_CHOICES round strikes are
+             compared on today's VOLUME and the busiest is traded: a busy
+             contract fills and exits at fair prices, a quiet one may not.
+             A tie goes to the nearer strike. When no volume can be read the
+             nearest is taken, and the reason says so.
 """
 
 from __future__ import annotations
@@ -238,9 +244,15 @@ def describe_contract(client, identifier: str, exchange: str, today: date) -> Op
 def select_contract(
     client, underlying: str, option_type: str, underlying_price: float, *,
     exchange: str, today: date, minimum_days: int, expiry_date_text: str | None,
-    strikes_out: int,
+    strikes_out: int, strike_step: int | None = None, strike_choices: int = 1,
 ):
     """Choose and verify the contract to trade.
+
+    `strike_step` is the grid strikes are chosen on -- STRIKE_STEP, 100 for
+    round NIFTY strikes. Without it the exchange's own grid is used.
+
+    `strike_choices` is how many round strikes, counted outward from
+    TRADE_STRIKES_OUT, are compared on today's volume. 1 compares nothing.
 
     Returns:
         (OptionContractInfo, why this expiry, why this strike).
@@ -253,14 +265,53 @@ def select_contract(
     expiries = list_expirations(client, wanted, exchange, today)
     expiry, expiry_reason = choose_expiry(expiries, minimum_days, expiry_date_text)
 
-    step = STRIKE_STEPS.get(wanted, 50)
-    strike = otm_strike(underlying_price, put_call, step, strikes_out)
+    step = strike_step or STRIKE_STEPS.get(wanted, 50)
+    candidates = [
+        otm_strike(underlying_price, put_call, step, strikes_out + extra)
+        for extra in range(max(1, strike_choices))
+    ]
+    strike, volume_note = busiest_strike(
+        client, wanted, expiry.expiry_date, candidates, put_call, exchange)
     identifier = build_identifier(wanted, expiry.expiry_date, strike, put_call)
     contract = describe_contract(client, identifier, exchange, today)
 
     direction = "above" if put_call == "CALL" else "below"
     strike_reason = (
-        f"{strike_text(strike)} is {strikes_out} strike(s) of {step} {direction} "
-        f"{wanted} at {underlying_price:,.2f} -- out of the money."
+        f"{strike_text(strike)} is {candidates.index(strike) + strikes_out} "
+        f"strike(s) of {step} {direction} {wanted} at {underlying_price:,.2f} "
+        f"-- out of the money.{volume_note}"
     )
     return contract, expiry_reason, strike_reason
+
+
+def busiest_strike(client, underlying: str, expiry: date, strikes: list[float],
+                   put_call: str, exchange: str) -> tuple[float, str]:
+    """Of these strikes, the one with the most volume today, and a sentence why.
+
+    A strike whose quote cannot be read is skipped. With one strike, or none
+    readable, the nearest is returned -- never a guess.
+    """
+    if len(strikes) == 1:
+        return strikes[0], ""
+
+    volumes = []
+    for strike in strikes:
+        symbol = build_identifier(underlying, expiry, strike, put_call)
+        try:
+            data = unwrap(client.quotes(symbol=symbol, exchange=exchange),
+                          f"The quote for {symbol}")
+            volumes.append((strike, int(float((data or {}).get("volume") or 0))))
+        except Exception:  # noqa: BLE001 -- an unreadable strike is not chosen
+            continue
+
+    listing = ", ".join(f"{strike_text(s)}: {v:,}" for s, v in volumes)
+    if not volumes or max(v for _, v in volumes) <= 0:
+        return strikes[0], (
+            f" No volume could be read for {', '.join(strike_text(s) for s in strikes)}"
+            f"{' (' + listing + ')' if listing else ''}, so the nearest was taken.")
+
+    # max() keeps the FIRST of equals, and the list runs nearest first.
+    best, most = max(volumes, key=lambda item: item[1])
+    return best, (
+        f" Chosen for volume: the busiest of {len(strikes)} round strikes "
+        f"today ({listing}).")

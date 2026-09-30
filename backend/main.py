@@ -40,7 +40,7 @@ from backend.services.market.price_log import PriceRecorder
 from .api.errors import ApiError, classify_exception
 from .api.shared import available_markets, get_market, get_settings
 from .api.routes import (
-    armed, close, export, health, journey, market, orders, positions,
+    analysis, armed, close, export, health, journey, market, orders, positions,
     symbol_settings,
     time_brackets, trade, ui
 )
@@ -150,6 +150,7 @@ def create_app() -> FastAPI:
     # Before orders: /orders/{order_id} would otherwise match
     # /orders/export and try to read "export" as an integer.
     app.include_router(export.router)
+    app.include_router(analysis.router)
     app.include_router(orders.router)
     app.include_router(journey.router)
     app.include_router(trade.router)

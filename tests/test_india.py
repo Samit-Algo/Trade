@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-SYMBOL = "NIFTY30SEP2625150CE"
+SYMBOL = "NIFTY30SEP2625200CE"   # NIFTY at 25,118, one round strike out
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +33,7 @@ class FakeOpenAlgo:
         self.placed: list[dict] = []
         self.cancelled: list[str] = []
         self.hide_positions = False
+        self.volume: dict[str, int] = {}
         self._next = 25092900000000
 
     # -- orders
@@ -98,12 +99,15 @@ class FakeOpenAlgo:
     def quotes(self, symbol, exchange):
         # The index is quoted at its level; any option at its premium.
         price = self.ltp.get(symbol, 25118.0 if symbol == "NIFTY" else self.ltp[SYMBOL])
-        return {"status": "success", "data": {"ltp": price, "volume": 1000}}
+        return {"status": "success", "data": {"ltp": price, "volume": self.volume.get(symbol, 1000)}}
 
     def symbol(self, symbol, exchange):
+        from backend.markets.india.contract import parse_identifier
+
+        strike = parse_identifier(symbol)[3]
         return {"status": "success", "data": {
             "symbol": symbol, "name": "NIFTY", "exchange": exchange, "token": "54321",
-            "lotsize": 65, "tick_size": 0.05, "strike": 25150.0, "instrumenttype": "CE"}}
+            "lotsize": 65, "tick_size": 0.05, "strike": strike, "instrumenttype": "CE"}}
 
     def expiry(self, symbol, exchange, instrumenttype):
         return {"status": "success", "data": ["30-SEP-26", "07-OCT-26", "14-OCT-26"]}
@@ -484,8 +488,8 @@ class TestContracts:
     def test_a_name_reads_both_ways(self):
         from backend.markets.india.contract import build_identifier, parse_identifier
 
-        assert build_identifier("NIFTY", date(2026, 9, 30), 25150, "CALL") == SYMBOL
-        assert parse_identifier(SYMBOL) == ("NIFTY", "2026-09-30", "CALL", 25150.0)
+        assert build_identifier("NIFTY", date(2026, 9, 30), 25150, "CALL") == "NIFTY30SEP2625150CE"
+        assert parse_identifier(SYMBOL) == ("NIFTY", "2026-09-30", "CALL", 25200.0)
         assert parse_identifier("NIFTY30SEP2625100PE")[2] == "PUT"
 
     def test_a_stock_name_is_not_an_option(self):
@@ -508,12 +512,90 @@ class TestContracts:
 
         contract, expiry_reason, strike_reason = select_contract(
             FakeOpenAlgo(), "NIFTY", "CALL", 25118.0, exchange="NFO",
-            today=date(2026, 9, 27), minimum_days=2, expiry_date_text=None, strikes_out=1)
+            today=date(2026, 9, 27), minimum_days=2, expiry_date_text=None, strikes_out=1,
+            strike_step=100)
 
         assert contract.identifier == SYMBOL
         assert contract.multiplier == 65
         assert contract.min_tick == 0.05
         assert "2026-09-30" in expiry_reason
+
+    @pytest.mark.parametrize("price, side, out, expected", [
+        (22716, "CALL", 1, 22800), (22716, "PUT", 1, 22700),
+        (22716, "CALL", 2, 22900), (22716, "PUT", 2, 22600),
+        (22700, "CALL", 1, 22800), (22700, "PUT", 1, 22600),
+    ])
+    def test_round_strikes_only_with_a_step_of_100(self, price, side, out, expected):
+        """Never 22,750 or 22,650 -- asked for, like the US whole strike."""
+        from backend.markets.india.contract import otm_strike
+
+        assert otm_strike(price, side, 100, out) == expected
+
+    def test_a_step_off_the_listed_grid_refuses_to_start(self, tmp_path):
+        from pathlib import Path
+
+        from backend.core.config import ConfigError
+        from backend.markets.india.config import load_india_settings
+
+        example = Path(__file__).resolve().parent.parent / "config" / "india.env.example"
+        env = tmp_path / "india.env"
+        env.write_text(example.read_text(encoding="utf-8").replace(
+            "STRIKE_STEP=100", "STRIKE_STEP=75"), encoding="utf-8")
+        with pytest.raises(ConfigError, match="STRIKE_STEP"):
+            load_india_settings(env)
+
+    def test_the_example_asks_for_round_strikes(self, tmp_path):
+        from pathlib import Path
+
+        from backend.markets.india.config import load_india_settings
+
+        example = Path(__file__).resolve().parent.parent / "config" / "india.env.example"
+        assert load_india_settings(example).strike_step == 100
+
+    def pick(self, volumes, side="CALL", choices=3):
+        from backend.markets.india.contract import select_contract
+
+        client = FakeOpenAlgo()
+        client.volume = volumes
+        contract, _, reason = select_contract(
+            client, "NIFTY", side, 22716.0, exchange="NFO", today=date(2026, 9, 27),
+            minimum_days=2, expiry_date_text=None, strikes_out=1,
+            strike_step=100, strike_choices=choices)
+        return contract.identifier, reason
+
+    def test_the_busiest_round_strike_is_traded(self):
+        name, reason = self.pick({"NIFTY30SEP2622800CE": 5000,
+                                  "NIFTY30SEP2622900CE": 12000,
+                                  "NIFTY30SEP2623000CE": 800})
+        assert name == "NIFTY30SEP2622900CE"
+        assert "busiest of 3" in reason and "22900: 12,000" in reason
+
+    def test_only_round_strikes_are_compared(self):
+        """22,750 and 22,850 are never in the running, however busy."""
+        name, _ = self.pick({"NIFTY30SEP2622750CE": 99999, "NIFTY30SEP2622850CE": 99999,
+                             "NIFTY30SEP2622800CE": 10, "NIFTY30SEP2622900CE": 20,
+                             "NIFTY30SEP2623000CE": 30})
+        assert name == "NIFTY30SEP2623000CE"
+
+    def test_puts_compare_the_strikes_below(self):
+        name, _ = self.pick({"NIFTY30SEP2622700PE": 100, "NIFTY30SEP2622600PE": 900,
+                             "NIFTY30SEP2622500PE": 300}, side="PUT")
+        assert name == "NIFTY30SEP2622600PE"
+
+    def test_a_tie_goes_to_the_nearer_strike(self):
+        name, _ = self.pick({"NIFTY30SEP2622800CE": 500, "NIFTY30SEP2622900CE": 500,
+                             "NIFTY30SEP2623000CE": 500})
+        assert name == "NIFTY30SEP2622800CE"
+
+    def test_no_volume_takes_the_nearest_and_says_so(self):
+        name, reason = self.pick({"NIFTY30SEP2622800CE": 0, "NIFTY30SEP2622900CE": 0,
+                                  "NIFTY30SEP2623000CE": 0})
+        assert name == "NIFTY30SEP2622800CE"
+        assert "nearest was taken" in reason
+
+    def test_one_choice_compares_nothing(self):
+        name, reason = self.pick({"NIFTY30SEP2622900CE": 99999}, choices=1)
+        assert name == "NIFTY30SEP2622800CE" and "volume" not in reason
 
     def test_an_expiry_too_close_is_skipped(self):
         from backend.markets.india.contract import select_contract

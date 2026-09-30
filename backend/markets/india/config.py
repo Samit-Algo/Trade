@@ -89,6 +89,8 @@ class IndiaSettings(TradingSettings):
     exchange: str   # "NFO"
     product: str    # "NRML" or "MIS"
     lot_size: int   # for the startup band check only; see the module doc
+    strike_step: int  # only strikes on this grid are chosen, e.g. 100
+    strike_choices: int  # how many round strikes are compared on volume
     exit_slippage_ticks: int    # how far under its price an exit SELL is set
     stuck_exit_seconds: int     # an exit unfilled this long goes to MARKET
     exit_poll_seconds: float    # how often the exits are checked
@@ -125,6 +127,21 @@ def _build_india_settings(env_path: Path) -> IndiaSettings:
 
     allow_live = setting_bool("ALLOW_LIVE", default=False)
 
+    # Only round strikes -- 22,700 and 22,800, never 22,750 -- the same idea
+    # as the US "whole strike". It must sit on the exchange's own grid, or
+    # the chosen strike would not exist.
+    from .contract import STRIKE_STEPS
+
+    strike_step = setting_bounded_int("STRIKE_STEP", 100, minimum=1, maximum=10000)
+    for symbol in trading["trade_symbols"]:
+        listed = STRIKE_STEPS.get(symbol)
+        if listed and strike_step % listed:
+            raise ConfigError(
+                f"STRIKE_STEP={strike_step} is not a multiple of {symbol}'s "
+                f"listed strike grid of {listed}, so some chosen strikes would "
+                f"not exist. Use {listed} or a multiple of it, e.g. {listed * 2}."
+            )
+
     return IndiaSettings(
         market_id="IN",
         # PAPER here means "only while OpenAlgo's Analyze switch is ON" --
@@ -137,6 +154,8 @@ def _build_india_settings(env_path: Path) -> IndiaSettings:
         exchange=(setting("EXCHANGE") or "NFO").upper(),
         product=product,
         lot_size=lot_size,
+        strike_step=strike_step,
+        strike_choices=setting_bounded_int("STRIKE_CHOICES", 3, minimum=1, maximum=10),
         exit_slippage_ticks=setting_bounded_int(
             "EXIT_SLIPPAGE_TICKS", 20, minimum=0, maximum=200),
         stuck_exit_seconds=setting_bounded_int(

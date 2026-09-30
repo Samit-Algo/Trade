@@ -350,6 +350,45 @@
   .nav .count { float:right; font-family:var(--mono); font-size:11px; opacity:.7; }
   .page { display:none; } .page.on { display:block; }
 
+  /* ---------- analysis ---------- */
+  .anseg { display:inline-flex; gap:3px; padding:3px; border:1px solid var(--line);
+           border-radius:8px; }
+  .anseg button { width:auto; margin:0; padding:5px 10px; font-size:12.5px; font-weight:600;
+           border:1px solid transparent; border-radius:6px; background:transparent;
+           color:var(--muted); cursor:pointer; }
+  .anseg button.on { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
+  .anpie { display:flex; align-items:center; gap:22px; flex-wrap:wrap; }
+  .anpie svg { width:170px; height:170px; flex:0 0 auto; }
+  .anlegend { display:flex; flex-direction:column; gap:8px; font-size:13.5px; min-width:180px; }
+  .anlegend .row { display:flex; align-items:center; gap:8px; }
+  .anlegend .sw { width:12px; height:12px; border-radius:3px; flex:0 0 auto; }
+  .anlegend .v { margin-left:auto; font-family:var(--mono); font-weight:700; }
+  .anpnl { margin-top:6px; padding-top:8px; border-top:1px solid var(--line); }
+  .anheat { border-collapse:collapse; width:100%; font-size:12.5px; }
+  .anheat th, .anheat td { padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  .anheat th { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .anheat td.c { text-align:center; font-family:var(--mono); min-width:78px; }
+  .anheat td.c small { display:block; font-family:inherit; font-size:10.5px; color:var(--faint); }
+  .ankinds { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;
+             margin-bottom:14px; }
+  .ankind { border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .ankind.A { border-left:4px solid var(--bad); } .ankind.B { border-left:4px solid var(--warn); }
+  .ankind.C { border-left:4px solid var(--accent); }
+  .ankind .t { font-weight:700; font-size:13.5px; }
+  .ankind .n { font-family:var(--mono); font-size:22px; font-weight:700; }
+  .ankind p { margin:4px 0 0; font-size:12.5px; color:var(--muted); }
+  .anadvice { padding:11px 14px; border-radius:8px; background:var(--warn-soft); color:var(--warn);
+              font-weight:600; margin-bottom:14px; }
+  .kindtag { display:inline-block; font-family:var(--mono); font-size:11px; font-weight:700;
+             padding:1px 7px; border-radius:4px; }
+  .kindtag.A { background:var(--bad-soft); color:var(--bad); }
+  .kindtag.B { background:var(--warn-soft); color:var(--warn); }
+  .kindtag.C { background:var(--accent-soft); color:var(--accent); }
+  .anstops tr.click { cursor:pointer; } .anstops tr.click:hover td { background:var(--sunken); }
+  .anstops tr.open td { background:var(--sunken); }
+  .anstops td.chart { white-space:normal; padding:12px; }
+  .anheat td.num { text-align:right; font-family:var(--mono); }
+
   .tag2 { display:inline-block; font-family:var(--mono); font-size:10px; font-weight:600;
           letter-spacing:.04em; padding:2px 6px; border-radius:3px; }
   .t-prof { background:var(--good-soft); color:var(--good); }
@@ -676,6 +715,8 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg><span>Trade</span></button>
       <button type="button" id="nav-history" onclick="showPage('history')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Order History</span><span class="count" id="histcount"></span></button>
+      <button type="button" id="nav-analysis" onclick="showPage('analysis')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span>Analysis</span></button>
       <button type="button" id="nav-settings" onclick="showPage('settings')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
     </nav>
@@ -902,6 +943,37 @@
       </div>
     </div><!-- /page-history -->
 
+    <div class="page" id="page-analysis">
+      <div class="daybar">
+        <label>Period</label>
+        <span class="anseg" id="anpresets">
+          <button type="button" data-p="today">Today</button>
+          <button type="button" data-p="yesterday">Yesterday</button>
+          <button type="button" data-p="7">Last 7 days</button>
+          <button type="button" data-p="month">This month</button>
+        </span>
+        <input type="date" id="anfrom">
+        <span class="livesub" style="display:inline">to</span>
+        <input type="date" id="anto">
+        <button type="button" class="btn-small" id="ango">Show</button>
+        <span class="verdict" id="anverdict"></span>
+      </div>
+      <div class="cols">
+        <div class="card">
+          <h2>Results</h2>
+          <div id="anresults"><div class="placeholder">…</div></div>
+        </div>
+        <div class="card">
+          <h2>When you win or lose</h2>
+          <div id="anheat"><div class="placeholder">…</div></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Why stop losses fired</h2>
+        <div id="anstops"><div class="placeholder">…</div></div>
+      </div>
+    </div><!-- /page-analysis -->
+
     <div class="page" id="page-settings">
       <div class="cols">
         <div>
@@ -1004,6 +1076,8 @@ function chooseMarket(id) {
   // Nothing from the other market may linger: its symbols, its history,
   // its last result.
   historyCache = [];
+  // Another market has another "today": the period starts again from it.
+  $("anfrom").value = ""; $("anto").value = "";
   $("out").innerHTML = EMPTY_RESULT;
   $("symbol").innerHTML = "";
   renderMarketSwitch();
@@ -1355,8 +1429,164 @@ function refreshAll() {
   };
   startSpot();
   if ($("page-history").classList.contains("on")) loadHistory();
+  if ($("page-analysis").classList.contains("on")) loadAnalysis();
 }
 refreshAll();
+
+/* ---------- analysis ----------
+   Three answers for a period: how the trades ended, when they made or lost
+   money, and why each stop loss fired. Gross figures -- no commission. */
+let analysisToday = null;
+
+function anAddDays(iso, n) {
+  const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function anPreset(p) {
+  if (!analysisToday) return;
+  const t = analysisToday;
+  const range = { today: [t, t], yesterday: [anAddDays(t, -1), anAddDays(t, -1)],
+                  "7": [anAddDays(t, -6), t], month: [t.slice(0, 8) + "01", t] }[p];
+  $("anfrom").value = range[0]; $("anto").value = range[1];
+  loadAnalysis();
+}
+
+function anMarkPreset() {
+  const t = analysisToday, s = $("anfrom").value, e = $("anto").value;
+  const which = !t ? null
+    : s === t && e === t ? "today"
+    : s === anAddDays(t, -1) && e === s ? "yesterday"
+    : s === anAddDays(t, -6) && e === t ? "7"
+    : s === t.slice(0, 8) + "01" && e === t ? "month" : null;
+  document.querySelectorAll("#anpresets button").forEach(b =>
+    b.classList.toggle("on", b.dataset.p === which));
+}
+
+document.querySelectorAll("#anpresets button").forEach(b => b.onclick = () => anPreset(b.dataset.p));
+$("ango").onclick = () => loadAnalysis();
+
+async function loadAnalysis() {
+  if (!key()) { $("anresults").innerHTML = `<div class="placeholder">Enter your API key.</div>`; return; }
+  const q = new URLSearchParams();
+  if ($("anfrom").value) q.set("start", $("anfrom").value);
+  if ($("anto").value) q.set("end", $("anto").value);
+  $("anverdict").textContent = "Loading…"; $("anverdict").className = "verdict";
+  try {
+    const r = await fetch(withMarket("/analysis" + (q.toString() ? "?" + q : "")), { headers: hdrs() });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.message || "HTTP " + r.status);
+    analysisToday = d.today;
+    $("anfrom").value = d.start; $("anto").value = d.end;
+    anMarkPreset();
+    $("anverdict").textContent = "Gross -- before commission.";
+    renderAnalysis(d);
+  } catch (e) {
+    $("anverdict").textContent = e.message; $("anverdict").className = "verdict bad";
+  }
+}
+
+function renderAnalysis(d) {
+  $("anresults").innerHTML = anPie(d.results);
+  $("anheat").innerHTML = anHeat(d.heatmap);
+  $("anstops").innerHTML = anStops(d.stop_losses);
+  document.querySelectorAll("#anstops tr.click").forEach(tr => tr.onclick = () => anToggleChart(tr));
+}
+
+/* The pie: take profit, stop loss, other exits, still open. */
+function anPie(r) {
+  if (!r.total) return `<div class="placeholder">No trades in this period.</div>`;
+  const slices = [
+    ["Take profit", r.take_profit, "var(--good)"],
+    ["Stop loss", r.stop_loss, "var(--bad)"],
+    ["Other exits", r.other, "var(--faint)"],
+    ["Still open", r.still_open, "var(--accent)"],
+  ].filter(s => s[1] > 0);
+  const R = 70, C = 2 * Math.PI * R;
+  let offset = 0;
+  const arcs = slices.map(([label, n, color]) => {
+    const len = n / r.total * C;
+    const arc = `<circle cx="85" cy="85" r="${R}" fill="none" stroke="${color}" stroke-width="26"
+      stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-offset}" transform="rotate(-90 85 85)">
+      <title>${label}: ${n}</title></circle>`;
+    offset += len;
+    return arc;
+  }).join("");
+  const rows = slices.map(([label, n, color]) => `<div class="row">
+      <span class="sw" style="background:${color}"></span>${label}
+      <span class="v">${n} <span class="livesub" style="display:inline">${Math.round(n / r.total * 100)}%</span></span></div>`).join("");
+  return `<div class="anpie">
+    <svg viewBox="0 0 170 170" role="img" aria-label="How the trades ended">${arcs}
+      <text x="85" y="82" text-anchor="middle" font-size="30" font-weight="700" fill="var(--ink)">${r.total}</text>
+      <text x="85" y="104" text-anchor="middle" font-size="12" fill="var(--muted)">trades</text></svg>
+    <div class="anlegend">${rows}
+      <div class="row anpnl">Total P&amp;L <span class="v ${r.pnl >= 0 ? "pos" : "neg"}">${fmtMoney(r.pnl)}</span></div>
+      <div class="row">Won <span class="v">${r.wins} of ${r.closed}</span></div>
+    </div></div>`;
+}
+
+/* Heat map: money by 15-minute slot after the open, and by symbol. */
+function anHeat(h) {
+  if (!h.rows.length) return `<div class="placeholder">No trades in this period.</div>`;
+  const max = Math.max(1, ...h.rows.flatMap(r => r.cells.map(c => c ? Math.abs(c.pnl) : 0)));
+  const shade = v => {
+    const a = (0.12 + 0.7 * Math.abs(v) / max).toFixed(2);
+    return v > 0 ? `background:color-mix(in srgb, var(--good) ${a * 100}%, transparent)`
+         : v < 0 ? `background:color-mix(in srgb, var(--bad) ${a * 100}%, transparent)` : "";
+  };
+  return `<div style="overflow-x:auto"><table class="anheat">
+    <tr><th>Time</th>${h.symbols.map(s => `<th style="text-align:center">${s}</th>`).join("")}</tr>
+    ${h.rows.map(r => `<tr><td>${r.slot}</td>${r.cells.map(c => c
+      ? `<td class="c" style="${shade(c.pnl)}">${fmtMoney(c.pnl)}<small>${c.wins}/${c.trades} won</small></td>`
+      : `<td class="c"></td>`).join("")}</tr>`).join("")}
+  </table></div>`;
+}
+
+const AN_KIND = {
+  A: ["A · Wrong from the start", "Never got to +{t}% and stopped within 5 minutes. The entry is the problem."],
+  B: ["B · Was winning, then reversed", "Was up +{t}% or more first. The exit is the problem."],
+  C: ["C · Slow drop", "Never got to +{t}% and took 5 minutes or more. Needs a time limit."],
+};
+
+/* Why stop losses fired: three kinds, one line of advice, and the list. */
+function anStops(s) {
+  if (!s.total) return `<div class="placeholder">No stop losses in this period.</div>`;
+  const kinds = "ABC".split("").map(k => `<div class="ankind ${k}">
+      <div class="t">${AN_KIND[k][0]}</div>
+      <div class="n">${s.kinds[k].count} <span class="${s.kinds[k].pnl >= 0 ? "pos" : "neg"}" style="font-size:14px">${fmtMoney(s.kinds[k].pnl)}</span></div>
+      <p>${AN_KIND[k][1].replace("{t}", s.threshold_percent)}</p>
+      ${k === "B" && s.gave_back ? `<p><b>Profit given back: ${cur()}${s.gave_back.toFixed(2)}</b></p>` : ""}
+    </div>`).join("");
+  const rows = s.trades.map(x => `<tr class="click" data-id="${x.order_id}">
+      <td>${new Date(x.placed_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+      <td>${x.symbol} <span class="strike">${x.strike ?? "—"}</span> ${(x.side || "")[0] || ""}</td>
+      <td class="num">${money(x.entry)}</td><td class="num">${money(x.exit)}</td>
+      <td class="num pos">${x.best_percent == null ? "—" : fmtPct(x.best_percent)}</td>
+      <td class="num">${duration(x.seconds_to_stop)}</td>
+      <td>${x.kind ? `<span class="kindtag ${x.kind}">${x.kind}</span>` : `<span class="livesub" style="display:inline">no prices</span>`}</td>
+      <td class="num ${x.pnl >= 0 ? "pos" : "neg"}">${fmtMoney(x.pnl)}</td></tr>`).join("");
+  return `<div class="anadvice">${s.advice}</div>
+    <div class="ankinds">${kinds}</div>
+    <div style="overflow-x:auto"><table class="anheat anstops">
+      <tr><th>Placed</th><th>Contract</th><th>Bought</th><th>Stopped at</th><th>Best</th>
+          <th>Time to stop</th><th>Kind</th><th>P&amp;L</th></tr>${rows}</table></div>
+    ${s.untyped ? `<div class="livesub">${s.untyped} stop(s) had no recorded prices, so no kind is given.</div>` : ""}
+    <div class="livesub">Click a row for its chart.</div>`;
+}
+
+/* One stop's chart, opened under its row -- the same chart the history shows. */
+function anToggleChart(tr) {
+  const next = tr.nextElementSibling;
+  document.querySelectorAll("#anstops tr.chartrow").forEach(r => r.remove());
+  document.querySelectorAll("#anstops tr.open").forEach(r => r.classList.remove("open"));
+  if (next && next.classList.contains("chartrow")) return;   // it was open: now closed
+  tr.classList.add("open");
+  const row = document.createElement("tr");
+  row.className = "chartrow";
+  row.innerHTML = `<td class="chart" colspan="8"><div class="jrny"></div></td>`;
+  tr.after(row);
+  loadJourney(tr.dataset.id, row.querySelector(".jrny"), "STOPPED_OUT");
+}
 
 /* ---------- pages ---------- */
 let historyCache = [];
@@ -1397,7 +1627,7 @@ const EMPTY_RESULT = `
   </div>`;
 
 function showPage(name) {
-  ["trade", "history", "settings"].forEach(p => {
+  ["trade", "history", "analysis", "settings"].forEach(p => {
     $("page-" + p).classList.toggle("on", p === name);
     $("nav-" + p).classList.toggle("on", p === name);
   });
@@ -1410,6 +1640,7 @@ function showPage(name) {
   }
 
   if (name === "settings") loadSettingsPage();
+  if (name === "analysis") loadAnalysis();
 }
 
 function outcomeTag(o) {
@@ -2598,7 +2829,9 @@ function showOrder(o) {
       <tr><td>Bought</td><td>${o.quantity} @ limit ${money(o.limit_price)}${
           o.fill_price ? ` &nbsp;→ filled <b>${money(o.fill_price)}</b>` : " &nbsp;(not filled)"}</td></tr>
       ${o.exit_price ? `<tr><td>Sold</td><td><b>${money(o.exit_price)}</b></td></tr>` : ""}
-      <tr><td>Take profit set</td><td>${o.take_profit_price == null ? "—" : money(o.take_profit_price)}</td></tr>
+      <tr><td>Take profit set</td><td>${o.take_profit_price == null ? "—" : money(o.take_profit_price)}${
+          o.take_profit_price != null && currentMarket === "IN"
+            ? ` <span class="livesub" style="display:inline">watched by the backend, sold when reached</span>` : ""}</td></tr>
       <tr><td>Stop loss set</td><td>${o.stop_loss_price == null ? "—" : money(o.stop_loss_price)}</td></tr>
       <tr><td>Legs live for</td><td>${o.leg_time_in_force || "—"}</td></tr>
       <tr><td>Broker status</td><td>${statusChip(o.status)}</td></tr>
@@ -2656,9 +2889,11 @@ async function loadJourney(orderId, box, outcome) {
   }
 }
 
-function refreshJourney(orderId, outcome) {
+function refreshJourney(orderId, outcome, button) {
   delete journeyCache[orderId];
-  loadJourney(orderId, $("journey"), outcome);
+  // The chart this button sits in -- on the history page or on Analysis.
+  const box = (button && button.closest(".jrny")) || $("journey");
+  loadJourney(orderId, box, outcome);
 }
 
 function jrnyTime(ms) {
@@ -2753,17 +2988,17 @@ function renderJourney(d, box, outcome) {
       <span class="jrnytitle">Trade journey</span>
       <span class="jrnybadge ${verdict.cls}"><span class="dot"></span>${verdict.label}</span>
       <button type="button" class="btn-small jrnyrefresh"
-              onclick="refreshJourney('${d.order_id}', '${outcome || ""}')">Refresh</button>
+              onclick="refreshJourney('${d.order_id}', '${outcome || ""}', this)">Refresh</button>
     </div>
     <p class="jrnystory">${jrnyStory(d, verdict)}</p>
     ${jrnyChart(d)}
-    <div class="jrnyhover" id="jrnyhover">
+    <div class="jrnyhover">
       <span class="ph">Hover the line for the price at that moment.</span>
     </div>
     ${jrnyNotes(d)}`;
 
   // After the box is in the document: the library measures the element.
-  jrnyDrawChart(d);
+  jrnyDrawChart(d, box);
 }
 
 /* The chart. Three levels, bigger candles, and the peak as a marker rather
@@ -2776,13 +3011,34 @@ function renderJourney(d, box, outcome) {
    opened: the library holds a canvas and a resize observer, and leaking
    one per click would accumulate all evening. */
 
-let jrnyLive = null;          // { chart, resize } for the panel on screen
+let jrnyLive = null;          // { chart, resize } for the chart drawn last
+const jrnyAll = new Set();     // every chart still alive, to sweep up
 
-function jrnyDestroyChart() {
-  if (!jrnyLive) return;
-  try { window.removeEventListener("resize", jrnyLive.resize); } catch (_) {}
-  try { jrnyLive.chart.remove(); } catch (_) {}
-  jrnyLive = null;
+/* Each chart belongs to the box it is drawn in -- Order History has one,
+   Analysis has one per opened row -- so a box only ever tears down its OWN
+   previous chart. Finding "the" chart by id found whichever came first in
+   the page, and drew Analysis charts into the hidden History panel. */
+function jrnyDestroyChart(root) {
+  const live = root ? root._jrny : jrnyLive;
+  if (!live) return;
+  try { window.removeEventListener("resize", live.resize); } catch (_) {}
+  try { live.chart.remove(); } catch (_) {}
+  jrnyAll.delete(live);
+  if (root) root._jrny = null;
+  if (live === jrnyLive) jrnyLive = null;
+}
+
+/* A chart whose panel was replaced or closed still holds a canvas and a
+   resize listener. Swept on every draw, so none outlive their panel. */
+function jrnySweep() {
+  for (const live of [...jrnyAll]) {
+    if (!document.body.contains(live.box)) {
+      try { window.removeEventListener("resize", live.resize); } catch (_) {}
+      try { live.chart.remove(); } catch (_) {}
+      jrnyAll.delete(live);
+      if (live === jrnyLive) jrnyLive = null;
+    }
+  }
 }
 
 /* Reads a CSS custom property, so the chart follows the page's theme
@@ -2794,14 +3050,17 @@ function jrnyCss(name, fallback) {
 
 function jrnyChart(d) {
   // The box only. The library fills it once the element is in the document.
-  return `<div class="jrnychart" id="jrnychart"></div>`;
+  return `<div class="jrnychart"></div>`;
 }
 
-function jrnyDrawChart(d) {
-  const box = $("jrnychart");
+function jrnyDrawChart(d, root) {
+  // Looked up INSIDE this chart's own panel, never by id across the page.
+  root = root || document;
+  const box = root.querySelector(".jrnychart");
   if (!box || !window.LightweightCharts || !d.path || d.path.length < 2) return;
 
-  jrnyDestroyChart();
+  jrnySweep();
+  jrnyDestroyChart(root === document ? null : root);
 
   const ink   = jrnyCss("--ink", "#e2e7ef");
   const muted = jrnyCss("--muted", "#96a0ae");
@@ -3056,7 +3315,7 @@ function jrnyDrawChart(d) {
   chart.timeScale().fitContent();
 
   // The readout under the chart, driven by the library's own crosshair.
-  const out = $("jrnyhover");
+  const out = root.querySelector(".jrnyhover");
   const rest = `<span class="ph">Hover the line for the price at that moment.</span>`;
   const qty = d.quantity || 1;
 
@@ -3093,7 +3352,9 @@ function jrnyDrawChart(d) {
   window.addEventListener("resize", resize);
   // The series is kept on the handle too, so a test can ask the chart where
   // a price lands and compare that against where a dot was placed.
-  jrnyLive = { chart, resize, series };
+  jrnyLive = { chart, resize, series, box };
+  jrnyAll.add(jrnyLive);
+  if (root !== document) root._jrny = jrnyLive;
 
 }
 
